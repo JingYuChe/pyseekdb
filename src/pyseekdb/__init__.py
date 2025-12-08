@@ -58,6 +58,18 @@ from .client import (
     Database,
 )
 from .client.collection import Collection
+from .client.hybrid_search import (
+    HybridSearch,
+    DOCUMENT,
+    TEXT,
+    EMBEDDINGS,
+    K,
+    IDS,
+    DOCUMENTS,
+    METADATAS,
+    EMBEDDINGS_FIELD,
+    SCORES,
+)
 
 try:
   __version__ = importlib.metadata.version("pyseekdb")
@@ -83,5 +95,15 @@ __all__ = [
     'AdminAPI',
     'AdminClient',
     'Database',
+    'HybridSearch',
+    'DOCUMENT',
+    'TEXT',
+    'EMBEDDINGS',
+    'K',
+    'IDS',
+    'DOCUMENTS',
+    'METADATAS',
+    'EMBEDDINGS_FIELD',
+    'SCORES',
 ]
 

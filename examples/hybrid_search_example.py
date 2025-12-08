@@ -9,7 +9,13 @@ Key advantages of hybrid_search():
 """
 
 import pyseekdb
-from pyseekdb import DefaultEmbeddingFunction
+from pyseekdb import (
+    DefaultEmbeddingFunction,
+    HybridSearch,
+    DOCUMENT,
+    TEXT,
+    K,
+)
 
 # Setup
 client = pyseekdb.Client()
@@ -59,13 +65,22 @@ query_result1 = collection.query(
     n_results=5
 )
 
-# hybrid_search() approach
-hybrid_result1 = collection.hybrid_search(
-    query={"where_document": {"$contains": "machine learning"}, "n_results": 10},
-    knn={"query_texts": ["AI research"], "n_results": 10},
-    rank={"rrf": {}},
-    n_results=5
+# hybrid_search() approach (dict style)
+# hybrid_result1 = collection.hybrid_search(
+#     query={"where_document": {"$contains": "machine learning"}, "n_results": 10},
+#     knn={"query_texts": ["AI research"], "n_results": 10},
+#     rank={"rrf": {}},
+#     n_results=5
+# )
+# hybrid_search() approach (new HybridSearch builder)
+hybrid_search1 = (
+    HybridSearch()
+    .query(DOCUMENT.contains("machine learning"), n_results=10)
+    .knn(TEXT("AI research"), n_results=10)
+    .rank({"rrf": {}})
+    .limit(5)
 )
+hybrid_result1 = collection.hybrid_search(hybrid_search1)
 
 print("query() Results:")
 for i, doc_id in enumerate(query_result1['ids'][0]):
@@ -96,13 +111,22 @@ query_result2 = collection.query(
     n_results=5
 )
 
-# hybrid_search() - different filters for each search type
-hybrid_result2 = collection.hybrid_search(
-    query={"where_document": {"$contains": "neural"}, "where": {"year": {"$eq": 2024}}, "n_results": 10},
-    knn={"query_texts": ["deep learning"], "where": {"popularity": {"$gte": 90}}, "n_results": 10},
-    rank={"rrf": {}},
-    n_results=5
+# hybrid_search() - different filters for each search type (dict style)
+# hybrid_result2 = collection.hybrid_search(
+#     query={"where_document": {"$contains": "neural"}, "where": {"year": {"$eq": 2024}}, "n_results": 10},
+#     knn={"query_texts": ["deep learning"], "where": {"popularity": {"$gte": 90}}, "n_results": 10},
+#     rank={"rrf": {}},
+#     n_results=5
+# )
+# hybrid_search() - different filters for each search type (new builder)
+hybrid_search2 = (
+    HybridSearch()
+    .query(DOCUMENT.contains("neural"), K("year") == 2024, n_results=10)
+    .knn(TEXT("deep learning"), K("popularity") >= 90, n_results=10)
+    .rank({"rrf": {}})
+    .limit(5)
 )
+hybrid_result2 = collection.hybrid_search(hybrid_search2)
 
 print("query() Results (same filter for both):")
 for i, doc_id in enumerate(query_result2['ids'][0]):
@@ -133,13 +157,23 @@ query_result3 = collection.query(
     n_results=5
 )
 
-# hybrid_search() - combines full-text and vector
-hybrid_result3 = collection.hybrid_search(
-    query={"where_document": {"$contains": "machine learning"}, "n_results": 10},
-    knn={"query_texts": ["machine learning algorithms"], "n_results": 10},
-    rank={"rrf": {}},
-    n_results=5
+# hybrid_search() - combines full-text and vector (dict style)
+# hybrid_result3 = collection.hybrid_search(
+#     query={"where_document": {"$contains": "machine learning"}, "n_results": 10},
+#     knn={"query_texts": ["machine learning algorithms"], "n_results": 10},
+#     rank={"rrf": {}},
+#     n_results=5
+# )
+
+# hybrid_search() - combines full-text and vector (new builder)
+hybrid_search3 = (
+    HybridSearch()
+    .query(DOCUMENT.contains("machine learning"), n_results=10)
+    .knn(TEXT("machine learning algorithms"), n_results=10)
+    .rank({"rrf": {}})
+    .limit(5)
 )
+hybrid_result3 = collection.hybrid_search(hybrid_search3)
 
 print("query() Results (vector similarity only):")
 for i, doc_id in enumerate(query_result3['ids'][0]):
@@ -170,13 +204,23 @@ query_result4 = collection.query(
     n_results=5
 )
 
-# hybrid_search() - separate criteria for each search type
-hybrid_result4 = collection.hybrid_search(
-    query={"where_document": {"$contains": "learning"}, "where": {"category": {"$eq": "AI"}}, "n_results": 10},
-    knn={"query_texts": ["artificial intelligence"], "where": {"year": {"$gte": 2023}}, "n_results": 10},
-    rank={"rrf": {}},
-    n_results=5
+# hybrid_search() - separate criteria for each search type (dict style)
+# hybrid_result4 = collection.hybrid_search(
+#     query={"where_document": {"$contains": "learning"}, "where": {"category": {"$eq": "AI"}}, "n_results": 10},
+#     knn={"query_texts": ["artificial intelligence"], "where": {"year": {"$gte": 2023}}, "n_results": 10},
+#     rank={"rrf": {}},
+#     n_results=5
+# )
+
+# hybrid_search() - separate criteria for each search type (new builder)
+hybrid_search4 = (
+    HybridSearch()
+    .query(DOCUMENT.contains("learning"), K("category") == "AI", n_results=10)
+    .knn(TEXT("artificial intelligence"), K("year") >= 2023, n_results=10)
+    .rank({"rrf": {}})
+    .limit(5)
 )
+hybrid_result4 = collection.hybrid_search(hybrid_search4)
 
 print("query() Results:")
 for i, doc_id in enumerate(query_result4['ids'][0]):
@@ -208,13 +252,23 @@ query_result5 = collection.query(
     n_results=5
 )
 
-# hybrid_search() - RRF fusion of multiple rankings
-hybrid_result5 = collection.hybrid_search(
-    query={"where_document": {"$contains": "Python"}, "n_results": 10},
-    knn={"query_texts": ["Python machine learning"], "n_results": 10},
-    rank={"rrf": {}},
-    n_results=5
+# hybrid_search() - RRF fusion of multiple rankings (dict style)
+# hybrid_result5 = collection.hybrid_search(
+#     query={"where_document": {"$contains": "Python"}, "n_results": 10},
+#     knn={"query_texts": ["Python machine learning"], "n_results": 10},
+#     rank={"rrf": {}},
+#     n_results=5
+# )
+
+# hybrid_search() - RRF fusion of multiple rankings (new builder)
+hybrid_search5 = (
+    HybridSearch()
+    .query(DOCUMENT.contains("Python"), n_results=10)
+    .knn(TEXT("Python machine learning"), n_results=10)
+    .rank({"rrf": {}})
+    .limit(5)
 )
+hybrid_result5 = collection.hybrid_search(hybrid_search5)
 
 print("query() Results (single ranking):")
 for i, doc_id in enumerate(query_result5['ids'][0]):
@@ -246,13 +300,23 @@ query_result6 = collection.query(
     n_results=5
 )
 
-# hybrid_search() - different filters for keyword search vs semantic search
-hybrid_result6 = collection.hybrid_search(
-    query={"where_document": {"$contains": "neural"}, "where": {"popularity": {"$gte": 90}}, "n_results": 10},
-    knn={"query_texts": ["deep learning"], "where": {"year": {"$gte": 2023}}, "n_results": 10},
-    rank={"rrf": {}},
-    n_results=5
+# hybrid_search() - different filters for keyword search vs semantic search (dict style)
+# hybrid_result6 = collection.hybrid_search(
+#     query={"where_document": {"$contains": "neural"}, "where": {"popularity": {"$gte": 90}}, "n_results": 10},
+#     knn={"query_texts": ["deep learning"], "where": {"year": {"$gte": 2023}}, "n_results": 10},
+#     rank={"rrf": {}},
+#     n_results=5
+# )
+
+# hybrid_search() - different filters for keyword search vs semantic search (new builder)
+hybrid_search6 = (
+    HybridSearch()
+    .query(DOCUMENT.contains("neural"), K("popularity") >= 90, n_results=10)
+    .knn(TEXT("deep learning"), K("year") >= 2023, n_results=10)
+    .rank({"rrf": {}})
+    .limit(5)
 )
+hybrid_result6 = collection.hybrid_search(hybrid_search6)
 
 print("query() Results:")
 for i, doc_id in enumerate(query_result6['ids'][0]):
@@ -286,13 +350,23 @@ query_result7 = collection.query(
     n_results=5
 )
 
-# hybrid_search() - parallel searches then fusion
-hybrid_result7 = collection.hybrid_search(
-    query={"where_document": {"$contains": "Python"}, "n_results": 10},
-    knn={"query_texts": ["data science"], "n_results": 10},
-    rank={"rrf": {}},
-    n_results=5
+# hybrid_search() - parallel searches then fusion (dict style)
+# hybrid_result7 = collection.hybrid_search(
+#     query={"where_document": {"$contains": "Python"}, "n_results": 10},
+#     knn={"query_texts": ["data science"], "n_results": 10},
+#     rank={"rrf": {}},
+#     n_results=5
+# )
+
+# hybrid_search() - parallel searches then fusion (new builder)
+hybrid_search7 = (
+    HybridSearch()
+    .query(DOCUMENT.contains("Python"), n_results=10)
+    .knn(TEXT("data science"), n_results=10)
+    .rank({"rrf": {}})
+    .limit(5)
 )
+hybrid_result7 = collection.hybrid_search(hybrid_search7)
 
 print("query() Results:")
 for i, doc_id in enumerate(query_result7['ids'][0]):

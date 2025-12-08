@@ -36,6 +36,18 @@ from .client_seekdb_embedded import SeekdbEmbeddedClient
 from .client_seekdb_server import RemoteServerClient
 from .database import Database
 from .admin_client import AdminAPI, _AdminClientProxy, _ClientProxy
+from .hybrid_search import (
+    HybridSearch,
+    DOCUMENT,
+    TEXT,
+    EMBEDDINGS,
+    K,
+    IDS,
+    DOCUMENTS,
+    METADATAS,
+    EMBEDDINGS_FIELD,
+    SCORES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +67,16 @@ __all__ = [
     'AdminAPI',
     'AdminClient',
     'Database',
+    'HybridSearch',
+    'DOCUMENT',
+    'TEXT',
+    'EMBEDDINGS',
+    'K',
+    'IDS',
+    'DOCUMENTS',
+    'METADATAS',
+    'EMBEDDINGS_FIELD',
+    'SCORES',
 ]
 
 def Client(

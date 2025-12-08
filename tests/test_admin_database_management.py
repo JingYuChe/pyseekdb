@@ -17,7 +17,7 @@ import pyseekdb
 
 # ==================== Environment Variable Configuration ====================
 # Embedded mode
-SEEKDB_PATH = os.environ.get('SEEKDB_PATH', os.path.join(project_root, "seekdb_store"))
+SEEKDB_PATH = os.environ.get('SEEKDB_PATH', os.path.join(project_root, "seekdb.db"))
 
 # Server mode (seekdb Server)
 SERVER_HOST = os.environ.get('SERVER_HOST', '127.0.0.1')
