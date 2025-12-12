@@ -19,7 +19,7 @@ jobs:
     strategy:
       matrix:
         # server: seekdb-server
-        test_mode: [embedded, server, oceanbase]
+        test_mode: [embedded, server, oceanbase, other]
         os: [ubuntu-latest]
 
     steps:
@@ -55,7 +55,7 @@ jobs:
         uses: oceanbase/setup-oceanbase-ce@v1
         with:
           image_name: 'oceanbase/oceanbase-ce'
-          image_tag: '4.4.1.0-100000032025101610'
+          image_tag: '4.5.0.0-100000012025112711'
           mode: 'mini'
           sql_port: 10000
           datafile_size: '20G'
@@ -72,5 +72,13 @@ jobs:
           docker logs seekdb-server
 
       - name: Run tests
+        if: matrix.test_mode != 'other'
         run: |
-          SEEKDB_PATH=$HOME/seekdb.db OB_PORT=10000 SERVER_PORT=2881 poetry run pytest --log-cli-level=INFO -k 'test_${{ matrix.test_mode }}'
+          CI=1 SEEKDB_PATH=$HOME/seekdb.db OB_PORT=10000 SERVER_PORT=2881 poetry run pytest --log-cli-level=INFO -k 'test_${{ matrix.test_mode }}' | tee pytest.log
+          cat pytest.log | awk '/^collected/{s=$8} /passed/{p=$2} END{if(s==p) print "✅ all passed "p"/"s; else print "❌ failed"; exit s!=p}'
+
+      - name: Run other tests
+        if: matrix.test_mode == 'other'
+        run: |
+          CI=1 poetry run pytest --log-cli-level=INFO -k 'test_${{ matrix.test_mode }}' | tee pytest.log
+          cat pytest.log | awk '/^collected/{s=$8} /passed/{p=$2} END{if(s==p) print "✅ all passed "p"/"s; else print "❌ failed"; exit s!=p}'
