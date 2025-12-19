@@ -296,12 +296,18 @@ def AdminClient(
         # No parameters provided
         from .client_seekdb_embedded import _PYLIBSEEKDB_AVAILABLE
         if _PYLIBSEEKDB_AVAILABLE:
-            raise ValueError(
-                "Must provide either path (embedded mode) or host (remote server mode) parameter"
+            # Default to embedded mode with seekdb.db in current working directory
+            default_path = os.path.abspath("seekdb.db")
+            logger.info(f"Creating embedded admin client (default): path={default_path}")
+            server = SeekdbEmbeddedClient(
+                path=default_path,
+                database="information_schema",  # Use system database for admin operations
+                **kwargs
             )
         else:
             raise ValueError(
-                "Must provide host (remote server mode) parameter"
+                "Default embedded mode is not available because pylibseekdb could not be imported. "
+                "Please provide host/port parameters to use RemoteServerClient."
             )
 
     # Return AdminClient proxy (only exposes database operations)
