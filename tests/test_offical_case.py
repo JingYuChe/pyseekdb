@@ -139,7 +139,7 @@ class TestOfficialExample:
 
         try:
             result = client._server._execute("SELECT 1 as test")
-            assert result and result[0].get("test", 1) == 1
+            assert result and result[0].get("test") == 1
         except Exception as exc:
             pytest.fail(f"seekdb server connection failed ({SERVER_HOST}:{SERVER_PORT}): {exc}")
 
@@ -163,7 +163,7 @@ class TestOfficialExample:
 
         try:
             result = client._server._execute("SELECT 1 as test")
-            assert result and result[0].get("test", 1) == 1
+            assert result and result[0].get("test") == 1
         except Exception as exc:
             pytest.fail(f"OceanBase connection failed ({OB_HOST}:{OB_PORT}): {exc}")
 

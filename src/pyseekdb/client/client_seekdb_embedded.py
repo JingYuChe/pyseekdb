@@ -5,6 +5,7 @@ Note: Only available when pylibseekdb is installed (Linux only)
 import os
 import logging
 from typing import Any, List, Optional, Sequence, Dict, Union
+from pymysql.converters import escape_string
 
 # Try to import pylibseekdb - it may not be available on all platforms
 try:
@@ -165,11 +166,11 @@ class SeekdbEmbeddedClient(BaseClient):
             elif isinstance(param, (int, float)):
                 embedded_sql = embedded_sql.replace('%s', str(param), 1)
             elif isinstance(param, str):
-                escaped = param.replace("'", "''")
+                escaped = escape_string(param)
                 embedded_sql = embedded_sql.replace('%s', f"'{escaped}'", 1)
             else:
                 # For other types (like lists in IN clauses), convert to string
-                escaped = str(param).replace("'", "''")
+                escaped = escape_string(str(param))
                 embedded_sql = embedded_sql.replace('%s', f"'{escaped}'", 1)
 
         cursor = conn.cursor()

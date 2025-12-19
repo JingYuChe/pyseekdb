@@ -5,6 +5,7 @@ Provides helpers to safely stringify values and SQL identifiers for insertion in
 """
 
 from typing import Optional, Union
+from pymysql.converters import escape_string
 
 
 def _quote_string(value, quote: str):
@@ -34,7 +35,8 @@ class SqlStringifier:
             if len(value) > 0 and len(value) % 2 == 0 and all(c in '0123456789abcdefABCDEF' for c in value):
                 # Likely a hex string for varbinary, use UNHEX
                 return f"UNHEX('{value}')"
-            formatted = value.replace('\\', '\\\\').replace(self._quote, f"\\{self._quote}")
+            # Use pymysql's escape_string for safe escaping
+            formatted = escape_string(value)
             return _quote_string(formatted, self._quote)
         if isinstance(value, (int, float)):
             return str(value)
