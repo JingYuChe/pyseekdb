@@ -131,6 +131,414 @@ class TestCollectionGet:
             client._server._execute(sql)
         
         return inserted_ids
+
+    def _test_metadata_array_in_overlap(self, client):
+        """Shared test flow for metadata array $in/$nin using JSON_OVERLAPS."""
+        collection_name = f"test_tags_in_{int(time.time() * 1000)}"
+        collection = client.get_or_create_collection(
+            name=collection_name,
+            embedding_function=pyseekdb.DefaultEmbeddingFunction(),
+        )
+
+        try:
+            # Insert cases covering overlap, disjoint, missing, null, empty array
+            collection.add(
+                ids=["id_overlap", "id_disjoint", "id_missing", "id_null", "id_empty"],
+                documents=["", "", "", "", ""],
+                metadatas=[
+                    {"category": "AI", "tags": ["ml", "ai"]},       # overlaps with ["ml", "python"]
+                    {"category": "Web", "tags": ["java", "cpp"]},   # disjoint
+                    {"category": "Missing"},                       # tags missing
+                    {"category": "Null", "tags": None},            # tags explicit null
+                    {"category": "Empty", "tags": []},             # tags empty array
+                ],
+            )
+
+            # $in with overlap
+            result = collection.get(
+                where={"tags": {"$in": ["ml", "python"]}},
+                include=["metadatas", "ids"],
+            )
+            assert result and "ids" in result
+            assert set(result["ids"]) == {"id_overlap"}
+
+            # $in with disjoint values -> no hits
+            result = collection.get(
+                where={"tags": {"$in": ["ruby"]}},
+                include=["ids"],
+            )
+            assert result and "ids" in result
+            assert len(result["ids"]) == 0
+
+            # $in with empty list -> should return 0 rows
+            result = collection.get(
+                where={"tags": {"$in": []}},
+                include=["ids"],
+            )
+            assert result and "ids" in result
+            assert len(result["ids"]) == 0
+
+            # $nin should keep disjoint/null/empty, exclude overlap; missing is excluded by JSON behavior
+            result = collection.get(
+                where={"tags": {"$nin": ["ml", "python"]}},
+                include=["ids"],
+            )
+            assert result and "ids" in result
+            assert set(result["ids"]) == {"id_disjoint", "id_null", "id_empty"}
+        finally:
+            try:
+                client.delete_collection(name=collection_name)
+            except Exception as cleanup_error:  # pragma: no cover
+                print(f"Warning: cleanup failed for {collection_name}: {cleanup_error}")
+
+    def _test_collection_get(self, collection, inserted_ids):
+        # Test 1: Get by single ID
+        print("\n✅ Testing get by single ID")
+        results = collection.get(ids=inserted_ids[0])
+        assert results is not None
+        assert "ids" in results
+        assert len(results["ids"]) == 1
+        print(f"   Found {len(results['ids'])} result for ID={inserted_ids[0]}")
+
+        # Test 2: Get by multiple IDs
+        print("✅ Testing get by multiple IDs")
+        if len(inserted_ids) >= 3:
+            results = collection.get(ids=inserted_ids[:3])
+            assert results is not None
+            assert "ids" in results
+            assert len(results["ids"]) <= 3
+            print(f"   Found {len(results['ids'])} results for IDs={inserted_ids[:3]}")
+
+        # Test 3: Get by metadata filter
+        print("✅ Testing get with metadata filter (category=AI)")
+        results = collection.get(where={"category": {"$eq": "AI"}}, limit=10)
+        assert results is not None
+        assert len(results["ids"]) > 0
+        print(f"   Found {len(results['ids'])} results with category='AI'")
+
+        # Test 4: Get with logical operators ($or)
+        print("✅ Testing get with logical operators ($or)")
+        results = collection.get(
+            where={
+                "$or": [
+                    {"category": "AI"},
+                    {"tag": "python"},
+                ]
+            },
+            limit=10,
+        )
+        assert results is not None
+        print(f"   Found {len(results['ids'])} results with $or condition")
+
+        # Test 5: Get by document filter
+        print("✅ Testing get with document filter")
+        results = collection.get(where_document={"$contains": "machine learning"}, limit=10)
+        assert results is not None
+        print(f"   Found {len(results['ids'])} results containing 'machine learning'")
+
+        # Test 6: Get with combined filters
+        print("✅ Testing get with combined filters")
+        results = collection.get(
+            where={"category": {"$eq": "AI"}},
+            where_document={"$contains": "machine"},
+            limit=10,
+        )
+        assert results is not None
+        print(f"   Found {len(results['ids'])} results matching all filters")
+
+        # Test 7: Get with limit and offset
+        print("✅ Testing get with limit and offset")
+        results = collection.get(limit=3, offset=0)
+        assert results is not None
+        assert "ids" in results
+        assert len(results["ids"]) <= 3
+        print(f"   Found {len(results['ids'])} results (limit=3, offset=0)")
+
+        # Test 8: Get all data without filters
+        print("✅ Testing get all data without filters")
+        results = collection.get(limit=100)
+        assert results is not None
+        assert len(results["ids"]) > 0
+        print(f"   Found {len(results['ids'])} total results")
+
+        # Test 9: Get with include parameter
+        print("✅ Testing get with include parameter")
+        results = collection.get(
+            ids=inserted_ids[:2],
+            include=["documents", "metadatas"],
+        )
+        assert results is not None
+        assert isinstance(results, dict), "Should return dict"
+        assert "ids" in results
+        assert "documents" in results
+        assert "metadatas" in results
+        assert len(results["ids"]) == 2
+        print(f"   Found {len(results['ids'])} results with documents and metadatas")
+
+        # Test 10: Get by multiple IDs (should return dict)
+        print("✅ Testing get by multiple IDs (returns dict)")
+        if len(inserted_ids) >= 3:
+            results = collection.get(ids=inserted_ids[:3])
+            assert results is not None
+            assert isinstance(results, dict), "Should return dict"
+            assert "ids" in results
+            assert len(results["ids"]) <= 3
+            print(f"   Found {len(results['ids'])} results for {len(inserted_ids[:3])} IDs")
+
+        # Test 11: Single ID returns dict format
+        print("✅ Testing single ID returns dict format")
+        results = collection.get(ids=inserted_ids[0])
+        assert results is not None
+        assert isinstance(results, dict), "Should return dict"
+        assert "ids" in results
+        assert len(results["ids"]) == 1
+        print(f"   Single result with {len(results['ids'])} item")
+
+        # Test 12: Get with filters returns dict format
+        print("✅ Testing get with filters returns dict format")
+        results = collection.get(where={"category": {"$eq": "AI"}}, limit=10)
+        assert results is not None
+        assert isinstance(results, dict), "Should return dict"
+        assert "ids" in results
+        print(f"   Found {len(results['ids'])} items matching filter")
+
+        # Test 13: Get with scalar $in operator
+        print("✅ Testing get with scalar $in operator")
+        results = collection.get(where={"tag": {"$in": ["ml", "python"]}}, limit=10)
+        assert results is not None
+        assert "ids" in results
+        assert len(results["ids"]) > 0
+        print(f"   Found {len(results['ids'])} results with tag in ['ml', 'python']")
+
+        # Test 14: Get with scalar $nin operator
+        print("✅ Testing get with scalar $nin operator")
+        results = collection.get(where={"tag": {"$nin": ["ml", "python"]}}, limit=10)
+        assert results is not None
+        assert "ids" in results
+        # Should return rows with tag='neural' (excluded 'ml' and 'python')
+        print(f"   Found {len(results['ids'])} results with tag not in ['ml', 'python']")
+
+    def test_embedded_metadata_array_in_overlap(self):
+        """
+        Regression test for JSON array $in operator with embedded client.
+        Includes overlap, disjoint, empty list, and complementary $nin expectations.
+        """
+        try:
+            import pylibseekdb  # noqa: F401
+        except ImportError:
+            pytest.skip("seekdb embedded package is not installed")
+
+        client = pyseekdb.Client(
+            path=SEEKDB_PATH,
+            database=SEEKDB_DATABASE
+        )
+        self._test_metadata_array_in_overlap(client)
+    
+    def test_server_metadata_array_in_overlap(self):
+        """
+        Regression test for JSON array $in operator with server client.
+        Includes overlap, disjoint, empty list, and complementary $nin expectations.
+        """
+        client = pyseekdb.Client(
+            host=SERVER_HOST,
+            port=SERVER_PORT,
+            tenant="sys",
+            database=SERVER_DATABASE,
+            user=SERVER_USER,
+            password=SERVER_PASSWORD
+        )
+
+        # Test connection
+        try:
+            result = client._server._execute("SELECT 1 as test")
+            assert result and result[0].get("test") == 1
+        except Exception as exc:
+            pytest.fail(f"seekdb server connection failed ({SERVER_HOST}:{SERVER_PORT}): {exc}")
+        self._test_metadata_array_in_overlap(client)
+    
+    def test_oceanbase_metadata_array_in_overlap(self):
+        """
+        Regression test for JSON array $in operator with OceanBase client.
+        Includes overlap, disjoint, empty list, and complementary $nin expectations.
+        """
+        client = pyseekdb.Client(
+            host=OB_HOST,
+            port=OB_PORT,
+            tenant=OB_TENANT,
+            database=OB_DATABASE,
+            user=OB_USER,
+            password=OB_PASSWORD
+        )
+
+        # Test connection
+        try:
+            result = client._server._execute("SELECT 1 as test")
+            assert result and result[0].get("test") == 1
+        except Exception as exc:
+            pytest.fail(f"OceanBase connection failed ({OB_HOST}:{OB_PORT}): {exc}")
+        self._test_metadata_array_in_overlap(client)
+    
+    def test_embedded_metadata_array_nin_overlap(self):
+        """
+        Regression test for JSON array $nin operator with embedded client.
+        Tests that tags=["ml","ai"] is excluded by $nin ["ml","python"] via JSON_OVERLAPS.
+        """
+        try:
+            import pylibseekdb  # noqa: F401
+        except ImportError:
+            pytest.skip("seekdb embedded package is not installed")
+
+        client = pyseekdb.Client(
+            path=SEEKDB_PATH,
+            database=SEEKDB_DATABASE
+        )
+
+        collection_name = f"test_tags_nin_{int(time.time() * 1000)}"
+        collection = client.get_or_create_collection(
+            name=collection_name,
+            embedding_function=pyseekdb.DefaultEmbeddingFunction(),
+        )
+
+        try:
+            # Insert two records: one with overlap, one without
+            collection.add(
+                ids=["id1", "id2"],
+                documents=["", ""],
+                metadatas=[
+                    {"category": "AI", "tags": ["ml", "ai"]},  # has overlap with ["ml", "python"]
+                    {"category": "Web", "tags": ["java", "cpp"]},  # no overlap with ["ml", "python"]
+                ],
+            )
+
+            result = collection.get(
+                where={"tags": {"$nin": ["ml", "python"]}},
+                include=["metadatas", "ids"],
+            )
+
+            # Expect 1 row (id2) because its tags have no overlap with the exclusion list
+            assert result is not None
+            assert "ids" in result
+            assert len(result["ids"]) == 1
+            assert "id2" in result["ids"]
+            assert "id1" not in result["ids"]
+            assert result["metadatas"][0].get("tags") == ["java", "cpp"]
+        finally:
+            try:
+                client.delete_collection(name=collection_name)
+            except Exception as cleanup_error:  # pragma: no cover
+                print(f"Warning: cleanup failed for {collection_name}: {cleanup_error}")
+    
+    def test_server_metadata_array_nin_overlap(self):
+        """
+        Regression test for JSON array $nin operator with server client.
+        Tests that tags=["ml","ai"] is excluded by $nin ["ml","python"] via JSON_OVERLAPS.
+        """
+        client = pyseekdb.Client(
+            host=SERVER_HOST,
+            port=SERVER_PORT,
+            tenant="sys",
+            database=SERVER_DATABASE,
+            user=SERVER_USER,
+            password=SERVER_PASSWORD
+        )
+
+        # Test connection
+        try:
+            result = client._server._execute("SELECT 1 as test")
+            assert result and result[0].get("test") == 1
+        except Exception as exc:
+            pytest.fail(f"seekdb server connection failed ({SERVER_HOST}:{SERVER_PORT}): {exc}")
+
+        collection_name = f"test_tags_nin_{int(time.time() * 1000)}"
+        collection = client.get_or_create_collection(
+            name=collection_name,
+            embedding_function=pyseekdb.DefaultEmbeddingFunction(),
+        )
+
+        try:
+            # Insert two records: one with overlap, one without
+            collection.add(
+                ids=["id1", "id2"],
+                documents=["", ""],
+                metadatas=[
+                    {"category": "AI", "tags": ["ml", "ai"]},  # has overlap with ["ml", "python"]
+                    {"category": "Web", "tags": ["java", "cpp"]},  # no overlap with ["ml", "python"]
+                ],
+            )
+
+            result = collection.get(
+                where={"tags": {"$nin": ["ml", "python"]}},
+                include=["metadatas", "ids"],
+            )
+
+            # Expect 1 row (id2) because its tags have no overlap with the exclusion list
+            assert result is not None
+            assert "ids" in result
+            assert len(result["ids"]) == 1
+            assert "id2" in result["ids"]
+            assert "id1" not in result["ids"]
+            assert result["metadatas"][0].get("tags") == ["java", "cpp"]
+        finally:
+            try:
+                client.delete_collection(name=collection_name)
+            except Exception as cleanup_error:  # pragma: no cover
+                print(f"Warning: cleanup failed for {collection_name}: {cleanup_error}")
+    
+    def test_oceanbase_metadata_array_nin_overlap(self):
+        """
+        Regression test for JSON array $nin operator with OceanBase client.
+        Tests that tags=["ml","ai"] is excluded by $nin ["ml","python"] via JSON_OVERLAPS.
+        """
+        client = pyseekdb.Client(
+            host=OB_HOST,
+            port=OB_PORT,
+            tenant=OB_TENANT,
+            database=OB_DATABASE,
+            user=OB_USER,
+            password=OB_PASSWORD
+        )
+
+        # Test connection
+        try:
+            result = client._server._execute("SELECT 1 as test")
+            assert result and result[0].get("test") == 1
+        except Exception as exc:
+            pytest.fail(f"OceanBase connection failed ({OB_HOST}:{OB_PORT}): {exc}")
+
+        collection_name = f"test_tags_nin_{int(time.time() * 1000)}"
+        collection = client.get_or_create_collection(
+            name=collection_name,
+            embedding_function=pyseekdb.DefaultEmbeddingFunction(),
+        )
+
+        try:
+            # Insert two records: one with overlap, one without
+            collection.add(
+                ids=["id1", "id2"],
+                documents=["", ""],
+                metadatas=[
+                    {"category": "AI", "tags": ["ml", "ai"]},  # has overlap with ["ml", "python"]
+                    {"category": "Web", "tags": ["java", "cpp"]},  # no overlap with ["ml", "python"]
+                ],
+            )
+
+            result = collection.get(
+                where={"tags": {"$nin": ["ml", "python"]}},
+                include=["metadatas", "ids"],
+            )
+
+            # Expect 1 row (id2) because its tags have no overlap with the exclusion list
+            assert result is not None
+            assert "ids" in result
+            assert len(result["ids"]) == 1
+            assert "id2" in result["ids"]
+            assert "id1" not in result["ids"]
+            assert result["metadatas"][0].get("tags") == ["java", "cpp"]
+        finally:
+            try:
+                client.delete_collection(name=collection_name)
+            except Exception as cleanup_error:  # pragma: no cover
+                print(f"Warning: cleanup failed for {collection_name}: {cleanup_error}")
     
     def test_embedded_collection_get(self):
         """Test collection.get() with embedded client"""
@@ -163,90 +571,12 @@ class TestCollectionGet:
         )
         
         try:
-            # Insert test data and get IDs
             inserted_ids = self._insert_test_data(client, collection_name)
             assert len(inserted_ids) > 0, f"Failed to get inserted IDs. Expected at least 1, got {len(inserted_ids)}"
             if len(inserted_ids) < 5:
                 print(f"   Warning: Expected 5 inserted IDs, but got {len(inserted_ids)}")
-            
-            # Test 1: Get by single ID
-            print(f"\n✅ Testing get by single ID for embedded client")
-            results = collection.get(ids=inserted_ids[0])
-            assert results is not None
-            assert "ids" in results
-            assert len(results["ids"]) == 1
-            print(f"   Found {len(results['ids'])} result for ID={inserted_ids[0]}")
-            
-            # Test 2: Get by multiple IDs
-            print(f"✅ Testing get by multiple IDs")
-            if len(inserted_ids) >= 2:
-                results = collection.get(ids=inserted_ids[:2])
-                assert results is not None
-                assert "ids" in results
-                assert len(results["ids"]) <= 2
-                print(f"   Found {len(results['ids'])} results for IDs={inserted_ids[:2]}")
-            
-            # Test 3: Get by metadata filter
-            print(f"✅ Testing get with metadata filter")
-            results = collection.get(
-                where={"category": {"$eq": "AI"}},
-                limit=10
-            )
-            assert results is not None
-            assert "ids" in results
-            assert len(results["ids"]) > 0
-            print(f"   Found {len(results['ids'])} results with category='AI'")
-            
-            # Test 4: Get by document filter
-            print(f"✅ Testing get with document filter")
-            results = collection.get(
-                where_document={"$contains": "machine learning"},
-                limit=10
-            )
-            assert results is not None
-            assert "ids" in results
-            print(f"   Found {len(results['ids'])} results containing 'machine learning'")
-            
-            # Test 5: Get with include parameter
-            print(f"✅ Testing get with include parameter")
-            results = collection.get(
-                ids=inserted_ids[:2],
-                include=["documents", "metadatas"]
-            )
-            assert results is not None
-            assert isinstance(results, dict), "Should return dict"
-            assert "ids" in results
-            assert "documents" in results
-            assert "metadatas" in results
-            assert len(results["ids"]) == 2
-            print(f"   Found {len(results['ids'])} results with documents and metadatas")
-            
-            # Test 6: Get all data with limit
-            print(f"✅ Testing get all data with limit")
-            results = collection.get(limit=3)
-            assert results is not None
-            assert "ids" in results
-            assert len(results["ids"]) <= 3
-            print(f"   Found {len(results['ids'])} results (limit=3)")
-            
-            # Test 7: Get by multiple IDs (should return dict with all IDs)
-            print(f"✅ Testing get by multiple IDs (returns dict)")
-            if len(inserted_ids) >= 3:
-                results = collection.get(ids=inserted_ids[:3])
-                assert results is not None
-                assert isinstance(results, dict), "Should return dict"
-                assert "ids" in results
-                assert len(results["ids"]) <= 3
-                print(f"   Found {len(results['ids'])} results for {len(inserted_ids[:3])} IDs")
-            
-            # Test 8: Single ID returns dict format
-            print(f"✅ Testing single ID returns dict format")
-            results = collection.get(ids=inserted_ids[0])
-            assert results is not None
-            assert isinstance(results, dict), "Should return dict"
-            assert "ids" in results
-            assert len(results["ids"]) == 1
-            print(f"   Single result with {len(results['ids'])} item")
+
+            self._test_collection_get(collection, inserted_ids)
             
         finally:
             # Cleanup
@@ -297,110 +627,8 @@ class TestCollectionGet:
             assert len(inserted_ids) > 0, f"Failed to get inserted IDs. Expected at least 1, got {len(inserted_ids)}"
             if len(inserted_ids) < 5:
                 print(f"   Warning: Expected 5 inserted IDs, but got {len(inserted_ids)}")
-            
-            # Test 1: Get by single ID
-            print(f"\n✅ Testing get by single ID for server client")
-            results = collection.get(ids=inserted_ids[0])
-            assert results is not None
-            assert len(results["ids"]) == 1
-            print(f"   Found {len(results['ids'])} result for ID={inserted_ids[0]}")
-            
-            # Test 2: Get by multiple IDs
-            print(f"✅ Testing get by multiple IDs")
-            if len(inserted_ids) >= 3:
-                results = collection.get(ids=inserted_ids[:3])
-                assert results is not None
-                assert len(results["ids"]) <= 3
-                print(f"   Found {len(results['ids'])} results for IDs={inserted_ids[:3]}")
-            
-            # Test 3: Get by metadata filter with comparison operator
-            print(f"✅ Testing get with metadata filter ($gte)")
-            results = collection.get(
-                where={"score": {"$gte": 90}},
-                limit=10
-            )
-            assert results is not None
-            assert len(results["ids"]) > 0
-            print(f"   Found {len(results['ids'])} results with score >= 90")
-            
-            # Test 4: Get by combined metadata filters
-            print(f"✅ Testing get with combined metadata filters")
-            results = collection.get(
-                where={"category": {"$eq": "AI"}, "score": {"$gte": 90}},
-                limit=10
-            )
-            assert results is not None
-            print(f"   Found {len(results['ids'])} results with category='AI' and score >= 90")
-            
-            # Test 5: Get by document filter
-            print(f"✅ Testing get with document filter")
-            results = collection.get(
-                where_document={"$contains": "Python"},
-                limit=10
-            )
-            assert results is not None
-            print(f"   Found {len(results['ids'])} results containing 'Python'")
-            
-            # Test 6: Get with $in operator
-            print(f"✅ Testing get with $in operator")
-            results = collection.get(
-                where={"tag": {"$in": ["ml", "python"]}},
-                limit=10
-            )
-            assert results is not None
-            print(f"   Found {len(results['ids'])} results with tag in ['ml', 'python']")
-            
-            # Test 7: Get with limit and offset
-            print(f"✅ Testing get with limit and offset")
-            results = collection.get(limit=2, offset=1)
-            assert results is not None
-            assert len(results["ids"]) <= 2
-            print(f"   Found {len(results['ids'])} results (limit=2, offset=1)")
-            
-            # Test 8: Get with include parameter
-            print(f"✅ Testing get with include parameter")
-            results = collection.get(
-                ids=inserted_ids[:2],
-                include=["documents", "metadatas", "embeddings"]
-            )
-            assert results is not None
-            assert isinstance(results, dict), "Should return dict"
-            assert "ids" in results
-            assert "documents" in results
-            assert "metadatas" in results
-            assert "embeddings" in results
-            assert len(results["ids"]) == 2
-            print(f"   Found {len(results['ids'])} results with all fields")
-            
-            # Test 9: Get by multiple IDs (should return dict)
-            print(f"✅ Testing get by multiple IDs (returns dict)")
-            if len(inserted_ids) >= 3:
-                results = collection.get(ids=inserted_ids[:3])
-                assert results is not None
-                assert isinstance(results, dict), "Should return dict"
-                assert "ids" in results
-                assert len(results["ids"]) <= 3
-                print(f"   Found {len(results['ids'])} results for {len(inserted_ids[:3])} IDs")
-            
-            # Test 10: Single ID returns dict format
-            print(f"✅ Testing single ID returns dict format")
-            results = collection.get(ids=inserted_ids[0])
-            assert results is not None
-            assert isinstance(results, dict), "Should return dict"
-            assert "ids" in results
-            assert len(results["ids"]) == 1
-            print(f"   Single result with {len(results['ids'])} item")
-            
-            # Test 11: Get with filters returns dict format
-            print(f"✅ Testing get with filters returns dict format")
-            results = collection.get(
-                where={"category": {"$eq": "AI"}},
-                limit=10
-            )
-            assert results is not None
-            assert isinstance(results, dict), "Should return dict"
-            assert "ids" in results
-            print(f"   Found {len(results['ids'])} items matching filter")
+
+            self._test_collection_get(collection, inserted_ids)
             
         finally:
             # Cleanup
@@ -452,122 +680,7 @@ class TestCollectionGet:
             if len(inserted_ids) < 5:
                 print(f"   Warning: Expected 5 inserted IDs, but got {len(inserted_ids)}")
             
-            # Test 1: Get by single ID
-            print(f"\n✅ Testing get by single ID for OceanBase client")
-            results = collection.get(ids=inserted_ids[0])
-            assert results is not None
-            assert len(results["ids"]) == 1
-            print(f"   Found {len(results['ids'])} result for ID={inserted_ids[0]}")
-            
-            # Test 2: Get by multiple IDs
-            print(f"✅ Testing get by multiple IDs")
-            if len(inserted_ids) >= 3:
-                results = collection.get(ids=inserted_ids[:3])
-                assert results is not None
-                assert len(results["ids"]) <= 3
-                print(f"   Found {len(results['ids'])} results for IDs={inserted_ids[:3]}")
-            
-            # Test 3: Get by metadata filter
-            print(f"✅ Testing get with metadata filter")
-            results = collection.get(
-                where={"category": {"$eq": "AI"}},
-                limit=10
-            )
-            assert results is not None
-            assert len(results) > 0
-            print(f"   Found {len(results['ids'])} results with category='AI'")
-            
-            # Test 4: Get by logical operators ($or) with simplified equality
-            print(f"✅ Testing get with logical operators ($or)")
-            results = collection.get(
-                where={
-                    "$or": [
-                        {"category": "AI"},
-                        {"tag": "python"}
-                    ]
-                },
-                limit=10
-            )
-            assert results is not None
-            print(f"   Found {len(results['ids'])} results with $or condition")
-            
-            # Test 5: Get by document filter
-            print(f"✅ Testing get with document filter")
-            results = collection.get(
-                where_document={"$contains": "machine"},
-                limit=10
-            )
-            assert results is not None
-            print(f"   Found {len(results['ids'])} results containing 'machine'")
-            
-            # Test 6: Get with combined filters (where + where_document)
-            print(f"✅ Testing get with combined filters")
-            results = collection.get(
-                where={"category": {"$eq": "AI"}},
-                where_document={"$contains": "machine"},
-                limit=10
-            )
-            assert results is not None
-            print(f"   Found {len(results['ids'])} results matching all filters")
-            
-            # Test 7: Get with limit and offset
-            print(f"✅ Testing get with limit and offset")
-            results = collection.get(limit=2, offset=2)
-            assert results is not None
-            assert len(results["ids"]) <= 2
-            print(f"   Found {len(results['ids'])} results (limit=2, offset=2)")
-            
-            # Test 8: Get all data without filters
-            print(f"✅ Testing get all data without filters")
-            results = collection.get(limit=100)
-            assert results is not None
-            assert len(results["ids"]) > 0
-            print(f"   Found {len(results['ids'])} total results")
-            
-            # Test 9: Get with include parameter
-            print(f"✅ Testing get with include parameter")
-            results = collection.get(
-                ids=inserted_ids[:2],
-                include=["documents", "metadatas", "embeddings"]
-            )
-            assert results is not None
-            assert isinstance(results, dict), "Should return dict"
-            assert "ids" in results
-            assert "documents" in results
-            assert "metadatas" in results
-            assert "embeddings" in results
-            assert len(results["ids"]) == 2
-            print(f"   Found {len(results['ids'])} results with all fields")
-            
-            # Test 10: Get by multiple IDs (should return dict)
-            print(f"✅ Testing get by multiple IDs (returns dict)")
-            if len(inserted_ids) >= 3:
-                results = collection.get(ids=inserted_ids[:3])
-                assert results is not None
-                assert isinstance(results, dict), "Should return dict"
-                assert "ids" in results
-                assert len(results["ids"]) <= 3
-                print(f"   Found {len(results['ids'])} results for {len(inserted_ids[:3])} IDs")
-            
-            # Test 11: Single ID returns dict format
-            print(f"✅ Testing single ID returns dict format")
-            results = collection.get(ids=inserted_ids[0])
-            assert results is not None
-            assert isinstance(results, dict), "Should return dict"
-            assert "ids" in results
-            assert len(results["ids"]) == 1
-            print(f"   Single result with {len(results['ids'])} item")
-            
-            # Test 12: Get with filters returns dict format
-            print(f"✅ Testing get with filters returns dict format")
-            results = collection.get(
-                where={"category": {"$eq": "AI"}},
-                limit=10
-            )
-            assert results is not None
-            assert isinstance(results, dict), "Should return dict"
-            assert "ids" in results
-            print(f"   Found {len(results['ids'])} items matching filter")
+            self._test_collection_get(collection, inserted_ids)
             
         finally:
             # Cleanup
@@ -583,7 +696,7 @@ if __name__ == "__main__":
     print("\n" + "="*60)
     print("pyseekdb - Collection Get Tests")
     print("="*60)
-    print(f"\nEnvironment Variable Configuration:")
+    print("\nEnvironment Variable Configuration:")
     print(f"  Embedded mode: path={SEEKDB_PATH}, database={SEEKDB_DATABASE}")
     print(f"  Server mode: {SERVER_USER}@{SERVER_HOST}:{SERVER_PORT}/{SERVER_DATABASE}")
     print(f"  OceanBase mode: {OB_USER}@{OB_TENANT} -> {OB_HOST}:{OB_PORT}/{OB_DATABASE}")

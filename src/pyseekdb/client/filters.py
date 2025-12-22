@@ -6,6 +6,7 @@ Supports:
 - Logical operators: $or, $and, $not
 - Document filters: $contains, $regex
 """
+import json
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -125,14 +126,33 @@ class FilterBuilder:
                         params.append(op_value)
                     
                     elif op == "$in":
-                        placeholders = ", ".join(["%s"] * len(op_value))
-                        clauses.append(f"JSON_EXTRACT({metadata_column}, '$.{key}') IN ({placeholders})")
-                        params.extend(op_value)
+                        # Parameter validation
+                        if not isinstance(op_value, (list, tuple)):
+                            op_value = [op_value]
+                        if len(op_value) == 0:
+                            clauses.append("FALSE")  # empty $in should match nothing
+                            continue
+                        
+                        # Use single JSON_OVERLAPS (supports both scalar and array fields)
+                        json_array = json.dumps(list(op_value))
+                        clauses.append(
+                            f"JSON_OVERLAPS(JSON_EXTRACT({metadata_column}, '$.{key}'), CAST(%s AS JSON))"
+                        )
+                        params.append(json_array)
                     
                     elif op == "$nin":
-                        placeholders = ", ".join(["%s"] * len(op_value))
-                        clauses.append(f"JSON_EXTRACT({metadata_column}, '$.{key}') NOT IN ({placeholders})")
-                        params.extend(op_value)
+                        # Parameter validation
+                        if not isinstance(op_value, (list, tuple)):
+                            op_value = [op_value]
+                        if len(op_value) == 0:
+                            continue  # empty $nin matches everything
+                        
+                        # Use single JSON_OVERLAPS (supports both scalar and array fields)
+                        json_array = json.dumps(list(op_value))
+                        clauses.append(
+                            f"NOT JSON_OVERLAPS(JSON_EXTRACT({metadata_column}, '$.{key}'), CAST(%s AS JSON))"
+                        )
+                        params.append(json_array)
             
             else:
                 # Direct equality comparison
