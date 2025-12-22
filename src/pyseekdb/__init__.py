@@ -4,39 +4,58 @@ pyseekdb - Unified vector database client wrapper
 Based on seekdb and pymysql, providing a simple and unified API.
 
 Supports two modes:
-1. Embedded mode - using local seekdb
-2. Remote server mode - connecting to remote server via pymysql (supports both seekdb Server and OceanBase Server)
+
+* **Embedded mode** - using local seekdb
+* **Remote server mode** - connecting to remote server via pymysql (supports both seekdb Server and OceanBase Server)
 
 Examples:
-    >>> import pyseekdb
 
-    >>> # Embedded mode - Collection management
-    >>> client = pyseekdb.Client(path="./seekdb", database="test")
+Embedded mode - Collection management:
 
-    >>> # Remote server mode (seekdb Server) - Collection management
-    >>> client = pyseekdb.Client(
-    ...     host='localhost',
-    ...     port=2881,
-    ...     tenant="sys",
-    ...     database="test",
-    ...     user="root",
-    ...     password="pass"
-    ... )
+.. code-block:: python
 
-    >>> # Remote server mode (OceanBase Server) - Collection management
-    >>> client = pyseekdb.Client(
-    ...     host='localhost',
-    ...     port=2881,
-    ...     tenant="test",
-    ...     database="test",
-    ...     user="root",
-    ...     password="pass"
-    ... )
+    import pyseekdb
+    client = pyseekdb.Client(path="./seekdb.db", database="test")
+    collection = client.get_or_create_collection("my_collection")
 
-    >>> # Admin client - Database management
-    >>> admin = pyseekdb.AdminClient(path="./seekdb")
-    >>> admin.create_database("new_db")
-    >>> databases = admin.list_databases()
+Remote server mode (seekdb Server) - Collection management:
+
+.. code-block:: python
+
+    import pyseekdb
+    client = pyseekdb.Client(
+        host='localhost',
+        port=2881,
+        tenant="sys",
+        database="test",
+        user="root",
+        password="pass"
+    )
+    collection = client.get_or_create_collection("my_collection")
+
+Remote server mode (OceanBase Server) - Collection management:
+
+.. code-block:: python
+
+    import pyseekdb
+    client = pyseekdb.Client(
+        host='localhost',
+        port=2881,
+        tenant="test",
+        database="test",
+        user="root",
+        password="pass"
+    )
+    collection = client.get_or_create_collection("my_collection")
+
+Admin client - Database management:
+
+.. code-block:: python
+
+    import pyseekdb
+    admin = pyseekdb.AdminClient(path="./seekdb.db")
+    admin.create_database("new_db")
+    databases = admin.list_databases()
 """
 import importlib.metadata
 
