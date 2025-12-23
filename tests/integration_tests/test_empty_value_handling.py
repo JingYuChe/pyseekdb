@@ -1,149 +1,63 @@
 """
 Empty value handling tests - testing upsert operations with empty strings, empty lists, and None values
-Supports configuring connection parameters via environment variables
 Tests the fixes for falsy value handling bugs in _collection_upsert method
+Refactored to use db_client fixture for parameterized testing
 """
 import pytest
-import sys
-import os
 import time
-import uuid
-from pathlib import Path
-
-# Add project path
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
 
 import pyseekdb
-from pyseekdb.client.meta_info import CollectionNames, CollectionFieldNames
-
-
-# ==================== Environment Variable Configuration ====================
-# Embedded mode
-SEEKDB_PATH = os.environ.get('SEEKDB_PATH', os.path.join(project_root, "seekdb.db"))
-SEEKDB_DATABASE = os.environ.get('SEEKDB_DATABASE', 'test')
-
-# Server mode
-SERVER_HOST = os.environ.get('SERVER_HOST', '127.0.0.1')
-SERVER_PORT = int(os.environ.get('SERVER_PORT', '2881'))
-SERVER_DATABASE = os.environ.get('SERVER_DATABASE', 'test')
-SERVER_USER = os.environ.get('SERVER_USER', 'root')
-SERVER_PASSWORD = os.environ.get('SERVER_PASSWORD', '')
-
-# OceanBase mode
-OB_HOST = os.environ.get('OB_HOST', 'localhost')
-OB_PORT = int(os.environ.get('OB_PORT', '11202'))
-OB_TENANT = os.environ.get('OB_TENANT', 'mysql')
-OB_DATABASE = os.environ.get('OB_DATABASE', 'test')
-OB_USER = os.environ.get('OB_USER', 'root')
-OB_PASSWORD = os.environ.get('OB_PASSWORD', '')
 
 
 class TestEmptyValueHandling:
     """Test empty value handling in upsert operations for all three modes"""
     
-    def _cleanup_collection(self, client, name: str):
-        """Clean up test collection"""
-        try:
-            client.delete_collection(name=name)
-        except Exception as cleanup_error:  # pragma: no cover - best effort cleanup
-            print(f"Warning: failed to cleanup collection '{name}': {cleanup_error}")
-    
-    def _create_collection(self, client, mode_name: str):
-        """Create test collection with unique name"""
-        collection_name = f"test_empty_values_{mode_name}_{int(time.time() * 1000)}"
-        collection = client.get_or_create_collection(
+    def test_empty_value_handling(self, db_client):
+        """
+        Test empty value handling with all client modes.
+        
+        Tests upsert operations with:
+        - Empty strings
+        - Whitespace strings
+        - String "0" and "false"
+        - Empty metadata
+        - None values
+        
+        Automatically runs for: embedded, server, oceanbase
+        """
+        collection_name = f"test_empty_values_{int(time.time() * 1000)}"
+        collection = db_client.get_or_create_collection(
             name=collection_name,
             embedding_function=pyseekdb.DefaultEmbeddingFunction()
         )
-        return collection_name, collection
-    
-    def test_embedded_empty_value_handling(self):
-        """Test empty value handling with embedded client (SeekdbEmbedded)"""
-        try:
-            import pylibseekdb  # noqa: F401
-        except ImportError:
-            pytest.fail("seekdb embedded package is not installed")
-        
-        client = pyseekdb.Client(path=SEEKDB_PATH, database=SEEKDB_DATABASE)
-        collection_name, collection = self._create_collection(client, "embedded")
         
         try:
-            self._run_empty_value_tests(collection, "embedded")
+            # Test 1: Upsert update path - empty string document (Line 1072 fix)
+            self._test_upsert_update_empty_document(collection)
+            
+            # Test 2: Upsert insert path - empty string document (Line 1093 fix)  
+            self._test_upsert_insert_empty_document(collection)
+            
+            # Test 3: Upsert update path - empty metadata (should work correctly)
+            self._test_upsert_empty_metadata(collection)
+            
+            # Test 4: Add method baseline - should work correctly
+            self._test_add_empty_values_baseline(collection)
+            
+            # Test 5: Mixed empty and non-empty values in batch operations
+            self._test_mixed_empty_values_batch(collection)
+            
+            print(f"✅ All empty value tests passed")
         finally:
-            self._cleanup_collection(client, collection_name)
+            # Cleanup
+            try:
+                db_client.delete_collection(name=collection_name)
+            except Exception as cleanup_error:
+                print(f"Warning: failed to cleanup collection '{collection_name}': {cleanup_error}")
     
-    def test_server_empty_value_handling(self):
-        """Test empty value handling with seekdb server (RemoteServerClient default tenant)"""
-        client = pyseekdb.Client(
-            host=SERVER_HOST,
-            port=SERVER_PORT,
-            tenant="sys",
-            database=SERVER_DATABASE,
-            user=SERVER_USER,
-            password=SERVER_PASSWORD
-        )
-        
-        # Test connection
-        try:
-            result = client._server._execute("SELECT 1 as test")
-            assert result and result[0].get("test") == 1
-        except Exception as exc:
-            pytest.fail(f"seekdb server connection failed ({SERVER_HOST}:{SERVER_PORT}): {exc}")
-        
-        collection_name, collection = self._create_collection(client, "server")
-        
-        try:
-            self._run_empty_value_tests(collection, "server")
-        finally:
-            self._cleanup_collection(client, collection_name)
-    
-    def test_oceanbase_empty_value_handling(self):
-        """Test empty value handling with OceanBase deployment"""
-        client = pyseekdb.Client(
-            host=OB_HOST,
-            port=OB_PORT,
-            tenant=OB_TENANT,
-            database=OB_DATABASE,
-            user=OB_USER,
-            password=OB_PASSWORD
-        )
-        
-        # Test connection
-        try:
-            result = client._server._execute("SELECT 1 as test")
-            assert result and result[0].get("test") == 1
-        except Exception as exc:
-            pytest.fail(f"OceanBase connection failed ({OB_HOST}:{OB_PORT}): {exc}")
-        
-        collection_name, collection = self._create_collection(client, "oceanbase")
-        
-        try:
-            self._run_empty_value_tests(collection, "oceanbase")
-        finally:
-            self._cleanup_collection(client, collection_name)
-    
-    def _run_empty_value_tests(self, collection, mode_name):
-        """Run empty value handling tests for a given collection"""
-        print(f"\n🧪 Testing empty value handling for {mode_name} client")
-        
-        # Test 1: Upsert update path - empty string document (Line 1072 fix)
-        self._test_upsert_update_empty_document(collection, mode_name)
-        
-        # Test 2: Upsert insert path - empty string document (Line 1093 fix)  
-        self._test_upsert_insert_empty_document(collection, mode_name)
-        
-        # Test 3: Upsert update path - empty metadata (should work correctly)
-        self._test_upsert_empty_metadata(collection, mode_name)
-        
-        # Test 4: Add method baseline - should work correctly
-        self._test_add_empty_values_baseline(collection, mode_name)
-        
-        print(f"✅ All empty value tests passed for {mode_name} client")
-    
-    def _test_upsert_update_empty_document(self, collection, mode_name):
+    def _test_upsert_update_empty_document(self, collection):
         """Test upsert update path with empty string document (Line 1072 fix)"""
-        print(f"\n🔍 Testing upsert update path - empty document ({mode_name})")
+        print(f"\n🔍 Testing upsert update path - empty document")
         
         # Add initial document
         test_id = f"update_test_{int(time.time() * 1000)}"
@@ -183,9 +97,9 @@ class TestEmptyValueHandling:
             
             print(f"   ✅ {description} correctly stored as {repr(actual_doc)}")
     
-    def _test_upsert_insert_empty_document(self, collection, mode_name):
+    def _test_upsert_insert_empty_document(self, collection):
         """Test upsert insert path with empty string document (Line 1093 fix)"""
-        print(f"\n🔍 Testing upsert insert path - empty document ({mode_name})")
+        print(f"\n🔍 Testing upsert insert path - empty document")
         
         # Test cases for empty document values in insert path
         test_cases = [
@@ -196,7 +110,7 @@ class TestEmptyValueHandling:
         ]
         
         for i, (doc_value, description) in enumerate(test_cases):
-            test_id = f"insert_test_{mode_name}_{i}_{int(time.time() * 1000)}"
+            test_id = f"insert_test_{i}_{int(time.time() * 1000)}"
             print(f"   Testing {description}: {repr(doc_value)}")
             
             # Upsert non-existing record (triggers Line 1093 fix)
@@ -218,9 +132,9 @@ class TestEmptyValueHandling:
             
             print(f"   ✅ {description} correctly stored as {repr(actual_doc)}")
     
-    def _test_upsert_empty_metadata(self, collection, mode_name):
+    def _test_upsert_empty_metadata(self, collection):
         """Test upsert with empty metadata (should work correctly)"""
-        print(f"\n🔍 Testing upsert empty metadata ({mode_name})")
+        print(f"\n🔍 Testing upsert empty metadata")
         
         test_id = f"meta_test_{int(time.time() * 1000)}"
         
@@ -260,9 +174,9 @@ class TestEmptyValueHandling:
             
             print(f"   ✅ {description} correctly stored as {actual_meta}")
     
-    def _test_add_empty_values_baseline(self, collection, mode_name):
+    def _test_add_empty_values_baseline(self, collection):
         """Test add method with empty values as baseline (should work correctly)"""
-        print(f"\n🔍 Testing add method baseline - empty values ({mode_name})")
+        print(f"\n🔍 Testing add method baseline - empty values")
         
         # Test cases for add method with empty values
         test_cases = [
@@ -272,7 +186,7 @@ class TestEmptyValueHandling:
         ]
         
         for i, (doc_value, description) in enumerate(test_cases):
-            test_id = f"add_baseline_{mode_name}_{i}_{int(time.time() * 1000)}"
+            test_id = f"add_baseline_{i}_{int(time.time() * 1000)}"
             print(f"   Testing {description}: {repr(doc_value)}")
             
             # Add with empty document value (baseline test)
@@ -290,21 +204,6 @@ class TestEmptyValueHandling:
             assert actual_doc == doc_value, f"Expected {repr(doc_value)}, got {repr(actual_doc)} for {description}"
             
             print(f"   ✅ {description} correctly stored as {repr(actual_doc)}")
-    
-    def test_edge_cases_and_regression(self):
-        """Test edge cases and regression scenarios using embedded client"""
-        try:
-            import pylibseekdb  # noqa: F401
-        except ImportError:
-            pytest.fail("seekdb embedded package is not installed")
-        
-        client = pyseekdb.Client(path=SEEKDB_PATH, database=SEEKDB_DATABASE)
-        collection_name, collection = self._create_collection(client, "edge_cases")
-        
-        try:
-            self._test_mixed_empty_values_batch(collection)
-        finally:
-            self._cleanup_collection(client, collection_name)
     
     def _test_mixed_empty_values_batch(self, collection):
         """Test mixed empty and non-empty values in batch operations"""

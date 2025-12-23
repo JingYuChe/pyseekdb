@@ -8,43 +8,12 @@ Tests the escape_string fixes across all database operations to ensure:
 4. All escape_string fixes work correctly
 
 This test covers ADD, UPDATE, UPSERT, QUERY, and GET operations.
+Refactored to use db_client fixture for parameterized testing.
 """
-import os
-import sys
-import tempfile
-import shutil
-import json
-from pathlib import Path
 from typing import Dict, Any, List
-
 import pytest
 
-# Add project path
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
-
 import pyseekdb
-
-
-# ==================== Environment Variable Configuration ====================
-# Embedded mode
-SEEKDB_PATH = os.environ.get('SEEKDB_PATH', os.path.join(project_root, "seekdb_store"))
-SEEKDB_DATABASE = os.environ.get('SEEKDB_DATABASE', 'test')
-
-# Server mode
-SERVER_HOST = os.environ.get('SERVER_HOST', '127.0.0.1')
-SERVER_PORT = int(os.environ.get('SERVER_PORT', '2881'))
-SERVER_DATABASE = os.environ.get('SERVER_DATABASE', 'test')
-SERVER_USER = os.environ.get('SERVER_USER', 'root')
-SERVER_PASSWORD = os.environ.get('SERVER_PASSWORD', '')
-
-# OceanBase mode
-OB_HOST = os.environ.get('OB_HOST', 'localhost')
-OB_PORT = int(os.environ.get('OB_PORT', '11202'))
-OB_TENANT = os.environ.get('OB_TENANT', 'mysql')
-OB_DATABASE = os.environ.get('OB_DATABASE', 'test')
-OB_USER = os.environ.get('OB_USER', 'root')
-OB_PASSWORD = os.environ.get('OB_PASSWORD', '')
 
 
 class TestSecuritySQLInjection:
@@ -113,27 +82,42 @@ class TestSecuritySQLInjection:
         except Exception:
             return False
     
-    def run_security_tests(self, client, admin, temp_dir=None):
-        """Run all security tests for a given client"""
+    def test_security_sql_injection(self, db_client):
+        """
+        Security SQL injection tests for all client modes.
+        
+        Tests all database operations (ADD, UPDATE, UPSERT, QUERY, GET) with:
+        - Single and double quotes
+        - Backslash characters
+        - SQL injection attempts
+        - Special characters (newlines, tabs)
+        - Unicode and emoji
+        
+        Automatically runs for: embedded, server, oceanbase
+        """
+        print(f"\n🔒 Running security SQL injection tests")
+        
         # Test each operation separately with its own collection to avoid ID conflicts
         
         # Test 1: ADD operation
-        self._run_single_test(client, "add_test", self._test_add_operation_security)
+        self._run_single_test(db_client, "add_test", self._test_add_operation_security)
         
         # Test 2: UPDATE operation  
-        self._run_single_test(client, "update_test", self._test_update_operation_security)
+        self._run_single_test(db_client, "update_test", self._test_update_operation_security)
         
         # Test 3: UPSERT operation
-        self._run_single_test(client, "upsert_test", self._test_upsert_operation_security)
+        self._run_single_test(db_client, "upsert_test", self._test_upsert_operation_security)
         
         # Test 4: QUERY operation
-        self._run_single_test(client, "query_test", self._test_query_operation_security)
+        self._run_single_test(db_client, "query_test", self._test_query_operation_security)
         
         # Test 5: GET operation
-        self._run_single_test(client, "get_test", self._test_get_operation_security)
+        self._run_single_test(db_client, "get_test", self._test_get_operation_security)
         
         # Test 6: Comprehensive workflow
-        self._run_single_test(client, "comprehensive_test", self._test_comprehensive_security_workflow)
+        self._run_single_test(db_client, "comprehensive_test", self._test_comprehensive_security_workflow)
+        
+        print(f"✅ All security SQL injection tests passed")
     
     def _run_single_test(self, client, test_name, test_method):
         """Run a single test with its own collection"""
@@ -147,10 +131,14 @@ class TestSecuritySQLInjection:
             test_method(collection)
         finally:
             # Cleanup
-            self._cleanup_collection(client, collection_name)
+            try:
+                client.delete_collection(name=collection_name)
+            except Exception as cleanup_error:
+                print(f"Warning: failed to cleanup collection '{collection_name}': {cleanup_error}")
     
     def _test_add_operation_security(self, collection):
         """Test ADD operation with security attack vectors"""
+        print(f"\n  🧪 Testing ADD operation security")
         test_cases = self.get_security_test_cases()
         
         for test_case in test_cases:
@@ -164,9 +152,12 @@ class TestSecuritySQLInjection:
             # Verify data integrity
             assert self.verify_data_integrity(collection, test_case), \
                 f"Data integrity failed for ADD operation: {test_case['description']}"
+        
+        print(f"     ✓ ADD operation passed ({len(test_cases)} test cases)")
     
     def _test_update_operation_security(self, collection):
         """Test UPDATE operation with security attack vectors"""
+        print(f"\n  🧪 Testing UPDATE operation security")
         test_cases = self.get_security_test_cases()
         
         # First add the data
@@ -197,9 +188,12 @@ class TestSecuritySQLInjection:
             }
             assert self.verify_data_integrity(collection, updated_test_case), \
                 f"Data integrity failed for UPDATE operation: {test_case['description']}"
+        
+        print(f"     ✓ UPDATE operation passed ({len(test_cases)} test cases)")
     
     def _test_upsert_operation_security(self, collection):
         """Test UPSERT operation with security attack vectors"""
+        print(f"\n  🧪 Testing UPSERT operation security")
         test_cases = self.get_security_test_cases()
         
         # Test UPSERT for new records
@@ -233,9 +227,12 @@ class TestSecuritySQLInjection:
             }
             assert self.verify_data_integrity(collection, upserted_test_case), \
                 f"Data integrity failed for UPSERT (existing) operation: {test_case['description']}"
+        
+        print(f"     ✓ UPSERT operation passed ({len(test_cases)} test cases)")
     
     def _test_query_operation_security(self, collection):
         """Test QUERY operation with security attack vectors"""
+        print(f"\n  🧪 Testing QUERY operation security")
         test_cases = self.get_security_test_cases()
         
         # First add test data
@@ -271,9 +268,13 @@ class TestSecuritySQLInjection:
                     
             except Exception as e:
                 pytest.fail(f"Query operation failed with security payload '{query_test['text']}': {e}")
+        
+        print(f"     ✓ QUERY operation passed ({len(query_tests)} test cases)")
     
     def _test_get_operation_security(self, collection):
         """Test GET operation with security attack vectors in IDs"""
+        print(f"\n  🧪 Testing GET operation security")
+        
         # Test with special character IDs
         special_ids = [
             "id_with_'quote",
@@ -304,9 +305,13 @@ class TestSecuritySQLInjection:
                 
             except Exception as e:
                 pytest.fail(f"GET operation failed with special ID '{special_id}': {e}")
+        
+        print(f"     ✓ GET operation passed ({len(special_ids)} test cases)")
     
     def _test_comprehensive_security_workflow(self, collection):
         """Test a comprehensive workflow with all operations and security payloads"""
+        print(f"\n  🧪 Testing comprehensive security workflow")
+        
         # This is a comprehensive test that combines all operations
         test_case = {
             "id": "comprehensive_'; DROP TABLE test; --",
@@ -355,115 +360,8 @@ class TestSecuritySQLInjection:
         )
         assert result is not None
         assert len(result["ids"]) > 0
-
-    def _cleanup_collection(self, client, name: str):
-        """Clean up test collection"""
-        try:
-            client.delete_collection(name=name)
-        except Exception as cleanup_error:  # pragma: no cover - best effort cleanup
-            print(f"Warning: failed to cleanup collection '{name}': {cleanup_error}")
-    
-    # ==================== Mode-specific Test Methods ====================
-    
-    def test_embedded_security_sql_injection(self):
-        """Security SQL injection tests using embedded client (SeekdbEmbedded)"""
-        try:
-            import pylibseekdb  # noqa: F401
-        except ImportError:
-            pytest.fail("seekdb embedded package is not installed")
         
-        # Use temporary directory for embedded mode
-        temp_dir = tempfile.mkdtemp(prefix="pyseekdb_security_test_")
-        
-        try:
-            admin = pyseekdb.AdminClient(path=temp_dir)
-            
-            # Create database
-            try:
-                admin.create_database(SEEKDB_DATABASE)
-            except:
-                pass  # Database might already exist
-                
-            client = pyseekdb.Client(path=temp_dir, database=SEEKDB_DATABASE)
-            
-            # Run all security tests
-            self.run_security_tests(client, admin, temp_dir)
-            
-        finally:
-            # Cleanup
-            try:
-                shutil.rmtree(temp_dir)
-            except:
-                pass
-    
-    def test_server_security_sql_injection(self):
-        """Security SQL injection tests using seekdb server (RemoteServerClient default tenant)"""
-        admin = pyseekdb.AdminClient(
-            host=SERVER_HOST,
-            port=SERVER_PORT,
-            user=SERVER_USER,
-            password=SERVER_PASSWORD
-        )
-        
-        # Create database
-        try:
-            admin.create_database(SERVER_DATABASE)
-        except:
-            pass  # Database might already exist
-            
-        client = pyseekdb.Client(
-            host=SERVER_HOST,
-            port=SERVER_PORT,
-            tenant="sys",
-            database=SERVER_DATABASE,
-            user=SERVER_USER,
-            password=SERVER_PASSWORD
-        )
-        
-        # Test connection
-        try:
-            result = client._server._execute("SELECT 1 as test")
-            assert result and result[0].get("test") == 1
-        except Exception as exc:
-            pytest.fail(f"seekdb server connection failed ({SERVER_HOST}:{SERVER_PORT}): {exc}")
-        
-        # Run all security tests
-        self.run_security_tests(client, admin)
-    
-    def test_oceanbase_security_sql_injection(self):
-        """Security SQL injection tests using OceanBase deployment"""
-        admin = pyseekdb.AdminClient(
-            host=OB_HOST,
-            port=OB_PORT,
-            tenant=OB_TENANT,
-            user=OB_USER,
-            password=OB_PASSWORD
-        )
-        
-        # Create database
-        try:
-            admin.create_database(OB_DATABASE)
-        except:
-            pass  # Database might already exist
-            
-        client = pyseekdb.Client(
-            host=OB_HOST,
-            port=OB_PORT,
-            tenant=OB_TENANT,
-            database=OB_DATABASE,
-            user=OB_USER,
-            password=OB_PASSWORD
-        )
-        
-        # Test connection
-        try:
-            result = client._server._execute("SELECT 1 as test")
-            assert result and result[0].get("test") == 1
-        except Exception as exc:
-            pytest.fail(f"OceanBase connection failed ({OB_HOST}:{OB_PORT}): {exc}")
-        
-        # Run all security tests
-        self.run_security_tests(client, admin)
+        print(f"     ✓ Comprehensive workflow passed")
 
 
 if __name__ == "__main__":
