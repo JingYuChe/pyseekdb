@@ -1,5 +1,5 @@
 """
-Client creation and connection tests - REFACTORED using db_client fixture
+Client creation and connection tests using db_client fixture
 Testing client creation, connection, and collection management for all three modes
 """
 import pytest
@@ -11,7 +11,7 @@ import pyseekdb
 from pyseekdb import HNSWConfiguration, Configuration, FulltextParserConfig
 
 
-class TestClientCreationRefactored:
+class TestClientCreation:
     """Test client creation and collection management using parameterized db_client fixture"""
     
     def test_client_creation_and_collection_management(self, db_client):

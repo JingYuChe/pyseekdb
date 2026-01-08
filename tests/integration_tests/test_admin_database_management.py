@@ -1,5 +1,5 @@
 """
-AdminClient database management tests - REFACTORED using admin_client fixture
+AdminClient database management tests using admin_client fixture
 Testing all database CRUD operations for all three modes
 """
 import pytest
@@ -7,7 +7,7 @@ import pytest
 import pyseekdb
 
 
-class TestAdminDatabaseManagementRefactored:
+class TestAdminDatabaseManagement:
     """Test AdminClient database management operations using parameterized admin_client fixture"""
     
     def test_admin_database_operations(self, admin_client):

@@ -1,6 +1,6 @@
 """
-Collection query tests - REFACTORED using db_client fixture
-Demonstrates how to use the new conftest.py fixtures to eliminate code duplication
+Collection query tests using db_client fixture
+Demonstrates how to use the conftest.py fixtures to eliminate code duplication
 """
 import pytest
 import time
@@ -10,7 +10,7 @@ import uuid
 import pyseekdb
 
 
-class TestCollectionQueryRefactored:
+class TestCollectionQuery:
     """Test collection.query() interface using parameterized db_client fixture"""
     
     def _insert_test_data(self, client, collection_name: str, dimension: int = 3):

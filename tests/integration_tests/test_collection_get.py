@@ -1,6 +1,5 @@
 """
-Collection get tests - testing collection.get() interface for all three modes
-Refactored to use db_client fixture for parameterized testing
+Collection get tests - testing collection.get() interface for all three modes using db_client fixture
 """
 import pytest
 import time

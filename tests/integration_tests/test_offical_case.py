@@ -1,5 +1,5 @@
 """
-Official example test case - REFACTORED using db_client fixture
+Official example test case using db_client fixture
 Verifies the documented quick-start workflow.
 
 The scenario mirrors `pyseekdb/examples/official_example.py` and covers:
@@ -69,7 +69,7 @@ def _run_official_example(collection):
     return results
 
 
-class TestOfficialExampleRefactored:
+class TestOfficialExample:
     """Test suite that mirrors the official example using parameterized db_client fixture."""
 
     def test_official_example(self, db_client):

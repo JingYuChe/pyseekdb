@@ -1,5 +1,5 @@
 """
-Collection hybrid search tests using HybridSearch builder - REFACTORED using db_client fixture
+Collection hybrid search tests using HybridSearch builder with db_client fixture
 Mirrors test_collection_hybrid_search.py but passes HybridSearch instances to collection.hybrid_search().
 """
 import pytest
@@ -23,7 +23,7 @@ from pyseekdb import (
 )
 
 
-class TestCollectionHybridSearchWithBuilderRefactored:
+class TestCollectionHybridSearchWithBuilder:
     """Test collection.hybrid_search() using HybridSearch builder with parameterized db_client fixture"""
 
     def _hs(self, collection, build):

@@ -1,5 +1,5 @@
 """
-Tests for fulltext parser configuration in collection creation - REFACTORED using db_client fixture
+Tests for fulltext parser configuration in collection creation using db_client fixture
 """
 import pytest
 import time
@@ -12,7 +12,7 @@ from pyseekdb import (
 )
 
 
-class TestFulltextParserConfigRefactored:
+class TestFulltextParserConfig:
     """Test fulltext parser configuration using parameterized db_client fixture"""
 
     def _test_fulltext_parser_config(self, client, parser_name: str, params: dict = None):

@@ -1,5 +1,5 @@
 """
-Test default embedding function - REFACTORED using db_client fixture
+Test default embedding function using db_client fixture
 Tests collection creation with default embedding function, automatic vector generation from documents, and hybrid search
 """
 import pytest
@@ -11,7 +11,7 @@ from pyseekdb import DefaultEmbeddingFunction
 from pyseekdb.client.embedding_function import dimension_of
 
 
-class TestDefaultEmbeddingFunctionRefactored:
+class TestDefaultEmbeddingFunction:
     """Test default embedding function using parameterized db_client fixture"""
     
     def test_default_embedding_function(self, db_client):

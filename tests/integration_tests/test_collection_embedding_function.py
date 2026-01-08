@@ -1,5 +1,5 @@
 """
-Test collection creation with embedding function - REFACTORED using db_client fixture
+Test collection creation with embedding function using db_client fixture
 Testing create_collection, get_or_create_collection, and get_collection interfaces 
 with embedding function handling
 """
@@ -37,7 +37,7 @@ class Simple3DEmbeddingFunction:
         return embeddings
 
 
-class TestCollectionEmbeddingFunctionRefactored:
+class TestCollectionEmbeddingFunction:
     """Test collection creation with embedding function handling using parameterized db_client fixture"""
     
     def test_create_collection_default_embedding_function(self, db_client):

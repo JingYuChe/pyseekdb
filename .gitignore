@@ -4,6 +4,9 @@ tests/.env
 __pycache__/
 build/
 
+# tests
+seekdb.db/
+
 # demo
 .env
 .venv

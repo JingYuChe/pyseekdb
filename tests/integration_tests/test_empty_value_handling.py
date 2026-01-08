@@ -1,7 +1,6 @@
 """
 Empty value handling tests - testing upsert operations with empty strings, empty lists, and None values
-Tests the fixes for falsy value handling bugs in _collection_upsert method
-Refactored to use db_client fixture for parameterized testing
+Tests the fixes for falsy value handling bugs in _collection_upsert method using db_client fixture
 """
 import pytest
 import time

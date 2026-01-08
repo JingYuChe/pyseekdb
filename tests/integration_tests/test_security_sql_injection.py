@@ -7,8 +7,7 @@ Tests the escape_string fixes across all database operations to ensure:
 3. Data integrity is preserved
 4. All escape_string fixes work correctly
 
-This test covers ADD, UPDATE, UPSERT, QUERY, and GET operations.
-Refactored to use db_client fixture for parameterized testing.
+This test covers ADD, UPDATE, UPSERT, QUERY, and GET operations using db_client fixture.
 """
 from typing import Dict, Any, List
 import pytest

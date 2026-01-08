@@ -1,5 +1,5 @@
 """
-Collection DML tests - REFACTORED using db_client fixture
+Collection DML tests using db_client fixture
 Testing collection.add(), collection.delete(), collection.upsert(), collection.update() interfaces
 """
 import pytest
@@ -10,7 +10,7 @@ import pyseekdb
 from pyseekdb.client.meta_info import CollectionNames, CollectionFieldNames
 
 
-class TestCollectionDMLRefactored:
+class TestCollectionDML:
     """Test collection DML operations using parameterized db_client fixture"""
     
     def test_collection_dml(self, db_client):

@@ -1235,20 +1235,28 @@ For detailed instructions, see [demo/rag/README.md](demo/rag/README.md).
 ## Testing
 
 ```bash
-# Run all tests
+# Run all tests (unit + integration)
 python3 -m pytest -v
 
 # Run tests with log output
 python3 -m pytest -v -s
 
-# Run all seekdb-embeded, seekdb-server, oceanbase cases
-python3 -m pytest -k test_{embedded, server, oceanbase}
+# Run unit tests only
+python3 -m pytest tests/unit_tests/ -v
 
-# Run specific test
-python3 -m pytest tests/test_client_creation.py::TestClientCreation::test_create_server_client -v
+# Run integration tests only
+python3 -m pytest tests/integration_tests/ -v
+
+# Run integration tests for specific mode
+python3 -m pytest tests/integration_tests/ -v -k "embedded"   # embedded mode
+python3 -m pytest tests/integration_tests/ -v -k "server"     # server mode (requires seekdb server)
+python3 -m pytest tests/integration_tests/ -v -k "oceanbase"  # oceanbase mode (requires OceanBase)
 
 # Run specific test file
-python3 -m pytest tests/test_client_creation.py -v
+python3 -m pytest tests/integration_tests/test_collection_query.py -v
+
+# Run specific test function
+python3 -m pytest tests/integration_tests/test_collection_query.py::TestCollectionQuery::test_collection_query -v
 ```
 
 ## License

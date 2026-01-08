@@ -1,6 +1,6 @@
 """
-Collection hybrid search tests - REFACTORED using db_client fixture
-Demonstrates how to eliminate 67% code duplication using parameterized fixtures
+Collection hybrid search tests using db_client fixture
+Demonstrates how to eliminate code duplication using parameterized fixtures
 """
 import pytest
 import time
@@ -11,7 +11,7 @@ from typing import List
 import pyseekdb
 
 
-class TestCollectionHybridSearchRefactored:
+class TestCollectionHybridSearch:
     """Test collection.hybrid_search() interface using parameterized db_client fixture"""
     
     def _create_test_collection(self, client, collection_name: str, dimension: int = None):
