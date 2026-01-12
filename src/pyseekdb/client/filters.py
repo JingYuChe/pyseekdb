@@ -120,7 +120,21 @@ class FilterBuilder:
             elif isinstance(value, dict):
                 # Handle comparison operators
                 for op, op_value in value.items():
-                    if op in FilterBuilder.COMPARISON_OPS:
+                    if op == "$eq":
+                        # Use JSON_OVERLAPS for $eq to support both scalar and array fields
+                        json_value = json.dumps([op_value])
+                        clauses.append(
+                            f"JSON_OVERLAPS(JSON_EXTRACT({metadata_column}, '$.{key}'), CAST(%s AS JSON))"
+                        )
+                        params.append(json_value)
+                    elif op == "$ne":
+                        # Use NOT JSON_OVERLAPS for $ne to support both scalar and array fields
+                        json_value = json.dumps([op_value])
+                        clauses.append(
+                            f"NOT JSON_OVERLAPS(JSON_EXTRACT({metadata_column}, '$.{key}'), CAST(%s AS JSON))"
+                        )
+                        params.append(json_value)
+                    elif op in FilterBuilder.COMPARISON_OPS:
                         sql_op = FilterBuilder.COMPARISON_OPS[op]
                         clauses.append(f"JSON_EXTRACT({metadata_column}, '$.{key}') {sql_op} %s")
                         params.append(op_value)
@@ -155,9 +169,13 @@ class FilterBuilder:
                         params.append(json_array)
             
             else:
-                # Direct equality comparison
-                clauses.append(f"JSON_EXTRACT({metadata_column}, '$.{key}') = %s")
-                params.append(value)
+                # Direct equality comparison (no operator specified)
+                # Use JSON_OVERLAPS to support both scalar and array fields
+                json_value = json.dumps([value])
+                clauses.append(
+                    f"JSON_OVERLAPS(JSON_EXTRACT({metadata_column}, '$.{key}'), CAST(%s AS JSON))"
+                )
+                params.append(json_value)
         
         where_clause = " AND ".join(clauses) if clauses else "1=1"
         return where_clause, params

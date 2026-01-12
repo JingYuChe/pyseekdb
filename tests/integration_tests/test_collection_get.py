@@ -209,6 +209,166 @@ class TestCollectionGet:
             except Exception as cleanup_error:
                 print(f"Warning: cleanup failed for {collection_name}: {cleanup_error}")
 
+    def test_eq_ne_operators_with_array_fields(self, db_client):
+        """
+        Regression test for $eq and $ne operators with array fields.
+        
+        Tests:
+        - $eq with array membership check (like $in)
+        - $ne with array exclusion (like $nin)
+        - Direct equality (no operator) consistency with $eq
+        - Scalar fields still work correctly
+        - Edge cases: empty array, null, missing field
+        - Consistency: $eq behavior matches $in with single value
+        
+        Automatically runs for: embedded, server, oceanbase
+        """
+        collection_name = f"test_eq_ne_{int(time.time() * 1000)}"
+        collection = db_client.get_or_create_collection(
+            name=collection_name,
+            embedding_function=pyseekdb.DefaultEmbeddingFunction(),
+        )
+
+        try:
+            # Insert comprehensive test data
+            collection.add(
+                ids=["id1", "id2", "id3", "id4", "id5", "id6", "id7", "id8"],
+                documents=["doc1", "doc2", "doc3", "doc4", "doc5", "doc6", "doc7", "doc8"],
+                metadatas=[
+                    {"tags": ["ml", "ai"], "category": "AI"},       # id1: array with ml
+                    {"tags": ["java"], "category": "Backend"},      # id2: array without ml
+                    {"tags": "ml", "category": "ML"},               # id3: scalar ml
+                    {"tags": "python", "category": "Scripting"},    # id4: different scalar
+                    {"category": "Other"},                          # id5: missing tags field
+                    {"tags": [], "category": "Empty"},              # id6: empty array
+                    {"tags": None, "category": "Null"},             # id7: null value
+                    {"tags": ["ml"], "category": "Single"},         # id8: single-element array
+                ],
+            )
+
+            # Test 1: $eq with array field (membership check)
+            print("\n✅ Test 1: $eq with array field")
+            result = collection.get(
+                where={"tags": {"$eq": "ml"}},
+                include=["ids", "metadatas"],
+            )
+            assert result and "ids" in result
+            assert set(result["ids"]) == {"id1", "id3", "id8"}, \
+                f"Expected id1, id3, id8 (array+scalar+single), got {result['ids']}"
+            print(f"   Matched: {sorted(result['ids'])} (array with ml, scalar ml, single-element array)")
+
+            # Test 2: $eq with non-matching value
+            print("\n✅ Test 2: $eq with non-matching value")
+            result = collection.get(
+                where={"tags": {"$eq": "ruby"}},
+                include=["ids"],
+            )
+            assert result and "ids" in result
+            assert len(result["ids"]) == 0, f"Expected no matches, got {result['ids']}"
+            print(f"   Correctly returned 0 results")
+
+            # Test 3: $ne with array field (exclusion)
+            print("\n✅ Test 3: $ne with array field")
+            result = collection.get(
+                where={"tags": {"$ne": "ml"}},
+                include=["ids"],
+            )
+            assert result and "ids" in result
+            # Should match id2 (java), id4 (python) - excludes id1, id3, id8 which contain/equal ml
+            # id5 (missing), id6 (empty), id7 (null) behavior depends on JSON_OVERLAPS NULL handling
+            matched_ids = set(result["ids"])
+            assert "id2" in matched_ids, f"Expected id2 in results"
+            assert "id4" in matched_ids, f"Expected id4 in results"
+            assert "id1" not in matched_ids, f"id1 should be excluded (has ml)"
+            assert "id3" not in matched_ids, f"id3 should be excluded (is ml)"
+            assert "id8" not in matched_ids, f"id8 should be excluded (has ml)"
+            print(f"   Correctly excluded ids with ml: {sorted(result['ids'])}")
+
+            # Test 4: Direct equality (no operator) - should behave like $eq
+            print("\n✅ Test 4: Direct equality consistency")
+            result_direct = collection.get(
+                where={"tags": "ml"},
+                include=["ids"],
+            )
+            result_eq = collection.get(
+                where={"tags": {"$eq": "ml"}},
+                include=["ids"],
+            )
+            assert set(result_direct["ids"]) == set(result_eq["ids"]), \
+                f"Direct equality should match $eq: {result_direct['ids']} vs {result_eq['ids']}"
+            print(f"   Direct equality matches $eq: {sorted(result_direct['ids'])}")
+
+            # Test 5: $eq consistency with $in (single value)
+            print("\n✅ Test 5: $eq consistency with $in")
+            result_eq = collection.get(
+                where={"tags": {"$eq": "ml"}},
+                include=["ids"],
+            )
+            result_in = collection.get(
+                where={"tags": {"$in": ["ml"]}},
+                include=["ids"],
+            )
+            assert set(result_eq["ids"]) == set(result_in["ids"]), \
+                f"$eq should match $in with single value: {result_eq['ids']} vs {result_in['ids']}"
+            print(f"   $eq matches $in: {sorted(result_eq['ids'])}")
+
+            # Test 6: Scalar field still works correctly
+            print("\n✅ Test 6: Scalar field not affected")
+            result_scalar_eq = collection.get(
+                where={"category": {"$eq": "AI"}},
+                include=["ids"],
+            )
+            assert result_scalar_eq and "ids" in result_scalar_eq
+            assert set(result_scalar_eq["ids"]) == {"id1"}, \
+                f"Scalar $eq should still work, got {result_scalar_eq['ids']}"
+            
+            result_scalar_direct = collection.get(
+                where={"category": "AI"},
+                include=["ids"],
+            )
+            assert set(result_scalar_direct["ids"]) == {"id1"}, \
+                f"Scalar direct equality should still work, got {result_scalar_direct['ids']}"
+            print(f"   Scalar fields work correctly")
+
+            # Test 7: Edge case - $eq with java (single-element array vs scalar)
+            print("\n✅ Test 7: $eq with single-element array")
+            result = collection.get(
+                where={"tags": {"$eq": "java"}},
+                include=["ids"],
+            )
+            assert result and "ids" in result
+            assert set(result["ids"]) == {"id2"}, f"Expected id2, got {result['ids']}"
+            print(f"   Matched single-element array: {result['ids']}")
+
+            # Test 8: Multiple conditions with $eq and $ne
+            print("\n✅ Test 8: Combined $eq and $ne")
+            result = collection.get(
+                where={
+                    "$and": [
+                        {"tags": {"$ne": "ml"}},
+                        {"category": {"$ne": "Empty"}}
+                    ]
+                },
+                include=["ids"],
+            )
+            assert result and "ids" in result
+            # Should exclude: id1/id3/id8 (have ml), id6 (category=Empty)
+            matched_ids = set(result["ids"])
+            assert "id2" in matched_ids or "id4" in matched_ids, \
+                f"Should match id2 or id4, got {result['ids']}"
+            for excluded_id in ["id1", "id3", "id8", "id6"]:
+                assert excluded_id not in matched_ids, \
+                    f"{excluded_id} should be excluded, got {result['ids']}"
+            print(f"   Combined filters work: {sorted(result['ids'])}")
+
+            print("\n✅ All $eq/$ne operator tests passed!")
+
+        finally:
+            try:
+                db_client.delete_collection(name=collection_name)
+            except Exception as cleanup_error:
+                print(f"Warning: cleanup failed for {collection_name}: {cleanup_error}")
+
     def test_collection_get(self, db_client):
         """
         Test collection.get() interface with various query patterns.
