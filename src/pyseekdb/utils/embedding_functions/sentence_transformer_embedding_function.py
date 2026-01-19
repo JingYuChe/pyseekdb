@@ -1,5 +1,10 @@
-from pyseekdb.client.embedding_function import EmbeddingFunction, Embeddings, Documents
-from typing import Dict, Any
+from typing import Any, Dict
+
+from pyseekdb.client.embedding_function import (
+    Documents,
+    EmbeddingFunction,
+    Embeddings,
+)
 
 
 class SentenceTransformerEmbeddingFunction(EmbeddingFunction[Documents]):
@@ -24,6 +29,7 @@ class SentenceTransformerEmbeddingFunction(EmbeddingFunction[Documents]):
         print(results)
 
     """
+
     # Since we do dynamic imports we have to type this as Any
     models: Dict[str, Any] = {}
 

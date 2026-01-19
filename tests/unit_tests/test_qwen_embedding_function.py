@@ -9,6 +9,7 @@ To run this test manually:
     # Or with environment variable:
     DASHSCOPE_API_KEY=your-key pytest tests/unit_tests/test_qwen_embedding_function.py -v -s
 """
+
 import pytest
 import os
 
@@ -70,7 +71,12 @@ class TestQwenEmbeddingFunction:
 
         self.test_qwen_env()
 
-        models = ["text-embedding-v1", "text-embedding-v2", "text-embedding-v3", "text-embedding-v4"]
+        models = [
+            "text-embedding-v1",
+            "text-embedding-v2",
+            "text-embedding-v3",
+            "text-embedding-v4",
+        ]
 
         for model in models:
             ef = QwenEmbeddingFunction(model_name=model)
@@ -81,7 +87,9 @@ class TestQwenEmbeddingFunction:
 
     def test_initialization_with_custom_api_key_env(self):
         """Test QwenEmbeddingFunction initialization with custom API key env"""
-        print("\n✅ Testing QwenEmbeddingFunction initialization with custom API key env")
+        print(
+            "\n✅ Testing QwenEmbeddingFunction initialization with custom API key env"
+        )
 
         self.test_qwen_env()
 
@@ -90,8 +98,7 @@ class TestQwenEmbeddingFunction:
             os.environ[custom_key_env] = "your-custom-key"
 
         ef = QwenEmbeddingFunction(
-            model_name="text-embedding-v1",
-            api_key_env=custom_key_env
+            model_name="text-embedding-v1", api_key_env=custom_key_env
         )
         assert ef.api_key_env == custom_key_env
         print(f"   Custom API key env: {ef.api_key_env}")
@@ -104,10 +111,7 @@ class TestQwenEmbeddingFunction:
 
         # Use Qwen's actual API base for testing
         custom_base = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-        ef = QwenEmbeddingFunction(
-            model_name="text-embedding-v1",
-            api_base=custom_base
-        )
+        ef = QwenEmbeddingFunction(model_name="text-embedding-v1", api_base=custom_base)
         assert ef.api_base == custom_base
         print(f"   Custom API base: {ef.api_base}")
 
@@ -117,10 +121,7 @@ class TestQwenEmbeddingFunction:
 
         self.test_qwen_env()
 
-        ef = QwenEmbeddingFunction(
-            model_name="text-embedding-v3",
-            dimensions=512
-        )
+        ef = QwenEmbeddingFunction(model_name="text-embedding-v3", dimensions=512)
         assert ef._dimensions_param == 512
         print(f"   Dimensions parameter: {ef._dimensions_param}")
 
@@ -131,9 +132,7 @@ class TestQwenEmbeddingFunction:
         self.test_qwen_env()
 
         ef = QwenEmbeddingFunction(
-            model_name="text-embedding-v1",
-            timeout=30,
-            max_retries=3
+            model_name="text-embedding-v1", timeout=30, max_retries=3
         )
         assert ef is not None
         print(f"   Initialized with timeout and max_retries")
@@ -161,23 +160,31 @@ class TestQwenEmbeddingFunction:
         # Test v1 and v2 (1536 dimensions)
         ef_v1 = QwenEmbeddingFunction(model_name="text-embedding-v1")
         dim_v1 = ef_v1.dimension
-        assert dim_v1 == 1536, f"Expected dimension 1536 for text-embedding-v1, got {dim_v1}"
+        assert dim_v1 == 1536, (
+            f"Expected dimension 1536 for text-embedding-v1, got {dim_v1}"
+        )
         print(f"   text-embedding-v1 dimension: {dim_v1}")
 
         ef_v2 = QwenEmbeddingFunction(model_name="text-embedding-v2")
         dim_v2 = ef_v2.dimension
-        assert dim_v2 == 1536, f"Expected dimension 1536 for text-embedding-v2, got {dim_v2}"
+        assert dim_v2 == 1536, (
+            f"Expected dimension 1536 for text-embedding-v2, got {dim_v2}"
+        )
         print(f"   text-embedding-v2 dimension: {dim_v2}")
 
         # Test v3 and v4 (1024 dimensions)
         ef_v3 = QwenEmbeddingFunction(model_name="text-embedding-v3")
         dim_v3 = ef_v3.dimension
-        assert dim_v3 == 1024, f"Expected dimension 1024 for text-embedding-v3, got {dim_v3}"
+        assert dim_v3 == 1024, (
+            f"Expected dimension 1024 for text-embedding-v3, got {dim_v3}"
+        )
         print(f"   text-embedding-v3 dimension: {dim_v3}")
 
         ef_v4 = QwenEmbeddingFunction(model_name="text-embedding-v4")
         dim_v4 = ef_v4.dimension
-        assert dim_v4 == 1024, f"Expected dimension 1024 for text-embedding-v4, got {dim_v4}"
+        assert dim_v4 == 1024, (
+            f"Expected dimension 1024 for text-embedding-v4, got {dim_v4}"
+        )
         print(f"   text-embedding-v4 dimension: {dim_v4}")
 
     def test_dimension_property_unknown_model(self):
@@ -196,7 +203,9 @@ class TestQwenEmbeddingFunction:
 
     def test_call_single_document(self):
         """Test __call__ with single document"""
-        print("\n✅ Testing QwenEmbeddingFunction embedding generation (single document)")
+        print(
+            "\n✅ Testing QwenEmbeddingFunction embedding generation (single document)"
+        )
 
         self.test_qwen_env()
 
@@ -212,7 +221,9 @@ class TestQwenEmbeddingFunction:
 
     def test_call_multiple_documents(self):
         """Test __call__ with multiple documents"""
-        print("\n✅ Testing QwenEmbeddingFunction embedding generation (multiple documents)")
+        print(
+            "\n✅ Testing QwenEmbeddingFunction embedding generation (multiple documents)"
+        )
 
         self.test_qwen_env()
 
@@ -220,7 +231,7 @@ class TestQwenEmbeddingFunction:
         multiple_docs = [
             "机器学习是人工智能的一个子集",
             "Python是一种编程语言",
-            "深度学习使用神经网络"
+            "深度学习使用神经网络",
         ]
         embeddings = ef(multiple_docs)
 
@@ -228,7 +239,9 @@ class TestQwenEmbeddingFunction:
         assert len(embeddings) == len(multiple_docs)
         for i, emb in enumerate(embeddings):
             assert isinstance(emb, list)
-            assert len(emb) == len(embeddings[0]), f"All embeddings should have same dimension"
+            assert len(emb) == len(embeddings[0]), (
+                f"All embeddings should have same dimension"
+            )
         print(f"   Multiple documents embedding dimension: {len(embeddings[0])}")
         print(f"   Number of embeddings: {len(embeddings)}")
 
@@ -250,33 +263,32 @@ class TestQwenEmbeddingFunction:
         self.test_qwen_env()
 
         # Test with text-embedding-v3 and custom dimensions
-        ef_512 = QwenEmbeddingFunction(
-            model_name="text-embedding-v3",
-            dimensions=512
-        )
+        ef_512 = QwenEmbeddingFunction(model_name="text-embedding-v3", dimensions=512)
         test_doc = "测试文档用于嵌入"
         embeddings_512 = ef_512(test_doc)
 
         assert len(embeddings_512) == 1
-        assert len(embeddings_512[0]) == 512, f"Expected 512 dimensions, got {len(embeddings_512[0])}"
+        assert len(embeddings_512[0]) == 512, (
+            f"Expected 512 dimensions, got {len(embeddings_512[0])}"
+        )
         print(f"   Verified: embeddings have {len(embeddings_512[0])} dimensions")
 
         # Test with different dimensions
-        ef_256 = QwenEmbeddingFunction(
-            model_name="text-embedding-v3",
-            dimensions=256
-        )
+        ef_256 = QwenEmbeddingFunction(model_name="text-embedding-v3", dimensions=256)
         embeddings_256 = ef_256(test_doc)
-        assert len(embeddings_256[0]) == 256, f"Expected 256 dimensions, got {len(embeddings_256[0])}"
+        assert len(embeddings_256[0]) == 256, (
+            f"Expected 256 dimensions, got {len(embeddings_256[0])}"
+        )
         print(f"   Verified: embeddings have {len(embeddings_256[0])} dimensions")
 
         # Test with v4 model
         ef_v4_1024 = QwenEmbeddingFunction(
-            model_name="text-embedding-v4",
-            dimensions=1024
+            model_name="text-embedding-v4", dimensions=1024
         )
         embeddings_1024 = ef_v4_1024(test_doc)
-        assert len(embeddings_1024[0]) == 1024, f"Expected 1024 dimensions, got {len(embeddings_1024[0])}"
+        assert len(embeddings_1024[0]) == 1024, (
+            f"Expected 1024 dimensions, got {len(embeddings_1024[0])}"
+        )
         print(f"   Verified: embeddings have {len(embeddings_1024[0])} dimensions")
 
     def test_dimension_of_function(self):

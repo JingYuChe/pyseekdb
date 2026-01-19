@@ -4,6 +4,7 @@ Embedding function interface and implementations
 This module provides the EmbeddingFunction protocol and default implementations
 for converting text documents to vector embeddings.
 """
+
 import importlib
 import logging
 import os
@@ -11,7 +12,17 @@ import sys
 import tarfile
 from functools import cached_property
 from pathlib import Path
-from typing import List, Protocol, Union, runtime_checkable, Optional, TypeVar, cast, Any, Dict
+from typing import (
+    List,
+    Protocol,
+    Union,
+    runtime_checkable,
+    Optional,
+    TypeVar,
+    cast,
+    Any,
+    Dict
+)
 from abc import abstractmethod
 
 import numpy as np
@@ -27,7 +38,7 @@ if "HF_ENDPOINT" not in os.environ:
 logger = logging.getLogger(__name__)
 
 # Type variable for input types
-D = TypeVar('D')
+D = TypeVar("D")
 
 # Type aliases
 Documents = Union[str, List[str]]
@@ -99,7 +110,9 @@ def dimension_of(embedding_function: EmbeddingFunction[D]) -> int:
     """
     Get the dimension of the embeddings produced by the embedding function.
     """
-    if hasattr(embedding_function, "dimension") and callable(getattr(embedding_function, "dimension", None)):
+    if hasattr(embedding_function, "dimension") and callable(
+        getattr(embedding_function, "dimension", None)
+    ):
         return embedding_function.dimension()
     elif hasattr(embedding_function, "dimension"):
         return embedding_function.dimension
@@ -110,7 +123,10 @@ def dimension_of(embedding_function: EmbeddingFunction[D]) -> int:
         if test_embeddings and len(test_embeddings) > 0:
             return len(test_embeddings[0])
         else:
-            raise ValueError("Embedding function returned empty result when called with 'seekdb'")
+            raise ValueError(
+                "Embedding function returned empty result when called with 'seekdb'"
+            )
+
 
 class DefaultEmbeddingFunction(EmbeddingFunction[Documents]):
     """
@@ -132,7 +148,11 @@ class DefaultEmbeddingFunction(EmbeddingFunction[Documents]):
     ARCHIVE_FILENAME = "onnx.tar.gz"
     _DIMENSION = 384  # all-MiniLM-L6-v2 produces 384-dimensional embeddings
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2", preferred_providers: Optional[List[str]] = None):
+    def __init__(
+        self,
+        model_name: str = "all-MiniLM-L6-v2",
+        preferred_providers: Optional[List[str]] = None,
+    ):
         """
         Initialize the default embedding function.
 
@@ -189,13 +209,16 @@ class DefaultEmbeddingFunction(EmbeddingFunction[Documents]):
             with client.stream("GET", url) as resp:
                 resp.raise_for_status()
                 total = int(resp.headers.get("content-length", 0))
-                with open(fname, "wb") as file, self.tqdm(
-                    desc=os.path.basename(fname),
-                    total=total,
-                    unit="iB",
-                    unit_scale=True,
-                    unit_divisor=1024,
-                ) as bar:
+                with (
+                    open(fname, "wb") as file,
+                    self.tqdm(
+                        desc=os.path.basename(fname),
+                        total=total,
+                        unit="iB",
+                        unit_scale=True,
+                        unit_divisor=1024,
+                    ) as bar,
+                ):
                     for data in resp.iter_bytes(chunk_size=chunk_size):
                         size = file.write(data)
                         bar.update(size)
@@ -214,7 +237,7 @@ class DefaultEmbeddingFunction(EmbeddingFunction[Documents]):
         try:
             hf_endpoint = self._get_hf_endpoint()
             # Remove trailing slash
-            hf_endpoint = hf_endpoint.rstrip('/')
+            hf_endpoint = hf_endpoint.rstrip("/")
 
             # List of files to download
             # ONNX model files are in the onnx/ subdirectory, other files in the root directory
@@ -227,10 +250,14 @@ class DefaultEmbeddingFunction(EmbeddingFunction[Documents]):
                 "vocab.txt": "vocab.txt",
             }
 
-            extracted_folder = os.path.join(self.DOWNLOAD_PATH, self.EXTRACTED_FOLDER_NAME)
+            extracted_folder = os.path.join(
+                self.DOWNLOAD_PATH, self.EXTRACTED_FOLDER_NAME
+            )
             os.makedirs(extracted_folder, exist_ok=True)
 
-            logger.info(f"Downloading model from Hugging Face (endpoint: {hf_endpoint})")
+            logger.info(
+                f"Downloading model from Hugging Face (endpoint: {hf_endpoint})"
+            )
 
             # Download each file
             for hf_filename, local_filename in files_to_download.items():
@@ -250,7 +277,9 @@ class DefaultEmbeddingFunction(EmbeddingFunction[Documents]):
                     try:
                         head_resp = httpx.head(url, timeout=10.0, follow_redirects=True)
                         if head_resp.status_code == 404:
-                            logger.warning(f"File {hf_filename} not found on Hugging Face (404), will try fallback")
+                            logger.warning(
+                                f"File {hf_filename} not found on Hugging Face (404), will try fallback"
+                            )
                             return False
                     except Exception:
                         # If HEAD request fails, continue with GET request
@@ -260,14 +289,20 @@ class DefaultEmbeddingFunction(EmbeddingFunction[Documents]):
                     logger.info(f"Successfully downloaded {local_filename}")
                 except httpx.HTTPStatusError as e:
                     if e.response.status_code == 404:
-                        logger.warning(f"File {hf_filename} not found on Hugging Face (404), will try fallback")
+                        logger.warning(
+                            f"File {hf_filename} not found on Hugging Face (404), will try fallback"
+                        )
                         return False
-                    logger.warning(f"HTTP error downloading {hf_filename} from Hugging Face: {e}")
+                    logger.warning(
+                        f"HTTP error downloading {hf_filename} from Hugging Face: {e}"
+                    )
                     if os.path.exists(local_path):
                         os.remove(local_path)
                     return False
                 except Exception as e:
-                    logger.warning(f"Failed to download {hf_filename} from Hugging Face: {e}")
+                    logger.warning(
+                        f"Failed to download {hf_filename} from Hugging Face: {e}"
+                    )
                     # If download fails, try to delete partially downloaded file
                     if os.path.exists(local_path):
                         os.remove(local_path)
@@ -319,7 +354,9 @@ class DefaultEmbeddingFunction(EmbeddingFunction[Documents]):
             # Create input arrays exactly like the working standalone script
             # Create input arrays, ensuring int64 type
             input_ids = np.array([e.ids for e in encoded], dtype=np.int64)
-            attention_mask = np.array([e.attention_mask for e in encoded], dtype=np.int64)
+            attention_mask = np.array(
+                [e.attention_mask for e in encoded], dtype=np.int64
+            )
 
             # Ensure 2D arrays (batch_size, seq_length)
             if input_ids.ndim == 1:
@@ -336,9 +373,9 @@ class DefaultEmbeddingFunction(EmbeddingFunction[Documents]):
             token_type_ids = np.ascontiguousarray(token_type_ids, dtype=np.int64)
 
             onnx_input = {
-                'input_ids': input_ids,
-                'attention_mask': attention_mask,
-                'token_type_ids': token_type_ids,
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "token_type_ids": token_type_ids,
             }
 
             model_output = self.model.run(None, onnx_input)
@@ -420,7 +457,7 @@ class DefaultEmbeddingFunction(EmbeddingFunction[Documents]):
         return self.ort.InferenceSession(
             os.path.join(self.DOWNLOAD_PATH, self.EXTRACTED_FOLDER_NAME, "model.onnx"),
             # Force CPU execution provider to avoid provider issues
-            providers=['CPUExecutionProvider'],
+            providers=["CPUExecutionProvider"],
             sess_options=so,
         )
 
