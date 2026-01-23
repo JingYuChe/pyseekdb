@@ -47,7 +47,7 @@ jobs:
 
       - name: Install depencies for unit tests
         run: |
-          uv run pip install openai sentence-transformers torch torchvision torchaudio
+          uv run pip install openai sentence-transformers torch torchvision torchaudio boto3 litellm voyageai
 
       - name: Run unit tests
         run: |
@@ -57,6 +57,16 @@ jobs:
             log_level=INFO
           fi
           uv run pytest tests/unit_tests/ -v --log-cli-level=${log_level} | tee pytest.log
+          tail -n 1 pytest.log | grep -q 'failed' && exit 1 || exit 0
+
+      - name: Run integration tests without any test mode
+        run: |
+          if [ "${{ env.RUNNER_DEBUG }}" = "true" ]; then
+            log_level=DEBUG
+          else
+            log_level=INFO
+          fi
+          uv run pytest tests/integration_tests/ -v --log-cli-level=${log_level} -k "not server and not embedded and not oceanbase" | tee pytest.log
           tail -n 1 pytest.log | grep -q 'failed' && exit 1 || exit 0
 
   integration-test:
