@@ -210,14 +210,22 @@ class ClientAPI(ABC):
 
     @abstractmethod
     def get_collection(self, name: str, embedding_function: EmbeddingFunctionParam = _NOT_PROVIDED) -> "Collection":
-        """
-        Get collection object
+        """Get an existing collection.
 
         Args:
-            name: Collection name
-            embedding_function: Embedding function to convert documents to embeddings.
-                               Defaults to DefaultEmbeddingFunction.
-                               If explicitly set to None, collection will not have an embedding function.
+            name: The name of the collection to retrieve.
+            embedding_function: The embedding function to use. If not provided,
+                it will try to load the function used when creating the collection.
+                If explicitly set to None, no embedding function will be used.
+
+        Returns:
+            The ``Collection`` object.
+
+        Raises:
+            ValueError: If the collection does not exist.
+
+        Examples:
+            >>> collection = client.get_collection("my_collection")
         """
         pass
 
@@ -512,85 +520,48 @@ class BaseClient(BaseConnection, AdminAPI):
         embedding_function: EmbeddingFunctionParam = _NOT_PROVIDED,
         **kwargs,
     ) -> "Collection":
-        """
-        Create a collection (user-facing API)
+        """Create a new collection.
 
         Args:
-            name: Collection name
-            configuration: Index configuration (Configuration or HNSWConfiguration).
-                          If not provided, uses default configuration (dimension=384, distance='cosine', analyzer='ik').
-                          If explicitly set to None, will try to calculate dimension from embedding_function.
-                          If embedding_function is also None, will raise an error.
-                          For backward compatibility, HNSWConfiguration is still accepted.
-                          Configuration can include fulltext index configuration.
-            embedding_function: Embedding function to convert documents to embeddings.
-                               Defaults to DefaultEmbeddingFunction.
-                               If explicitly set to None, collection will not have an embedding function.
-                               If provided, the actual dimension will be calculated by calling
-                               embedding_function.__call__("seekdb"), and this dimension will be used
-                               to create the table. If configuration.dimension is set and doesn't match
-                               the calculated dimension, a ValueError will be raised.
-            **kwargs: Additional parameters
+            name: The name of the collection to create. Must contain only alphanumeric
+                characters or underscores.
+            configuration: Index configuration. Defaults to None (uses HNSW with
+                Cosine distance and dimension 384). Can be a ``Configuration`` or
+                ``HNSWConfiguration`` object. If set to None, the dimension will be
+                inferred from the embedding function.
+            embedding_function: The embedding function to use for this collection.
+                Defaults to ``DefaultEmbeddingFunction`` (all-MiniLM-L6-v2). If set to None,
+                no embedding function will be used (embeddings must be provided manually).
+            **kwargs: Additional parameters for collection creation.
 
         Returns:
-            Collection object
+            The created ``Collection`` object.
 
         Raises:
-            ValueError: If configuration is explicitly set to None and embedding_function is also None
-                       (cannot determine dimension), or if embedding_function is provided and
-                       configuration.dimension doesn't match the calculated dimension from embedding_function
-            TypeError: If configuration is not None, Configuration, or HNSWConfiguration
+            ValueError: If the collection name is invalid, already exists, or if the
+                configuration/embedding function combination is invalid (e.g., dimension mismatch).
+            TypeError: If the configuration object is of an invalid type.
 
         Examples:
-        .. code-block:: python
-            # Using default configuration and default embedding function (defaults to IK parser)
-            collection = client.create_collection('my_collection')
+            Create a collection with default settings:
 
-        .. code-block:: python
-            # Using custom embedding function (dimension will be calculated automatically)
-            from pyseekdb import DefaultEmbeddingFunction
-            ef = DefaultEmbeddingFunction(model_name='all-MiniLM-L6-v2')
-            config = HNSWConfiguration(dimension=384, distance='cosine')  # Must match EF dimension
-            collection = client.create_collection(
-                'my_collection',
-                configuration=config,
-                embedding_function=ef
-            )
+            >>> client.create_collection("my_collection")
 
-        .. code-block:: python
-            # Using Configuration wrapper with IK parser (default)
-            from pyseekdb import Configuration, HNSWConfiguration, FulltextIndexConfig
-            config = Configuration(
-                hnsw=HNSWConfiguration(dimension=384, distance='cosine'),
-                fulltext_config=FulltextIndexConfig(analyzer='ik')
-            )
-            collection = client.create_collection('my_collection', configuration=config, embedding_function=ef)
+            Create a collection with a custom embedding function:
 
-        .. code-block:: python
-            # Using Space parser
-            config = Configuration(
-                hnsw=HNSWConfiguration(dimension=384, distance='cosine'),
-                fulltext_config=FulltextIndexConfig(analyzer='space')
-            )
-            collection = client.create_collection('my_collection', configuration=config, embedding_function=ef)
+            >>> from pyseekdb import DefaultEmbeddingFunction
+            >>> ef = DefaultEmbeddingFunction(model_name="all-MiniLM-L6-v2")
+            >>> collection = client.create_collection("my_docs", embedding_function=ef)
 
-        .. code-block:: python
-            # Using Ngram parser with parameters
-            config = Configuration(
-                hnsw=HNSWConfiguration(dimension=384, distance='cosine'),
-                fulltext_config=FulltextIndexConfig(analyzer='ngram', properties={'size': 2})
-            )
-            collection = client.create_collection('my_collection', configuration=config, embedding_function=ef)
+            Create a collection with specific configuration:
 
-        .. code-block:: python
-            # Explicitly set configuration=None, use embedding function to determine dimension
-            collection = client.create_collection('my_collection', configuration=None, embedding_function=ef)
-
-        .. code-block:: python
-            # Explicitly disable embedding function (use configuration dimension)
-            config = HNSWConfiguration(dimension=128, distance='cosine')
-            collection = client.create_collection('my_collection', configuration=config, embedding_function=None)
-
+            >>> from pyseekdb import HNSWConfiguration
+            >>> config = HNSWConfiguration(dimension=128, distance="l2")
+            >>> collection = client.create_collection(
+            ...     "custom_config",
+            ...     configuration=config,
+            ...     embedding_function=None
+            ... )
         """
         _validate_collection_name(name)
         if self.has_collection(name):
@@ -982,11 +953,16 @@ class BaseClient(BaseConnection, AdminAPI):
         return Collection(client=self, name=name, embedding_function=embedding_function, **metadata)
 
     def delete_collection(self, name: str) -> None:
-        """
-        Delete a collection (user-facing API)
+        """Delete a collection.
 
         Args:
-            name: Collection name
+            name: The name of the collection to delete.
+
+        Raises:
+            ValueError: If the collection does not exist.
+
+        Examples:
+            >>> client.delete_collection("my_collection")
         """
         try:
             self._delete_collection_v2(name)
@@ -1032,11 +1008,15 @@ class BaseClient(BaseConnection, AdminAPI):
         self._execute(f"DROP TABLE IF EXISTS `{table_name}`")
 
     def list_collections(self) -> list["Collection"]:
-        """
-        List all collections (user-facing API)
+        """List all collections in the database.
 
         Returns:
-            List of Collection objects
+            A list of ``Collection`` objects.
+
+        Examples:
+            >>> collections = client.list_collections()
+            >>> for col in collections:
+            ...     print(col.name)
         """
         collections = self._list_collections_v1()
         collections.extend(self._list_collections_v2())
@@ -1142,25 +1122,30 @@ class BaseClient(BaseConnection, AdminAPI):
         return collections
 
     def count_collection(self) -> int:
-        """
-        Count the number of collections in the current database
+        """Count the total number of collections.
 
         Returns:
-            Number of collections
+            The number of collections.
 
         Examples:
-            count = client.count_collection()
-            print(f"Database has {count} collections")
+            >>> count = client.count_collection()
+            >>> print(f"Database has {count} collections")
         """
         collections = self.list_collections()
         return len(collections)
 
     def has_collection(self, name: str) -> bool:
-        """
-        Check if a collection exists (user-facing API)
+        """Check if a collection exists.
 
         Args:
-            name: Collection name
+            name: The name of the collection to check.
+
+        Returns:
+            True if the collection exists, False otherwise.
+
+        Examples:
+            >>> if client.has_collection("my_collection"):
+            ...     print("Collection exists!")
         """
         return self._has_collection_v2(name) or self._has_collection_v1(name)
 
@@ -1211,29 +1196,27 @@ class BaseClient(BaseConnection, AdminAPI):
         embedding_function: EmbeddingFunctionParam = _NOT_PROVIDED,
         **kwargs,
     ) -> "Collection":
-        """
-        Get an existing collection or create it if it doesn't exist (user-facing API)
+        """Get a collection if it exists, otherwise create it.
 
         Args:
-            name: Collection name
-            configuration: Configuration (HNSWConfiguration is accepted for backward compatibility)
-                          Please refer to create_collection for more details.
-            embedding_function: Embedding function to convert documents to embeddings.
-                               Defaults to DefaultEmbeddingFunction.
-                               If explicitly set to None, collection will not have an embedding function.
-                               If provided when creating a new collection, the actual dimension will be
-                               calculated by calling embedding_function.__call__("seekdb"), and this
-                               dimension will be used to create the table. If configuration.dimension is
-                               set and doesn't match the calculated dimension, a ValueError will be raised.
-            **kwargs: Additional parameters for create_collection
+            name: The name of the collection.
+            configuration: Index configuration. Defaults to None (uses HNSW with
+                Cosine distance and dimension 384). Can be a ``Configuration`` or
+                ``HNSWConfiguration`` object. If set to None, the dimension will be
+                inferred from the embedding function.
+            embedding_function: The embedding function to use for this collection.
+                Defaults to ``DefaultEmbeddingFunction`` (all-MiniLM-L6-v2). If set to None,
+                no embedding function will be used (embeddings must be provided manually).
+            **kwargs: Additional parameters passed to ``create_collection`` if the collection is created.
 
         Returns:
-            Collection object
+            The existing or newly created ``Collection`` object.
 
         Raises:
-            ValueError: If creating a new collection and configuration is explicitly set to None and
-                       embedding_function is also None (cannot determine dimension), or if embedding_function
-                       is provided and configuration.dimension doesn't match the calculated dimension
+            ValueError: If the configuration/embedding function combination is invalid (e.g., dimension mismatch).
+
+        Examples:
+            >>> collection = client.get_or_create_collection("my_collection")
         """
         # Validate collection name before any database interaction
         _validate_collection_name(name)
