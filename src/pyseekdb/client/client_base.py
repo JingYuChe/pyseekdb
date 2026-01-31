@@ -2631,7 +2631,15 @@ class BaseClient(BaseConnection, AdminAPI):
             table_name = CollectionNames.table_name(collection_name)
 
         # Build search_parm JSON
-        search_parm = self._build_search_parm(query, knn, rank, n_results, dimension=dimension, **kwargs)
+        search_parm = self._build_search_parm(
+            query,
+            knn,
+            rank,
+            n_results,
+            include=include,
+            dimension=dimension,
+            **kwargs,
+        )
 
         # Convert search_parm to JSON string
         search_parm_json = json.dumps(search_parm, ensure_ascii=False)
@@ -2684,6 +2692,7 @@ class BaseClient(BaseConnection, AdminAPI):
         knn: dict[str, Any] | list[dict[str, Any]] | None,
         rank: dict[str, Any] | None,
         n_results: int,
+        include: list[str] | None = None,
         dimension: int | None = None,
         **kwargs,
     ) -> dict[str, Any]:
@@ -2695,6 +2704,8 @@ class BaseClient(BaseConnection, AdminAPI):
             knn: Vector search configuration dict or list of dicts
             rank: Ranking configuration dict
             n_results: Final number of results to return
+            include: Fields requested by the SDK caller. Used to infer the minimal OceanBase GET_SQL
+                `_source` allowlist to avoid returning large unused columns (e.g. `embedding`).
             dimension: Collection dimension for validating query_embeddings (optional)
             **kwargs: Additional parameters, including:
                 embedding_function: EmbeddingFunction instance to convert query_texts in knn to embeddings.
@@ -2738,6 +2749,9 @@ class BaseClient(BaseConnection, AdminAPI):
         # Build rank part
         if rank:
             search_parm["rank"] = rank
+
+        # Always infer a minimal `_source` allowlist from include to reduce response payload.
+        search_parm["_source"] = self._build_source_fields(include)
 
         return search_parm
 
@@ -3092,23 +3106,26 @@ class BaseClient(BaseConnection, AdminAPI):
         return knn_exprs if len(knn_exprs) > 1 else knn_exprs[0]
 
     def _build_source_fields(self, include: list[str] | None) -> list[str]:
-        """Build _source fields list from include parameter"""
-        if not include:
-            return ["document", "metadata", "embedding"]
+        """
+        Infer OceanBase GET_SQL `_source` allowlist from include.
+        """
+        if include is None:
+            requested = {"documents", "metadatas"}
+        else:
+            if not isinstance(include, list) or not all(isinstance(item, str) for item in include):
+                raise TypeError("include must be a List[str] or None")
+            requested = {item.lower() for item in include}
 
-        source_fields = []
-        field_mapping = {
-            "documents": "document",
-            "metadatas": "metadata",
-            "embeddings": "embedding",
-        }
+        source = ["_id"]
 
-        for field in include:
-            mapped = field_mapping.get(field.lower(), field)
-            if mapped not in source_fields:
-                source_fields.append(mapped)
+        if {"documents", "document"} & requested:
+            source.append("document")
+        if {"metadatas", "metadata"} & requested:
+            source.append("metadata")
+        if {"embeddings", "embedding"} & requested:
+            source.append("embedding")
 
-        return source_fields if source_fields else ["document", "metadata", "embedding"]
+        return source
 
     def _transform_sql_result(  # noqa: C901
         self, result_rows: list[dict[str, Any]], include: list[str] | None
