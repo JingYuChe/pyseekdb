@@ -634,6 +634,7 @@ class EmbeddingFunctionRegistry:
                 CohereEmbeddingFunction,
                 GoogleVertexEmbeddingFunction,
                 JinaEmbeddingFunction,
+                MorphEmbeddingFunction,
                 OllamaEmbeddingFunction,
                 OpenAIEmbeddingFunction,
                 QwenEmbeddingFunction,
@@ -646,6 +647,7 @@ class EmbeddingFunctionRegistry:
             cls._registry["sentence_transformer"] = SentenceTransformerEmbeddingFunction
             cls._registry["openai"] = OpenAIEmbeddingFunction
             cls._registry["qwen"] = QwenEmbeddingFunction
+            cls._registry["morph"] = MorphEmbeddingFunction
             cls._registry["siliconflow"] = SiliconflowEmbeddingFunction
             cls._registry["tencent_hunyuan"] = TencentHunyuanEmbeddingFunction
             cls._registry["ollama"] = OllamaEmbeddingFunction
