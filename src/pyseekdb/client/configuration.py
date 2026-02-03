@@ -1,3 +1,4 @@
+import warnings
 from dataclasses import dataclass
 from enum import Enum
 
@@ -42,10 +43,13 @@ class HNSWConfiguration:
     Args:
         dimension: Vector dimension (number of elements in each vector)
         distance: Distance metric for similarity calculation (e.g., 'l2', 'cosine', 'inner_product')
+        properties: Optional dictionary of properties for the HNSW index (key: string, value: primitive type)
+        Please refer to [HNSW configuration](https://en.oceanbase.com/docs/common-oceanbase-database-10000000003351043) for detailed information.
     """
 
     dimension: int
     distance: str = DistanceMetric.L2.value
+    properties: dict[str, str | int | float | bool] | None = None
 
     def __post_init__(self):
         if self.dimension <= 0:
@@ -53,6 +57,14 @@ class HNSWConfiguration:
         valid_distances = [e.value for e in DistanceMetric]
         if self.distance not in valid_distances:
             raise ValueError(f"distance must be one of {valid_distances}, got {self.distance}")
+        if self.properties:
+            for value in self.properties.values():
+                if not isinstance(value, (str, int, float, bool)):
+                    raise TypeError(f"properties must be a dictionary of string, int, float, or bool, got {value}")
+            distance_keys = [key for key in self.properties if key.lower() == "distance"]
+            for key in distance_keys:
+                warnings.warn(f"{key} is a reserved keyword in properties, it will be ignored", stacklevel=2)
+                self.properties.pop(key)
 
 
 class Configuration:
