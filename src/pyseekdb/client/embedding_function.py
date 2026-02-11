@@ -327,6 +327,7 @@ class EmbeddingFunctionRegistry:
                 SentenceTransformerEmbeddingFunction,
                 SiliconflowEmbeddingFunction,
                 TencentHunyuanEmbeddingFunction,
+                Text2VecEmbeddingFunction,
                 VoyageaiEmbeddingFunction,
             )
 
@@ -337,6 +338,7 @@ class EmbeddingFunctionRegistry:
             cls._registry["morph"] = MorphEmbeddingFunction
             cls._registry["siliconflow"] = SiliconflowEmbeddingFunction
             cls._registry["tencent_hunyuan"] = TencentHunyuanEmbeddingFunction
+            cls._registry["text2vec"] = Text2VecEmbeddingFunction
             cls._registry["ollama"] = OllamaEmbeddingFunction
             cls._registry["voyageai"] = VoyageaiEmbeddingFunction
             cls._registry["google_vertex"] = GoogleVertexEmbeddingFunction
