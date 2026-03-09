@@ -5,7 +5,7 @@ Supports SPLADE and other sparse encoder models available on HuggingFace Hub.
 Common models include:
   - prithivida/Splade_PP_en_v1
   - naver/splade-cocondenser-ensembledistil
-  - naver/splade-v3
+  - naver/splade-cocondenser-selfdistil
 
 Example:
     >>> from pyseekdb.utils.embedding_functions import HuggingFaceSparseEmbeddingFunction
@@ -109,29 +109,6 @@ class HuggingFaceSparseEmbeddingFunction(SparseEmbeddingFunction):
         else:
             raise ValueError(f"Invalid task: {self.task!r}. Expected 'document' or 'query'.")
 
-        return self._convert_to_sparse_vectors(embeddings)
-
-    def embed_query(self, documents: Documents) -> SparseVectors:
-        """
-        Encode queries into sparse vectors using ``encode_query``.
-
-        Regardless of the ``task`` setting, this method always uses
-        the query encoding path, which is typically preferred at search time
-        for asymmetric models (e.g., SPLADE).
-
-        Args:
-            documents: A single string or list of strings.
-
-        Returns:
-            List of SparseVector instances, one per input query.
-        """
-        from sentence_transformers import SparseEncoder
-
-        if isinstance(documents, str):
-            documents = [documents]
-
-        model = cast(SparseEncoder, self._model)
-        embeddings = model.encode_query(list(documents))
         return self._convert_to_sparse_vectors(embeddings)
 
     @staticmethod
