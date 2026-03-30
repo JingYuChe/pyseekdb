@@ -1,4 +1,3 @@
-import warnings
 from typing import Any
 
 from pyseekdb.client.embedding_function import Documents, Embeddings
@@ -58,7 +57,6 @@ class MistralEmbeddingFunction(OpenAIBaseEmbeddingFunction):
         model_name: str = "mistral-embed",
         api_key_env: str | None = None,
         api_base: str | None = None,
-        dimensions: int | None = None,
         **kwargs: Any,
     ):
         """Initialize MistralEmbeddingFunction.
@@ -70,27 +68,17 @@ class MistralEmbeddingFunction(OpenAIBaseEmbeddingFunction):
                 Defaults to "MISTRAL_API_KEY" if not provided.
             api_base (str, optional): Base URL for the Mistral API endpoint.
                 Defaults to "https://api.mistral.ai/v1" if not provided.
-            dimensions (int, optional): This parameter is not supported by the Mistral embeddings API.
-                If provided, a warning will be issued and the parameter will be ignored.
             **kwargs: Additional arguments to pass to the OpenAI client.
                 Common options include:
                 - timeout: Request timeout in seconds
                 - max_retries: Maximum number of retries
                 - See https://github.com/openai/openai-python for more options
         """
-        if dimensions is not None:
-            warnings.warn(
-                "The dimensions parameter is not supported by Mistral embeddings. "
-                "The provided dimensions parameter will be ignored.",
-                UserWarning,
-                stacklevel=2,
-            )
 
         super().__init__(
             model_name=model_name,
             api_key_env=api_key_env,
             api_base=api_base,
-            dimensions=None,
             **kwargs,
         )
 
@@ -139,7 +127,6 @@ class MistralEmbeddingFunction(OpenAIBaseEmbeddingFunction):
 
         api_key_env = config.get("api_key_env")
         api_base = config.get("api_base")
-        dimensions = config.get("dimensions")
         client_kwargs = config.get("client_kwargs", {})
         if not isinstance(client_kwargs, dict):
             raise TypeError(f"client_kwargs must be a dictionary, but got {client_kwargs}")
@@ -148,6 +135,5 @@ class MistralEmbeddingFunction(OpenAIBaseEmbeddingFunction):
             model_name=model_name,
             api_key_env=api_key_env,
             api_base=api_base,
-            dimensions=dimensions,
             **client_kwargs,
         )
