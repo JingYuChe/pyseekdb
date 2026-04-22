@@ -200,6 +200,17 @@ class RemoteServerClient(BaseClient):
             )
         return self.tenant
 
+    def _namespace_prewarm(
+        self,
+        collection_id: str | None,
+        collection_name: str,
+        namespace_id: str,
+        namespace_name: str,
+        **kwargs,
+    ) -> None:
+        sql = f"CALL DBMS_LOGIC_TABLE.PREWARM({collection_id}, {namespace_id})"
+        self._execute(sql)
+
     def __repr__(self):
         status = "connected" if self.is_connected() else "disconnected"
         return f"<RemoteServerClient {self.full_user}@{self.host}:{self.port}/{self.database} status={status}>"

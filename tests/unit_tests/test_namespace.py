@@ -1,0 +1,958 @@
+"""
+Unit tests for namespace-related classes:
+- IVFConfiguration validation
+- VectorIndexConfig mutual exclusion
+- Collection namespace guard
+- Namespace object properties
+"""
+
+import os
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root / "src"))
+
+from pyseekdb import IVFConfiguration  # noqa: E402
+from pyseekdb.client.client_base import BaseClient  # noqa: E402
+from pyseekdb.client.collection import Collection  # noqa: E402
+from pyseekdb.client.configuration import HNSWConfiguration, IVFIndexType, VectorIndexConfig  # noqa: E402
+from pyseekdb.client.namespace import Namespace  # noqa: E402
+
+
+# ==================== IVFConfiguration Tests ====================
+
+
+class TestIVFConfiguration:
+
+    def test_valid_defaults(self):
+        config = IVFConfiguration()
+        assert config.dimension == 384
+        assert config.distance == "cosine"
+        assert config.use_spfresh is None
+        assert config.properties is None
+
+    def test_valid_custom(self):
+        config = IVFConfiguration(dimension=128, distance="l2", use_spfresh=True)
+        assert config.dimension == 128
+        assert config.distance == "l2"
+        assert config.use_spfresh is True
+
+    def test_valid_inner_product(self):
+        config = IVFConfiguration(dimension=1024, distance="inner_product")
+        assert config.distance == "inner_product"
+
+    def test_dimension_boundary_min(self):
+        config = IVFConfiguration(dimension=1)
+        assert config.dimension == 1
+
+    def test_dimension_boundary_max(self):
+        config = IVFConfiguration(dimension=4096)
+        assert config.dimension == 4096
+
+    def test_invalid_dimension_zero(self):
+        with pytest.raises(ValueError, match="must be between"):
+            IVFConfiguration(dimension=0)
+
+    def test_invalid_dimension_negative(self):
+        with pytest.raises(ValueError, match="must be between"):
+            IVFConfiguration(dimension=-1)
+
+    def test_invalid_dimension_too_large(self):
+        with pytest.raises(ValueError, match="must be between"):
+            IVFConfiguration(dimension=4097)
+
+    def test_invalid_dimension_type(self):
+        with pytest.raises(TypeError, match="dimension must be an integer"):
+            IVFConfiguration(dimension="128")
+
+    def test_invalid_dimension_bool(self):
+        with pytest.raises(TypeError, match="dimension must be an integer"):
+            IVFConfiguration(dimension=True)
+
+    def test_invalid_distance(self):
+        with pytest.raises(ValueError, match="distance must be one of"):
+            IVFConfiguration(distance="invalid")
+
+    def test_invalid_use_spfresh_type(self):
+        with pytest.raises(TypeError, match="use_spfresh must be a bool"):
+            IVFConfiguration(use_spfresh="yes")
+
+    def test_properties_valid(self):
+        config = IVFConfiguration(properties={"nlist": 128, "nprobe": 16})
+        assert config.properties["nlist"] == 128
+
+    def test_valid_type_default(self):
+        config = IVFConfiguration()
+        assert config.type == "ivf_flat"
+
+    def test_valid_type_ivf_sq8(self):
+        config = IVFConfiguration(type="ivf_sq8")
+        assert config.type == "ivf_sq8"
+
+    def test_valid_type_ivf_pq(self):
+        config = IVFConfiguration(type="ivf_pq")
+        assert config.type == "ivf_pq"
+
+    def test_valid_type_enum(self):
+        config = IVFConfiguration(type=IVFIndexType.IVF_SQ8)
+        assert config.type == "ivf_sq8"
+
+    def test_invalid_type(self):
+        with pytest.raises(ValueError, match="type must be one of"):
+            IVFConfiguration(type="invalid")
+
+    def test_valid_lib_default(self):
+        config = IVFConfiguration()
+        assert config.lib == "ob"
+
+    def test_valid_lib_vsag(self):
+        config = IVFConfiguration(lib="vsag")
+        assert config.lib == "vsag"
+
+    def test_valid_lib_enum(self):
+        from pyseekdb.client.configuration import IVFIndexLib
+        config = IVFConfiguration(lib=IVFIndexLib.VSAG)
+        assert config.lib == "vsag"
+
+    def test_invalid_lib(self):
+        with pytest.raises(ValueError, match="lib must be one of"):
+            IVFConfiguration(lib="invalid")
+
+    def test_properties_invalid_nested(self):
+        with pytest.raises(TypeError):
+            IVFConfiguration(properties={"bad": {"nested": True}})
+
+
+# ==================== VectorIndexConfig Tests ====================
+
+
+class TestVectorIndexConfig:
+
+    def test_ivf_only(self):
+        ivf = IVFConfiguration(dimension=128)
+        config = VectorIndexConfig(ivf=ivf, embedding_function=None)
+        assert config.ivf is ivf
+        assert config.hnsw is None
+
+    def test_hnsw_only(self):
+        hnsw = HNSWConfiguration(dimension=128)
+        config = VectorIndexConfig(hnsw=hnsw, embedding_function=None)
+        assert config.hnsw is hnsw
+        assert config.ivf is None
+
+    def test_ivf_and_hnsw_mutually_exclusive(self):
+        ivf = IVFConfiguration(dimension=128)
+        hnsw = HNSWConfiguration(dimension=128)
+        with pytest.raises(ValueError, match="Only one of ivf or hnsw"):
+            VectorIndexConfig(ivf=ivf, hnsw=hnsw, embedding_function=None)
+
+    def test_neither_ivf_nor_hnsw(self):
+        config = VectorIndexConfig(embedding_function=None)
+        assert config.ivf is None
+        assert config.hnsw is None
+
+
+# ==================== Collection Namespace Guard Tests ====================
+
+
+class TestCollectionNamespaceGuard:
+
+    def _make_collection(self, use_namespace: bool) -> Collection:
+        mock_client = MagicMock()
+        return Collection(
+            client=mock_client,
+            name="test_coll",
+            collection_id="1",
+            dimension=3,
+            use_namespace=use_namespace,
+        )
+
+    def test_guard_blocks_add_when_namespace_enabled(self):
+        coll = self._make_collection(use_namespace=True)
+        with pytest.raises(ValueError, match="namespace enabled"):
+            coll.add(ids="1", embeddings=[1.0, 2.0, 3.0])
+
+    def test_guard_blocks_update_when_namespace_enabled(self):
+        coll = self._make_collection(use_namespace=True)
+        with pytest.raises(ValueError, match="namespace enabled"):
+            coll.update(ids="1", metadatas={"k": "v"})
+
+    def test_guard_blocks_upsert_when_namespace_enabled(self):
+        coll = self._make_collection(use_namespace=True)
+        with pytest.raises(ValueError, match="namespace enabled"):
+            coll.upsert(ids="1", embeddings=[1.0, 2.0, 3.0])
+
+    def test_guard_blocks_delete_when_namespace_enabled(self):
+        coll = self._make_collection(use_namespace=True)
+        with pytest.raises(ValueError, match="namespace enabled"):
+            coll.delete(ids="1")
+
+    def test_guard_blocks_query_when_namespace_enabled(self):
+        coll = self._make_collection(use_namespace=True)
+        with pytest.raises(ValueError, match="namespace enabled"):
+            coll.query(query_embeddings=[1.0, 2.0, 3.0])
+
+    def test_guard_blocks_get_when_namespace_enabled(self):
+        coll = self._make_collection(use_namespace=True)
+        with pytest.raises(ValueError, match="namespace enabled"):
+            coll.get(ids="1")
+
+    def test_guard_blocks_count_when_namespace_enabled(self):
+        coll = self._make_collection(use_namespace=True)
+        with pytest.raises(ValueError, match="namespace enabled"):
+            coll.count()
+
+    def test_guard_blocks_peek_when_namespace_enabled(self):
+        coll = self._make_collection(use_namespace=True)
+        with pytest.raises(ValueError, match="namespace enabled"):
+            coll.peek()
+
+
+# ==================== Collection Namespace Management Guard Tests ====================
+
+
+class TestCollectionNamespaceManagementGuard:
+
+    def _make_collection(self, use_namespace: bool) -> Collection:
+        mock_client = MagicMock()
+        return Collection(
+            client=mock_client,
+            name="test_coll",
+            collection_id="1",
+            dimension=3,
+            use_namespace=use_namespace,
+        )
+
+    def test_create_namespace_requires_namespace_enabled(self):
+        coll = self._make_collection(use_namespace=False)
+        with pytest.raises(ValueError, match="not enabled"):
+            coll.create_namespace("ns1")
+
+    def test_get_namespace_requires_namespace_enabled(self):
+        coll = self._make_collection(use_namespace=False)
+        with pytest.raises(ValueError, match="not enabled"):
+            coll.get_namespace("ns1")
+
+    def test_get_or_create_namespace_requires_namespace_enabled(self):
+        coll = self._make_collection(use_namespace=False)
+        with pytest.raises(ValueError, match="not enabled"):
+            coll.get_or_create_namespace("ns1")
+
+    def test_delete_namespace_requires_namespace_enabled(self):
+        coll = self._make_collection(use_namespace=False)
+        with pytest.raises(ValueError, match="not enabled"):
+            coll.delete_namespace("ns1")
+
+    def test_list_namespaces_requires_namespace_enabled(self):
+        coll = self._make_collection(use_namespace=False)
+        with pytest.raises(ValueError, match="not enabled"):
+            coll.list_namespaces()
+
+    def test_has_namespace_requires_namespace_enabled(self):
+        coll = self._make_collection(use_namespace=False)
+        with pytest.raises(ValueError, match="not enabled"):
+            coll.has_namespace("ns1")
+
+
+# ==================== Namespace Object Tests ====================
+
+
+class TestNamespaceObject:
+
+    def _make_namespace(self) -> Namespace:
+        mock_client = MagicMock()
+        mock_ef = MagicMock()
+        coll = Collection(
+            client=mock_client,
+            name="test_coll",
+            collection_id="1",
+            dimension=3,
+            embedding_function=mock_ef,
+            use_namespace=True,
+        )
+        return Namespace(client=mock_client, collection=coll, name="ns1", namespace_id="100")
+
+    def test_name_property(self):
+        ns = self._make_namespace()
+        assert ns.name == "ns1"
+
+    def test_namespace_id_property(self):
+        ns = self._make_namespace()
+        assert ns.namespace_id == "100"
+
+    def test_collection_property(self):
+        ns = self._make_namespace()
+        assert ns.collection.name == "test_coll"
+
+    def test_embedding_function_inherited(self):
+        ns = self._make_namespace()
+        assert ns.embedding_function is ns.collection.embedding_function
+
+    def test_repr(self):
+        ns = self._make_namespace()
+        r = repr(ns)
+        assert "ns1" in r
+        assert "100" in r
+        assert "test_coll" in r
+
+    def test_add_delegates_to_client(self):
+        ns = self._make_namespace()
+        ns.add(ids="d1", embeddings=[1.0, 2.0, 3.0])
+        ns._client._namespace_add.assert_called_once()
+
+    def test_update_delegates_to_client(self):
+        ns = self._make_namespace()
+        ns.update(ids="d1", metadatas={"k": "v"})
+        ns._client._namespace_update.assert_called_once()
+
+    def test_upsert_delegates_to_client(self):
+        ns = self._make_namespace()
+        ns.upsert(ids="d1", embeddings=[1.0, 2.0, 3.0])
+        ns._client._namespace_upsert.assert_called_once()
+
+    def test_delete_delegates_to_client(self):
+        ns = self._make_namespace()
+        ns.delete(ids="d1")
+        ns._client._namespace_delete.assert_called_once()
+
+    def test_query_delegates_to_client(self):
+        ns = self._make_namespace()
+        ns._client._namespace_query.return_value = {"ids": [["d1"]]}
+        ns.query(query_embeddings=[1.0, 2.0, 3.0])
+        ns._client._namespace_query.assert_called_once()
+
+    def test_get_delegates_to_client(self):
+        ns = self._make_namespace()
+        ns._client._namespace_get.return_value = {"ids": ["d1"]}
+        ns.get(ids="d1")
+        ns._client._namespace_get.assert_called_once()
+
+    def test_count_delegates_to_client(self):
+        ns = self._make_namespace()
+        ns._client._namespace_count.return_value = 42
+        assert ns.count() == 42
+
+    def test_peek_delegates_to_client(self):
+        ns = self._make_namespace()
+        ns._client._namespace_peek.return_value = {"ids": ["d1"]}
+        ns.peek(limit=5)
+        ns._client._namespace_peek.assert_called_once()
+
+    def test_prewarm_delegates_to_client(self):
+        ns = self._make_namespace()
+        ns.prewarm()
+        ns._client._namespace_prewarm.assert_called_once()
+
+
+# ==================== Namespace SQL Generation Tests ====================
+
+
+class FakeClient(BaseClient):
+    """Concrete BaseClient subclass that captures SQL without executing."""
+
+    def __init__(self):
+        self.executed_sqls = []
+        self.query_sqls = []
+        self.query_return_value = []
+
+    def _ensure_connection(self):
+        mock_conn = MagicMock()
+        client = self
+
+        class CaptureCursor:
+            def execute(self, sql, params=None):
+                resolved = sql
+                if params:
+                    for p in params:
+                        resolved = resolved.replace("%s", repr(p), 1)
+                if os.environ.get("PYSEEKDB_PRINT_SQL", "").lower() in ("1", "true", "yes"):
+                    print(f"[pyseekdb SQL] {resolved}", flush=True)
+                client.executed_sqls.append(resolved)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+            def close(self):
+                pass
+
+        mock_conn.cursor.return_value = CaptureCursor()
+        return mock_conn
+
+    def _use_context_manager_for_cursor(self):
+        return True
+
+    def _execute(self, sql, params=None):
+        if params:
+            for p in params:
+                sql = sql.replace("%s", repr(p), 1)
+        if os.environ.get("PYSEEKDB_PRINT_SQL", "").lower() in ("1", "true", "yes"):
+            print(f"[pyseekdb SQL] {sql}", flush=True)
+        self.executed_sqls.append(sql)
+        return None
+
+    def _execute_query_with_cursor(self, conn, sql, params, use_context_manager=True):
+        resolved = sql
+        for p in params:
+            resolved = resolved.replace("%s", repr(p), 1)
+        if os.environ.get("PYSEEKDB_PRINT_SQL", "").lower() in ("1", "true", "yes"):
+            print(f"[pyseekdb SQL] {resolved}", flush=True)
+        self.query_sqls.append(resolved)
+        return self.query_return_value
+
+    def is_connected(self):
+        return True
+
+    def _cleanup(self):
+        pass
+
+    def get_raw_connection(self):
+        return None
+
+    @property
+    def mode(self):
+        return "FakeClient"
+
+    def create_collection(self, *a, **kw):
+        pass
+
+    def get_collection(self, *a, **kw):
+        pass
+
+    def delete_collection(self, *a, **kw):
+        pass
+
+    def list_collections(self):
+        return []
+
+    def has_collection(self, name):
+        return False
+
+    def create_database(self, *a, **kw):
+        pass
+
+    def get_database(self, *a, **kw):
+        pass
+
+    def delete_database(self, *a, **kw):
+        pass
+
+    def list_databases(self, *a, **kw):
+        return []
+
+    def fork_database(self, *a, **kw):
+        pass
+
+
+class TestNamespaceSQLGeneration:
+    """Verify SQL statements generated by BaseClient._namespace_* methods."""
+
+    COLLECTION_ID = "42"
+    NAMESPACE_ID = "7"
+    TABLE = "42_logic_data_table"
+
+    def _client(self):
+        return FakeClient()
+
+    def _common_kwargs(self):
+        return dict(
+            collection_id=self.COLLECTION_ID,
+            collection_name="test_coll",
+            namespace_id=self.NAMESPACE_ID,
+            namespace_name="test_ns",
+        )
+
+    # ---- ADD ----
+
+    def test_add_single_sql(self):
+        c = self._client()
+        c._namespace_add(
+            **self._common_kwargs(),
+            ids="d1",
+            embeddings=[1.0, 2.0, 3.0],
+            documents="hello",
+            metadatas={"tag": "a"},
+        )
+        sql = c.executed_sqls[-1]
+        assert sql.startswith("INSERT INTO")
+        assert f"`{self.TABLE}`" in sql
+        assert "(namespace_id, ltable_id, document, embedding, data_content)" in sql
+        assert "(7, 1, 'hello'," in sql
+        assert '\\"id\\": \\"d1\\"' in sql or '"id": "d1"' in sql
+        assert '\\"tag\\": \\"a\\"' in sql or '"tag": "a"' in sql
+
+    def test_add_batch_sql(self):
+        c = self._client()
+        c._namespace_add(
+            **self._common_kwargs(),
+            ids=["d1", "d2", "d3"],
+            embeddings=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            documents=["A", "B", "C"],
+            metadatas=[{"k": 1}, {"k": 2}, {"k": 3}],
+        )
+        sql = c.executed_sqls[-1]
+        assert sql.count("(7, 1,") == 3
+        assert '\\"id\\": \\"d1\\"' in sql or '"id": "d1"' in sql
+        assert '\\"id\\": \\"d2\\"' in sql or '"id": "d2"' in sql
+        assert '\\"id\\": \\"d3\\"' in sql or '"id": "d3"' in sql
+
+    def test_add_without_metadata_sql(self):
+        c = self._client()
+        c._namespace_add(
+            **self._common_kwargs(),
+            ids="d1",
+            embeddings=[1.0, 2.0, 3.0],
+        )
+        sql = c.executed_sqls[-1]
+        assert '\\"id\\": \\"d1\\"' in sql or '"id": "d1"' in sql
+        assert "metadata" not in sql.replace("data_content", "")
+
+    # ---- UPDATE ----
+
+    def test_update_metadata_sql(self):
+        c = self._client()
+        c._namespace_update(
+            **self._common_kwargs(),
+            ids="d1",
+            metadatas={"score": 99},
+        )
+        sql = c.executed_sqls[-1]
+        assert sql.startswith("UPDATE")
+        assert f"`{self.TABLE}`" in sql
+        assert "JSON_SET(data_content, '$.metadata'," in sql
+        assert "CAST(" in sql
+        assert "AS JSON)" in sql
+        assert "namespace_id = 7" in sql
+        assert """JSON_EXTRACT(data_content, '$.id') = 'd1'""" in sql
+
+    def test_update_embedding_and_document_sql(self):
+        c = self._client()
+        c._namespace_update(
+            **self._common_kwargs(),
+            ids="d1",
+            embeddings=[9.0, 8.0, 7.0],
+            documents="Updated",
+        )
+        sql = c.executed_sqls[-1]
+        assert "document = 'Updated'" in sql
+        assert "embedding = X'" in sql
+        assert "namespace_id = 7" in sql
+
+    # ---- DELETE ----
+
+    def test_delete_by_ids_sql(self):
+        c = self._client()
+        c._namespace_delete(
+            **self._common_kwargs(),
+            ids="d1",
+        )
+        sql = c.executed_sqls[-1]
+        assert sql.startswith("DELETE FROM")
+        assert f"`{self.TABLE}`" in sql
+        assert "namespace_id = 7" in sql
+        assert """JSON_EXTRACT(data_content, '$.id') = 'd1'""" in sql
+
+    def test_delete_by_where_sql(self):
+        c = self._client()
+        c._namespace_delete(
+            **self._common_kwargs(),
+            where={"category": "AI"},
+        )
+        sql = c.executed_sqls[-1]
+        assert "DELETE FROM" in sql
+        assert "namespace_id = 7" in sql
+        assert "JSON_EXTRACT" in sql or "JSON_OVERLAPS" in sql
+        assert "metadata.category" in sql
+
+    # ---- QUERY ----
+
+    def test_query_basic_sql(self):
+        c = self._client()
+        c.query_return_value = []
+        c._namespace_query(
+            **self._common_kwargs(),
+            query_embeddings=[1.0, 0.0, 0.0],
+            n_results=3,
+            distance="l2",
+        )
+        sql = c.query_sqls[-1]
+        assert "SELECT" in sql
+        assert "JSON_EXTRACT(data_content, '$.id') AS record_id" in sql
+        assert "l2_distance(embedding," in sql
+        assert "AS distance" in sql
+        assert f"`{self.TABLE}`" in sql
+        assert "namespace_id = 7" in sql
+        assert "ORDER BY l2_distance(embedding," in sql
+        assert "APPROXIMATE LIMIT" in sql
+
+    def test_query_with_where_sql(self):
+        c = self._client()
+        c.query_return_value = []
+        c._namespace_query(
+            **self._common_kwargs(),
+            query_embeddings=[1.0, 0.0, 0.0],
+            n_results=5,
+            where={"category": "AI"},
+            distance="cosine",
+        )
+        sql = c.query_sqls[-1]
+        assert "cosine_distance(embedding," in sql
+        assert "metadata.category" in sql
+
+    # ---- GET ----
+
+    def test_get_by_ids_sql(self):
+        c = self._client()
+        c.query_return_value = []
+        c._namespace_get(
+            **self._common_kwargs(),
+            ids="g1",
+        )
+        sql = c.query_sqls[-1]
+        assert "SELECT" in sql
+        assert f"`{self.TABLE}`" in sql
+        assert "namespace_id = 7" in sql
+        assert """JSON_EXTRACT(data_content, '$.id') = 'g1'""" in sql
+
+    def test_get_with_limit_sql(self):
+        c = self._client()
+        c.query_return_value = []
+        c._namespace_get(
+            **self._common_kwargs(),
+            limit=10,
+        )
+        sql = c.query_sqls[-1]
+        assert "LIMIT 10" in sql
+
+    # ---- COUNT ----
+
+    def test_count_sql(self):
+        c = self._client()
+        c.query_return_value = [{"cnt": 0}]
+        result = c._namespace_count(**self._common_kwargs())
+        sql = c.query_sqls[-1]
+        assert "SELECT COUNT(*) AS cnt" in sql
+        assert f"`{self.TABLE}`" in sql
+        assert "namespace_id = 7" in sql
+        assert "ltable_id = 1" in sql
+        assert result == 0
+
+
+    # ---- IVF TYPE in SQL ----
+
+    def test_ivf_type_default_in_sql(self):
+        """Verify _get_ivf_vector_index_sql uses TYPE=IVF_FLAT and LIB=OB by default."""
+        from pyseekdb.client.client_base import _get_ivf_vector_index_sql
+
+        config = IVFConfiguration(dimension=3, distance="cosine")
+        sql = _get_ivf_vector_index_sql(config)
+        assert "TYPE=IVF_FLAT" in sql
+        assert "LIB=OB" in sql
+        assert "TYPE=ivf," not in sql
+
+    def test_ivf_type_sq8_in_sql(self):
+        """Verify _get_ivf_vector_index_sql uses TYPE=IVF_SQ8 when specified."""
+        from pyseekdb.client.client_base import _get_ivf_vector_index_sql
+
+        config = IVFConfiguration(dimension=3, distance="l2", type="ivf_sq8")
+        sql = _get_ivf_vector_index_sql(config)
+        assert "TYPE=IVF_SQ8" in sql
+
+    def test_ivf_type_pq_in_sql(self):
+        """Verify _get_ivf_vector_index_sql uses TYPE=IVF_PQ when specified."""
+        from pyseekdb.client.client_base import _get_ivf_vector_index_sql
+
+        config = IVFConfiguration(dimension=3, distance="inner_product", type="ivf_pq")
+        sql = _get_ivf_vector_index_sql(config)
+        assert "TYPE=IVF_PQ" in sql
+
+    def test_ivf_lib_vsag_in_sql(self):
+        """Verify _get_ivf_vector_index_sql uses LIB=VSAG when specified."""
+        from pyseekdb.client.client_base import _get_ivf_vector_index_sql
+
+        config = IVFConfiguration(dimension=3, distance="cosine", lib="vsag")
+        sql = _get_ivf_vector_index_sql(config)
+        assert "LIB=VSAG" in sql
+
+    def test_ivf_lib_ob_in_sql(self):
+        """Verify _get_ivf_vector_index_sql uses LIB=OB by default."""
+        from pyseekdb.client.client_base import _get_ivf_vector_index_sql
+
+        config = IVFConfiguration(dimension=3, distance="cosine")
+        sql = _get_ivf_vector_index_sql(config)
+        assert "LIB=OB" in sql
+
+
+# ==================== Namespace Name Validation Tests ====================
+
+
+class TestValidateNamespaceName:
+
+    def test_valid_simple_name(self):
+        from pyseekdb.client.client_base import _validate_namespace_name
+        _validate_namespace_name("my_namespace")
+
+    def test_valid_with_digits_and_underscore(self):
+        from pyseekdb.client.client_base import _validate_namespace_name
+        _validate_namespace_name("tenant_123_abc")
+
+    def test_valid_single_char(self):
+        from pyseekdb.client.client_base import _validate_namespace_name
+        _validate_namespace_name("a")
+
+    def test_valid_boundary_256_chars(self):
+        from pyseekdb.client.client_base import _validate_namespace_name
+        _validate_namespace_name("a" * 256)
+
+    def test_empty_name_raises(self):
+        from pyseekdb.client.client_base import _validate_namespace_name
+        with pytest.raises(ValueError, match="must not be empty"):
+            _validate_namespace_name("")
+
+    def test_non_string_raises(self):
+        from pyseekdb.client.client_base import _validate_namespace_name
+        with pytest.raises(TypeError, match="must be a string"):
+            _validate_namespace_name(123)
+
+    def test_too_long_raises(self):
+        from pyseekdb.client.client_base import _validate_namespace_name
+        with pytest.raises(ValueError, match="too long"):
+            _validate_namespace_name("a" * 257)
+
+    def test_hyphen_raises(self):
+        from pyseekdb.client.client_base import _validate_namespace_name
+        with pytest.raises(ValueError, match="invalid characters"):
+            _validate_namespace_name("my-namespace")
+
+    def test_space_raises(self):
+        from pyseekdb.client.client_base import _validate_namespace_name
+        with pytest.raises(ValueError, match="invalid characters"):
+            _validate_namespace_name("my namespace")
+
+    def test_dot_raises(self):
+        from pyseekdb.client.client_base import _validate_namespace_name
+        with pytest.raises(ValueError, match="invalid characters"):
+            _validate_namespace_name("my.namespace")
+
+    def test_chinese_raises(self):
+        from pyseekdb.client.client_base import _validate_namespace_name
+        with pytest.raises(ValueError, match="invalid characters"):
+            _validate_namespace_name("命名空间")
+
+    def test_collection_create_namespace_validates_name(self):
+        mock_client = MagicMock()
+        coll = Collection(client=mock_client, name="c", collection_id="1", dimension=3, use_namespace=True)
+        with pytest.raises(ValueError, match="invalid characters"):
+            coll.create_namespace("bad-name")
+
+    def test_collection_get_namespace_validates_name(self):
+        mock_client = MagicMock()
+        coll = Collection(client=mock_client, name="c", collection_id="1", dimension=3, use_namespace=True)
+        with pytest.raises(ValueError, match="must not be empty"):
+            coll.get_namespace("")
+
+    def test_collection_has_namespace_validates_name(self):
+        mock_client = MagicMock()
+        coll = Collection(client=mock_client, name="c", collection_id="1", dimension=3, use_namespace=True)
+        with pytest.raises(TypeError, match="must be a string"):
+            coll.has_namespace(42)
+
+
+# ==================== Record ID Validation Tests ====================
+
+
+class TestValidateRecordIds:
+
+    def test_valid_single_id(self):
+        from pyseekdb.client.client_base import _validate_record_ids
+        _validate_record_ids(["doc_1"])
+
+    def test_valid_multiple_ids(self):
+        from pyseekdb.client.client_base import _validate_record_ids
+        _validate_record_ids(["id1", "id2", "id_3"])
+
+    def test_valid_boundary_512_chars(self):
+        from pyseekdb.client.client_base import _validate_record_ids
+        _validate_record_ids(["a" * 512])
+
+    def test_empty_id_raises(self):
+        from pyseekdb.client.client_base import _validate_record_ids
+        with pytest.raises(ValueError, match="must not be empty"):
+            _validate_record_ids([""])
+
+    def test_non_string_id_raises(self):
+        from pyseekdb.client.client_base import _validate_record_ids
+        with pytest.raises(TypeError, match="must be a string"):
+            _validate_record_ids([123])
+
+    def test_too_long_id_raises(self):
+        from pyseekdb.client.client_base import _validate_record_ids
+        with pytest.raises(ValueError, match="too long"):
+            _validate_record_ids(["a" * 513])
+
+    def test_invalid_chars_raises(self):
+        from pyseekdb.client.client_base import _validate_record_ids
+        with pytest.raises(ValueError, match="invalid characters"):
+            _validate_record_ids(["doc-1"])
+
+    def test_space_in_id_raises(self):
+        from pyseekdb.client.client_base import _validate_record_ids
+        with pytest.raises(ValueError, match="invalid characters"):
+            _validate_record_ids(["doc 1"])
+
+    def test_mixed_valid_and_invalid_raises_on_first_bad(self):
+        from pyseekdb.client.client_base import _validate_record_ids
+        with pytest.raises(ValueError, match="invalid characters"):
+            _validate_record_ids(["good_id", "bad-id"])
+
+
+# ==================== Namespace Batch Limit Tests ====================
+
+
+class TestNamespaceBatchLimit:
+
+    def _client(self):
+        return FakeClient()
+
+    def _common_kwargs(self):
+        return dict(
+            collection_id="42",
+            collection_name="test_coll",
+            namespace_id="7",
+            namespace_name="test_ns",
+        )
+
+    def test_add_single_record_ok(self):
+        c = self._client()
+        c._namespace_add(**self._common_kwargs(), ids="d1", embeddings=[1.0, 2.0, 3.0])
+
+    def test_add_100_records_ok(self):
+        c = self._client()
+        ids = [f"d{i}" for i in range(100)]
+        embeddings = [[float(i)] * 3 for i in range(100)]
+        c._namespace_add(**self._common_kwargs(), ids=ids, embeddings=embeddings)
+
+    def test_add_101_records_raises(self):
+        c = self._client()
+        ids = [f"d{i}" for i in range(101)]
+        embeddings = [[float(i)] * 3 for i in range(101)]
+        with pytest.raises(ValueError, match="exceeds maximum allowed 100"):
+            c._namespace_add(**self._common_kwargs(), ids=ids, embeddings=embeddings)
+
+    def test_update_101_records_raises(self):
+        c = self._client()
+        ids = [f"d{i}" for i in range(101)]
+        with pytest.raises(ValueError, match="exceeds maximum allowed 100"):
+            c._namespace_update(**self._common_kwargs(), ids=ids, metadatas=[{"k": "v"}] * 101)
+
+    def test_upsert_101_records_raises(self):
+        c = self._client()
+        ids = [f"d{i}" for i in range(101)]
+        embeddings = [[float(i)] * 3 for i in range(101)]
+        with pytest.raises(ValueError, match="exceeds maximum allowed 100"):
+            c._namespace_upsert(**self._common_kwargs(), ids=ids, embeddings=embeddings)
+
+    def test_add_invalid_id_raises(self):
+        c = self._client()
+        with pytest.raises(ValueError, match="invalid characters"):
+            c._namespace_add(**self._common_kwargs(), ids="bad-id", embeddings=[1.0, 2.0, 3.0])
+
+    def test_delete_invalid_id_raises(self):
+        c = self._client()
+        with pytest.raises(ValueError, match="invalid characters"):
+            c._namespace_delete(**self._common_kwargs(), ids="bad-id")
+
+
+# ==================== Physical Table Names Tests ====================
+
+
+class TestPhysicalTableNames:
+
+    def test_data_table_name(self):
+        from pyseekdb.client.meta_info import NamespaceCollectionNames
+        assert NamespaceCollectionNames.data_table_name("my_coll") == "my_coll_logic_data_table"
+
+    def test_hot_table_name(self):
+        from pyseekdb.client.meta_info import NamespaceCollectionNames
+        assert NamespaceCollectionNames.hot_table_name("my_coll") == "my_coll_hot_table"
+
+    def test_kv_data_table_name(self):
+        from pyseekdb.client.meta_info import NamespaceCollectionNames
+        assert NamespaceCollectionNames.kv_data_table_name("my_coll") == "my_coll_kv_data_table"
+
+    def test_logic_schema_table_name(self):
+        from pyseekdb.client.meta_info import NamespaceCollectionNames
+        assert NamespaceCollectionNames.logic_schema_table_name("my_coll") == "my_coll_logic_schema_table"
+
+    def test_tablegroup_name(self):
+        from pyseekdb.client.meta_info import NamespaceCollectionNames
+        assert NamespaceCollectionNames.tablegroup_name("my_coll") == "my_coll_tg"
+
+    def test_is_ns_data_table_true(self):
+        from pyseekdb.client.meta_info import NamespaceCollectionNames
+        assert NamespaceCollectionNames.is_ns_data_table("my_coll_logic_data_table") is True
+
+    def test_is_ns_data_table_false(self):
+        from pyseekdb.client.meta_info import NamespaceCollectionNames
+        assert NamespaceCollectionNames.is_ns_data_table("my_coll_hot_table") is False
+
+
+# ==================== UseNamespace Validation Tests ====================
+
+
+class TestUseNamespaceValidation:
+
+    def test_hnsw_raises(self):
+        c = FakeClient()
+        from pyseekdb.client.schema import Schema
+        from pyseekdb.client.configuration import VectorIndexConfig, HNSWConfiguration
+        hnsw = HNSWConfiguration(dimension=128)
+        schema = Schema(vector_index=VectorIndexConfig(hnsw=hnsw, embedding_function=None))
+        with pytest.raises(ValueError, match="HNSW is not allowed"):
+            c._create_namespace_collection("test", schema)
+
+    def test_ob_type_validation(self):
+        c = FakeClient()
+        c.detect_db_type_and_version = MagicMock(return_value=("mysql", "8.0"))
+        from pyseekdb.client.schema import Schema
+        from pyseekdb.client.configuration import VectorIndexConfig
+        schema = Schema(vector_index=VectorIndexConfig(ivf=IVFConfiguration(dimension=3, use_spfresh=True), embedding_function=None))
+        with pytest.raises(ValueError, match="only supported on OceanBase"):
+            c._create_namespace_collection("test", schema)
+
+    def test_use_spfresh_false_raises(self):
+        c = FakeClient()
+        c.detect_db_type_and_version = MagicMock(return_value=("oceanbase", "4.3"))
+        from pyseekdb.client.schema import Schema
+        from pyseekdb.client.configuration import VectorIndexConfig
+        schema = Schema(vector_index=VectorIndexConfig(ivf=IVFConfiguration(dimension=3, use_spfresh=False), embedding_function=None))
+        with pytest.raises(ValueError, match="requires use_spfresh=True"):
+            c._create_namespace_collection("test", schema)
+
+
+# ==================== Delete Namespace Uses Kernel ====================
+
+
+class TestDeleteNamespaceUsesKernel:
+
+    def test_delete_namespace_calls_dbms_logic_table(self):
+        c = FakeClient()
+        c._execute = MagicMock(side_effect=[
+            [{"namespace_id": 10, "namespace_name": "ns1"}],
+            None,
+            None,
+            None,
+        ])
+        c._delete_ns_namespace_meta("abc123", "ns1")
+        calls = [str(call) for call in c._execute.call_args_list]
+        assert any("DBMS_LOGIC_TABLE.DROP_NAMESPACE" in s for s in calls)
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

@@ -5,6 +5,7 @@ Base client interface definition
 import contextlib
 import json
 import logging
+import os
 import re
 import struct
 import warnings
@@ -25,6 +26,7 @@ from .configuration import (
     ConfigurationParam,
     FulltextIndexConfig,
     HNSWConfiguration,
+    IVFConfiguration,
     VectorIndexConfig,
 )
 from .database import Database
@@ -37,7 +39,7 @@ from .embedding_function import (
     get_default_embedding_function,
 )
 from .filters import FilterBuilder
-from .meta_info import CollectionFieldNames, CollectionNames
+from .meta_info import CollectionFieldNames, CollectionNames, NamespaceCollectionNames, NamespaceFieldNames
 from .query_types import QueryHint
 from .schema import Schema, SparseVectorIndexConfig
 from .sparse_embedding_function import (
@@ -120,6 +122,27 @@ def _validate_collection_name(name: str) -> None:
         )
 
 
+from .validators import _MAX_NAMESPACE_BATCH_SIZE, _validate_namespace_name, _validate_record_ids  # noqa: F401
+
+_NS_PARTITION_COUNT = 1000
+
+
+def _build_default_ltable_schema() -> dict:
+    return {
+        "col_info": [
+            {"col_idx": 1, "col_name": "metadata",  "col_type": "JSON"},
+            {"col_idx": 2, "col_name": "content",   "col_type": "TEXT"},
+            {"col_idx": 3, "col_name": "embedding", "col_type": "VECTOR"},
+        ],
+        "index_info": [
+            {"index_seq": 0, "index_type": "PRIMARY",      "indexed_columns": []},
+            {"index_seq": 1, "index_type": "SEARCH_INDEX",  "indexed_columns": [1]},
+            {"index_seq": 2, "index_type": "FULLTEXT",      "indexed_columns": [2]},
+            {"index_seq": 3, "index_type": "IVF",           "indexed_columns": [3]},
+        ],
+    }
+
+
 def _get_fulltext_index_sql(
     fulltext_config: FulltextIndexConfig | None = None,
 ) -> str:
@@ -189,6 +212,21 @@ def _get_vector_index_sql(hnsw_config: HNSWConfiguration) -> str:
     return f"WITH (DISTANCE={hnsw_config.distance}, TYPE={hnsw_config.type}, LIB={hnsw_config.lib}{properties_str})"
 
 
+def _get_ivf_vector_index_sql(ivf_config: "IVFConfiguration") -> str:
+    property_parts = []
+    if ivf_config.properties:
+        for k, v in ivf_config.properties.items():
+            if isinstance(v, str):
+                property_parts.append(f"{k}='{v}'")
+            else:
+                property_parts.append(f"{k}={v}")
+    if ivf_config.use_spfresh is not None:
+        property_parts.append(f"use_spfresh={str(ivf_config.use_spfresh).lower()}")
+    property_str = ", ".join(property_parts)
+    properties_str = f", {property_str}" if property_str else ""
+    return f"WITH (DISTANCE={ivf_config.distance}, TYPE={ivf_config.type.upper()}, LIB={ivf_config.lib.upper()}{properties_str})"
+
+
 def _get_sparse_vector_index_sql(sparse_config: SparseVectorIndexConfig) -> str:
     """
     Generate VECTOR INDEX SQL clause for sparse vector index from SparseVectorIndexConfig.
@@ -252,6 +290,7 @@ class ClientAPI(ABC):
         schema: Schema | None = None,
         configuration: ConfigurationParam = _NOT_PROVIDED,
         embedding_function: EmbeddingFunctionParam = _NOT_PROVIDED,
+        use_namespace: bool = False,
         **kwargs,
     ) -> "Collection":
         """
@@ -270,6 +309,7 @@ class ClientAPI(ABC):
                                Defaults to DefaultEmbeddingFunction.
                                If explicitly set to None, collection will not have an embedding function.
                                Ignored if ``schema`` is provided.
+            use_namespace: If True, create a namespace-enabled collection. Defaults to False.
             **kwargs: Additional parameters
         """
         pass
@@ -356,6 +396,23 @@ class BaseClient(BaseConnection, AdminAPI):
     """
 
     # ==================== Database Type Detection ====================
+
+    def _validate_ob_database_type(self) -> None:
+        db_type, _version = self.detect_db_type_and_version()
+        if db_type.lower() != "oceanbase":
+            raise ValueError("use_namespace=True is only supported on OceanBase")
+
+    def _is_shared_storage_mode(self) -> bool:
+        try:
+            rows = self._execute(
+                "SELECT VALUE FROM oceanbase.GV$OB_PARAMETERS WHERE name = 'ob_startup_mode'"
+            )
+            if rows:
+                val = rows[0][0] if isinstance(rows[0], (list, tuple)) else rows[0]["VALUE"]
+                return str(val).upper() == "SHARED_STORAGE"
+        except Exception:
+            pass
+        return False
 
     def detect_db_type_and_version(self) -> tuple[str, "Version"]:  # noqa: C901
         """
@@ -708,8 +765,7 @@ class BaseClient(BaseConnection, AdminAPI):
 
         hnsw_config.dimension = dimension
         fulltext_config = _extract_fulltext_config(configuration)
-        vic = VectorIndexConfig(hnsw=hnsw_config)
-        vic.embedding_function = embedding_function
+        vic = VectorIndexConfig(hnsw=hnsw_config, embedding_function=embedding_function)
         return Schema(
             vector_index=vic,
             fulltext_index=fulltext_config,
@@ -721,6 +777,7 @@ class BaseClient(BaseConnection, AdminAPI):
         schema: Schema | None = None,
         configuration: ConfigurationParam = _NOT_PROVIDED,
         embedding_function: EmbeddingFunctionParam = _NOT_PROVIDED,
+        use_namespace: bool = False,
         **kwargs,
     ) -> "Collection":
         """Create a new collection.
@@ -736,6 +793,7 @@ class BaseClient(BaseConnection, AdminAPI):
             embedding_function: The embedding function to use for this collection.
                 Defaults to ``DefaultEmbeddingFunction`` (all-MiniLM-L6-v2). If set to None,
                 no embedding function will be used (embeddings must be provided manually).
+            use_namespace: If True, create a namespace-enabled collection. Defaults to False.
             **kwargs: Additional parameters for collection creation.
 
         Returns:
@@ -783,6 +841,9 @@ class BaseClient(BaseConnection, AdminAPI):
             schema = self._prepare_schema_parameters(configuration, embedding_function)
 
         logger.debug(f"schema: {schema}")
+
+        if use_namespace:
+            return self._create_namespace_collection(name, schema, **kwargs)
 
         # Resolve HNSW configuration dimension if not set
         hnsw_config = schema.vector_index.hnsw
@@ -855,6 +916,71 @@ class BaseClient(BaseConnection, AdminAPI):
             distance=hnsw_config.distance,
             sparse_vector_index_config=sparse_vector_index_config,
             **kwargs,
+        )
+
+    def _create_namespace_collection(self, name: str, schema: Schema, **kwargs) -> "Collection":
+        dense_embedding_function = schema.vector_index.embedding_function
+        ivf_config = schema.vector_index.ivf
+        hnsw_config = schema.vector_index.hnsw
+
+        if hnsw_config is not None:
+            raise ValueError("use_namespace=True only supports IVF index type, HNSW is not allowed")
+        self._validate_ob_database_type()
+
+        if ivf_config is not None:
+            dimension = ivf_config.dimension
+            distance = ivf_config.distance
+            if ivf_config.use_spfresh is not None and not ivf_config.use_spfresh:
+                raise ValueError("use_namespace=True requires use_spfresh=True")
+        else:
+            if dense_embedding_function is not None:
+                dimension = self._get_embedding_function_dimension(dense_embedding_function)
+            else:
+                dimension = DEFAULT_VECTOR_DIMENSION
+            distance = DEFAULT_DISTANCE_METRIC
+            from .configuration import IVFConfiguration
+            ivf_config = IVFConfiguration(dimension=dimension, distance=distance, use_spfresh=True)
+
+        if dimension < 1 or dimension > 4096:
+            raise ValueError(f"Dimension must be between 1 and 4096, got {dimension}")
+
+        is_ss = self._is_shared_storage_mode()
+        settings = {
+            "version": 2,
+            "use_namespace": True,
+            "dense_index_type": "ivf",
+            "use_spfresh": True,
+            "storage_mode": "ss" if is_ss else "sn",
+            "dimension": dimension,
+            "distance": distance,
+        }
+        if dense_embedding_function is not None and EmbeddingFunction.support_persistence(dense_embedding_function):
+            settings["embedding_function"] = {
+                "name": dense_embedding_function.name(),
+                "properties": dense_embedding_function.get_config(),
+            }
+
+        collection_meta = self._create_ns_collection_meta(name, settings)
+        collection_id = collection_meta["collection_id"]
+
+        self._ensure_namespace_catalogs()
+
+        self._create_namespace_physical_tables(
+            collection_id=collection_id,
+            dimension=dimension,
+            ivf_config=ivf_config,
+            fulltext_config=schema.fulltext_index,
+            is_shared_storage=is_ss,
+        )
+
+        return Collection(
+            client=self,
+            name=name,
+            collection_id=collection_id,
+            dimension=dimension,
+            embedding_function=dense_embedding_function,
+            distance=distance,
+            use_namespace=True,
         )
 
     def _get_embedding_function_dimension(self, embedding_function: EmbeddingFunction) -> int:
@@ -946,13 +1072,333 @@ class BaseClient(BaseConnection, AdminAPI):
         except Exception as e:
             raise ValueError(f"Failed to create collection metadata: {e}") from e
 
+    # ==================== Namespace Catalog Methods ====================
+
+    def _ensure_namespace_catalogs(self) -> None:
+        ns_namespaces_sql = f"""CREATE TABLE IF NOT EXISTS `{NamespaceCollectionNames.sdk_ns_namespaces_table()}` (
+            namespace_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            collection_id CHAR(32) NOT NULL,
+            namespace_name VARCHAR(256) NOT NULL,
+            created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+            updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+            info JSON,
+            PRIMARY KEY (namespace_id),
+            UNIQUE KEY uk_sdk_ns_coll_name (collection_id, namespace_name),
+            KEY idx_sdk_ns_by_collection (collection_id)
+        ) COMMENT='Namespace catalog';"""
+        ns_ltables_sql = f"""CREATE TABLE IF NOT EXISTS `{NamespaceCollectionNames.sdk_ns_ltables_table()}` (
+            ltable_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            collection_id CHAR(32) NOT NULL,
+            namespace_id BIGINT UNSIGNED NOT NULL,
+            ltable_name VARCHAR(256) NOT NULL DEFAULT 'default',
+            created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+            updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+            info JSON,
+            PRIMARY KEY (ltable_id),
+            UNIQUE KEY uk_sdk_lt_coll_ns_name (collection_id, namespace_id, ltable_name),
+            KEY idx_sdk_lt_by_ns (collection_id, namespace_id)
+        ) COMMENT='LTable catalog';"""
+        self._execute(ns_namespaces_sql)
+        self._execute(ns_ltables_sql)
+
+    def _create_ns_collection_meta(self, collection_name: str, settings: dict) -> dict:
+        self._create_sdk_collections_if_not_exists()
+        settings_str = escape_string(json.dumps(settings))
+        collection_name_escaped = escape_string(collection_name)
+        insert_sql = (
+            f"INSERT INTO `{CollectionNames.sdk_collections_table_name()}` "
+            f"(collection_name, settings) "
+            f"VALUES ('{collection_name_escaped}', '{settings_str}')"
+        )
+        self._execute(insert_sql)
+        rows = self._execute(
+            f"SELECT collection_id FROM `{CollectionNames.sdk_collections_table_name()}` "
+            f"WHERE collection_name = '{collection_name_escaped}'"
+        )
+        collection_id = str(rows[0][0] if isinstance(rows[0], (list, tuple)) else rows[0]["collection_id"])
+        return {"collection_id": collection_id, "collection_name": collection_name}
+
+    def _get_ns_collection_meta(self, collection_name: str) -> dict | None:
+        collection_name_escaped = escape_string(collection_name)
+        try:
+            rows = self._execute(
+                f"SELECT collection_id, collection_name, settings "
+                f"FROM `{CollectionNames.sdk_collections_table_name()}` "
+                f"WHERE collection_name = '{collection_name_escaped}'"
+            )
+        except Exception:
+            return None
+        if not rows:
+            return None
+        row = rows[0]
+        if isinstance(row, (list, tuple)):
+            settings = json.loads(row[2]) if row[2] else {}
+        else:
+            settings = json.loads(row["settings"]) if row.get("settings") else {}
+        if not settings.get("use_namespace"):
+            return None
+        if isinstance(row, (list, tuple)):
+            return {
+                "collection_id": str(row[0]),
+                "collection_name": row[1],
+                "settings": settings,
+            }
+        return {
+            "collection_id": str(row["collection_id"]),
+            "collection_name": row["collection_name"],
+            "settings": settings,
+        }
+
+    def _has_ns_collection(self, collection_name: str) -> bool:
+        try:
+            return self._get_ns_collection_meta(collection_name) is not None
+        except Exception:
+            return False
+
+    def _delete_ns_collection_meta(self, collection_name: str) -> None:
+        meta = self._get_ns_collection_meta(collection_name)
+        if meta is None:
+            raise ValueError(f"Namespace collection '{collection_name}' not found")
+        collection_id = meta["collection_id"]
+        collection_id_escaped = escape_string(collection_id)
+        self._execute(
+            f"DELETE FROM `{CollectionNames.sdk_collections_table_name()}` "
+            f"WHERE collection_id = '{collection_id_escaped}'"
+        )
+        with contextlib.suppress(Exception):
+            self._execute(
+                f"DELETE FROM `{NamespaceCollectionNames.sdk_ns_ltables_table()}` "
+                f"WHERE collection_id = '{collection_id_escaped}'"
+            )
+        with contextlib.suppress(Exception):
+            self._execute(
+                f"DELETE FROM `{NamespaceCollectionNames.sdk_ns_namespaces_table()}` "
+                f"WHERE collection_id = '{collection_id_escaped}'"
+            )
+        self._cleanup_namespace_physical_tables(collection_id)
+
+    def _create_namespace_physical_tables(
+        self,
+        collection_id: str,
+        dimension: int,
+        ivf_config,
+        fulltext_config=None,
+        is_shared_storage: bool = False,
+    ) -> None:
+        tg_name = NamespaceCollectionNames.tablegroup_name(collection_id)
+        data_table = NamespaceCollectionNames.data_table_name(collection_id)
+        kv_table = NamespaceCollectionNames.kv_data_table_name(collection_id)
+        schema_table = NamespaceCollectionNames.logic_schema_table_name(collection_id)
+
+        fulltext_clause = _get_fulltext_index_sql(fulltext_config)
+        vector_index_sql = _get_ivf_vector_index_sql(ivf_config)
+        partition_clause = f"PARTITION BY KEY(namespace_id) PARTITIONS {_NS_PARTITION_COUNT}"
+
+        try:
+            self._execute(f"CREATE TABLEGROUP `{tg_name}` SHARDING='ADAPTIVE'")
+
+            data_sql_with_search = f"""CREATE TABLE `{data_table}` (
+                namespace_id BIGINT UNSIGNED NOT NULL,
+                ltable_id BIGINT UNSIGNED NOT NULL,
+                document LONGTEXT,
+                embedding VECTOR({dimension}),
+                data_content JSON NOT NULL,
+                created_by VARCHAR(64) DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FULLTEXT INDEX idx_fts(document) {fulltext_clause},
+                SEARCH INDEX idx_json(data_content) WITH PARSER json
+            ) TABLEGROUP=`{tg_name}` COMMENT='逻辑表主数据' DEFAULT CHARSET=utf8mb4 ORGANIZATION HEAP IS_LOGIC_TABLE = TRUE
+            {partition_clause}"""
+
+            data_sql_without_search = f"""CREATE TABLE `{data_table}` (
+                namespace_id BIGINT UNSIGNED NOT NULL,
+                ltable_id BIGINT UNSIGNED NOT NULL,
+                document LONGTEXT,
+                embedding VECTOR({dimension}),
+                data_content JSON NOT NULL,
+                created_by VARCHAR(64) DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FULLTEXT INDEX idx_fts(document) {fulltext_clause}
+            ) TABLEGROUP=`{tg_name}` COMMENT='逻辑表主数据' DEFAULT CHARSET=utf8mb4 ORGANIZATION HEAP IS_LOGIC_TABLE = TRUE
+            {partition_clause}"""
+
+            try:
+                self._execute(data_sql_with_search)
+            except Exception:
+                self._execute(data_sql_without_search)
+
+            ivf_index_sql = f"CREATE VECTOR INDEX idx_vec ON `{data_table}` (embedding) {vector_index_sql}"
+            self._execute(ivf_index_sql)
+
+            if is_shared_storage:
+                hot_table = NamespaceCollectionNames.hot_table_name(collection_id)
+                self._execute(f"""CREATE TABLE `{hot_table}` (
+                    namespace_id BIGINT UNSIGNED NOT NULL,
+                    last_access_time TIMESTAMP(6) NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    PRIMARY KEY(namespace_id)
+                ) TABLEGROUP=`{tg_name}` COMMENT='热点/TTL附属表' DEFAULT CHARSET=utf8mb4
+                {partition_clause}""")
+
+            self._execute(f"""CREATE TABLE `{kv_table}` (
+                namespace_id BIGINT UNSIGNED NOT NULL,
+                kv_key VARCHAR(1024) NOT NULL,
+                kv_value LONGBLOB NOT NULL,
+                PRIMARY KEY(namespace_id, kv_key)
+            ) TABLEGROUP=`{tg_name}` COMMENT='索引与映射KV表' DEFAULT CHARSET=utf8mb4
+            {partition_clause}""")
+
+            self._execute(f"""CREATE TABLE `{schema_table}` (
+                namespace_id BIGINT UNSIGNED NOT NULL,
+                ltable_id BIGINT UNSIGNED NOT NULL,
+                schema_content JSON NOT NULL,
+                created_by VARCHAR(64) DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY(namespace_id, ltable_id)
+            ) TABLEGROUP=`{tg_name}` COMMENT='LTable schema定义' DEFAULT CHARSET=utf8mb4
+            {partition_clause}""")
+
+        except Exception:
+            self._cleanup_namespace_physical_tables(collection_id)
+            raise
+
+    def _cleanup_namespace_physical_tables(self, collection_id: str) -> None:
+        for suffix_fn in [
+            NamespaceCollectionNames.logic_schema_table_name,
+            NamespaceCollectionNames.kv_data_table_name,
+            NamespaceCollectionNames.hot_table_name,
+            NamespaceCollectionNames.data_table_name,
+        ]:
+            with contextlib.suppress(Exception):
+                self._execute(f"DROP TABLE IF EXISTS `{suffix_fn(collection_id)}`")
+        with contextlib.suppress(Exception):
+            self._execute(f"DROP TABLEGROUP IF EXISTS `{NamespaceCollectionNames.tablegroup_name(collection_id)}`")
+
+    def _create_ns_namespace_meta(self, collection_id: str, namespace_name: str) -> dict:
+        namespace_name_escaped = escape_string(namespace_name)
+        collection_id_escaped = escape_string(collection_id)
+        self._execute(
+            f"INSERT INTO `{NamespaceCollectionNames.sdk_ns_namespaces_table()}` "
+            f"(collection_id, namespace_name) VALUES ('{collection_id_escaped}', '{namespace_name_escaped}')"
+        )
+        rows = self._execute(
+            f"SELECT namespace_id FROM `{NamespaceCollectionNames.sdk_ns_namespaces_table()}` "
+            f"WHERE collection_id = '{collection_id_escaped}' AND namespace_name = '{namespace_name_escaped}'"
+        )
+        ns_id = int(rows[0][0] if isinstance(rows[0], (list, tuple)) else rows[0]["namespace_id"])
+        self._execute(
+            f"INSERT INTO `{NamespaceCollectionNames.sdk_ns_ltables_table()}` "
+            f"(collection_id, namespace_id, ltable_name) VALUES ('{collection_id_escaped}', {ns_id}, 'default')"
+        )
+        lt_rows = self._execute(
+            f"SELECT ltable_id FROM `{NamespaceCollectionNames.sdk_ns_ltables_table()}` "
+            f"WHERE collection_id = '{collection_id_escaped}' AND namespace_id = {ns_id} AND ltable_name = 'default'"
+        )
+        lt_id = int(lt_rows[0][0] if isinstance(lt_rows[0], (list, tuple)) else lt_rows[0]["ltable_id"])
+        schema_table = NamespaceCollectionNames.logic_schema_table_name(collection_id)
+        schema_content = json.dumps(_build_default_ltable_schema())
+        with contextlib.suppress(Exception):
+            self._execute(
+                f"INSERT INTO `{schema_table}` (namespace_id, ltable_id, schema_content) "
+                f"VALUES ({ns_id}, {lt_id}, '{escape_string(schema_content)}')"
+            )
+        return {"namespace_id": str(ns_id), "namespace_name": namespace_name}
+
+    def _get_ns_namespace_meta(self, collection_id: str, namespace_name: str) -> dict | None:
+        namespace_name_escaped = escape_string(namespace_name)
+        collection_id_escaped = escape_string(collection_id)
+        rows = self._execute(
+            f"SELECT namespace_id, namespace_name FROM `{NamespaceCollectionNames.sdk_ns_namespaces_table()}` "
+            f"WHERE collection_id = '{collection_id_escaped}' AND namespace_name = '{namespace_name_escaped}'"
+        )
+        if not rows:
+            return None
+        row = rows[0]
+        if isinstance(row, (list, tuple)):
+            return {"namespace_id": str(row[0]), "namespace_name": row[1]}
+        return {"namespace_id": str(row["namespace_id"]), "namespace_name": row["namespace_name"]}
+
+    def _has_ns_namespace(self, collection_id: str, namespace_name: str) -> bool:
+        return self._get_ns_namespace_meta(collection_id, namespace_name) is not None
+
+    def _delete_ns_namespace_meta(self, collection_id: str, namespace_name: str) -> None:
+        meta = self._get_ns_namespace_meta(collection_id, namespace_name)
+        if meta is None:
+            raise ValueError(f"Namespace '{namespace_name}' not found")
+        ns_id = meta["namespace_id"]
+        collection_id_escaped = escape_string(collection_id)
+        self._execute(
+            f"CALL DBMS_LOGIC_TABLE.DROP_NAMESPACE('{collection_id_escaped}', {ns_id})"
+        )
+        self._execute(
+            f"DELETE FROM `{NamespaceCollectionNames.sdk_ns_ltables_table()}` "
+            f"WHERE collection_id = '{collection_id_escaped}' AND namespace_id = {ns_id}"
+        )
+        self._execute(
+            f"DELETE FROM `{NamespaceCollectionNames.sdk_ns_namespaces_table()}` "
+            f"WHERE namespace_id = {ns_id}"
+        )
+
+    def _list_ns_namespaces(self, collection_id: str) -> list[dict]:
+        collection_id_escaped = escape_string(collection_id)
+        rows = self._execute(
+            f"SELECT namespace_id, namespace_name FROM `{NamespaceCollectionNames.sdk_ns_namespaces_table()}` "
+            f"WHERE collection_id = '{collection_id_escaped}' ORDER BY namespace_id"
+        )
+        results = []
+        for row in rows:
+            if isinstance(row, (list, tuple)):
+                results.append({"namespace_id": str(row[0]), "namespace_name": row[1]})
+            else:
+                results.append({"namespace_id": str(row["namespace_id"]), "namespace_name": row["namespace_name"]})
+        return results
+
+    def _get_ns_namespace_id(self, collection_id: str, namespace_name: str) -> str:
+        meta = self._get_ns_namespace_meta(collection_id, namespace_name)
+        if meta is None:
+            raise ValueError(f"Namespace '{namespace_name}' not found in collection {collection_id}")
+        return meta["namespace_id"]
+
+    # ==================== End Namespace Catalog Methods ====================
+
     def get_collection(self, name: str, embedding_function: EmbeddingFunctionParam = _NOT_PROVIDED) -> "Collection":
+        ns_meta = None
+        try:
+            ns_meta = self._get_ns_collection_meta(name)
+        except Exception:
+            pass
+        if ns_meta is not None:
+            return self._build_ns_collection_from_meta(ns_meta, embedding_function)
         try:
             collection = self._get_collection_v1(name, embedding_function)
         except ValueError as e:
             logger.debug(f"Failed to get collection v1: {e}, trying v2...")
             collection = self._get_collection_v2(name, embedding_function)
         return collection
+
+    def _build_ns_collection_from_meta(self, meta: dict, embedding_function=_NOT_PROVIDED) -> "Collection":
+        settings = meta.get("settings", {})
+        dimension = settings.get("dimension")
+        distance = settings.get("distance", DEFAULT_DISTANCE_METRIC)
+        ef = None
+        if embedding_function is not _NOT_PROVIDED:
+            ef = embedding_function
+        elif "embedding_function" in settings:
+            ef_info = settings["embedding_function"]
+            ef = EmbeddingFunctionRegistry.get(ef_info["name"])
+            if ef and hasattr(ef, "set_config"):
+                ef.set_config(ef_info.get("properties", {}))
+        return Collection(
+            client=self,
+            name=meta["collection_name"],
+            collection_id=meta["collection_id"],
+            dimension=dimension,
+            embedding_function=ef,
+            distance=distance,
+            use_namespace=True,
+        )
 
     def _resolve_collection_metadata_from_sdk_collections(self, collection_name: str) -> _CollectionMeta | None:
         """
@@ -1207,6 +1653,10 @@ class BaseClient(BaseConnection, AdminAPI):
         Examples:
             >>> client.delete_collection("my_collection")
         """
+        if self._has_ns_collection(name):
+            self._delete_ns_collection_meta(name)
+            logger.debug(f"Deleted namespace collection '{name}'")
+            return
         try:
             self._delete_collection_v2(name)
             logger.debug(f"✅ Successfully deleted collection v2 '{name}' from sdk_collections table")
@@ -1261,9 +1711,49 @@ class BaseClient(BaseConnection, AdminAPI):
             >>> for col in collections:
             ...     print(col.name)
         """
-        collections = self._list_collections_v1()
+        collections = self._list_ns_collections()
+        collections.extend(self._list_collections_v1())
         collections.extend(self._list_collections_v2())
         return collections
+
+    def _list_ns_collections(self) -> list["Collection"]:
+        result = []
+        try:
+            sdk_table = CollectionNames.sdk_collections_table_name()
+            check_sql = f"SHOW TABLES LIKE '{sdk_table}'"
+            check_result = self._execute(check_sql)
+            if not check_result:
+                return result
+            rows = self._execute(
+                f"SELECT collection_id, collection_name, settings "
+                f"FROM `{sdk_table}`"
+            )
+            for row in rows:
+                try:
+                    if isinstance(row, dict):
+                        settings = json.loads(row["settings"]) if row.get("settings") else {}
+                    else:
+                        settings = json.loads(row[2]) if row[2] else {}
+                    if not settings.get("use_namespace"):
+                        continue
+                    if isinstance(row, dict):
+                        meta = {
+                            "collection_id": str(row["collection_id"]),
+                            "collection_name": row["collection_name"],
+                            "settings": settings,
+                        }
+                    else:
+                        meta = {
+                            "collection_id": str(row[0]),
+                            "collection_name": row[1],
+                            "settings": settings,
+                        }
+                    result.append(self._build_ns_collection_from_meta(meta))
+                except Exception as e:
+                    logger.warning(f"Failed to build namespace collection from row: {e}")
+        except Exception:
+            pass
+        return result
 
     def _list_collections_v2(self) -> list["Collection"]:
         collections = []
@@ -1281,19 +1771,26 @@ class BaseClient(BaseConnection, AdminAPI):
                 has_sdk_collections = False
 
             if has_sdk_collections:
-                query_sql = f"SELECT COLLECTION_NAME FROM {sdk_collections_table}"
+                query_sql = f"SELECT COLLECTION_NAME, SETTINGS FROM {sdk_collections_table}"
                 rows = self._execute(query_sql)
                 for row in rows:
                     try:
-                        # Extract collection name
                         if isinstance(row, dict):
-                            # Server client returns dict, get the first value
-                            collection_name = next(iter(row.values()), "")
+                            collection_name = row.get("COLLECTION_NAME") or row.get("collection_name", "")
+                            settings_raw = row.get("SETTINGS") or row.get("settings")
                         elif isinstance(row, (tuple, list)):
-                            # Embedded client returns tuple, first element is collection name
                             collection_name = row[0] if len(row) > 0 else ""
+                            settings_raw = row[1] if len(row) > 1 else None
                         else:
                             collection_name = str(row)
+                            settings_raw = None
+                        if settings_raw:
+                            try:
+                                settings = json.loads(settings_raw) if isinstance(settings_raw, str) else settings_raw
+                                if settings.get("use_namespace"):
+                                    continue
+                            except (json.JSONDecodeError, TypeError):
+                                pass
                         collection = self.get_collection(collection_name)
                         collections.append(collection)
                     except Exception as e:
@@ -1390,7 +1887,7 @@ class BaseClient(BaseConnection, AdminAPI):
             >>> if client.has_collection("my_collection"):
             ...     print("Collection exists!")
         """
-        return self._has_collection_v2(name) or self._has_collection_v1(name)
+        return self._has_ns_collection(name) or self._has_collection_v2(name) or self._has_collection_v1(name)
 
     def _has_collection_v2(self, name: str) -> bool:
         try:
@@ -1438,6 +1935,7 @@ class BaseClient(BaseConnection, AdminAPI):
         schema: Schema | None = None,
         configuration: ConfigurationParam = _NOT_PROVIDED,
         embedding_function: EmbeddingFunctionParam = _NOT_PROVIDED,
+        use_namespace: bool = False,
         **kwargs,
     ) -> "Collection":
         """Get a collection if it exists, otherwise create it.
@@ -1455,6 +1953,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 Defaults to ``DefaultEmbeddingFunction`` (all-MiniLM-L6-v2). If set to None,
                 no embedding function will be used (embeddings must be provided manually).
                 Ignored if ``schema`` is provided.
+            use_namespace: If True, create a namespace-enabled collection. Defaults to False.
             **kwargs: Additional parameters passed to ``create_collection`` if the collection is created.
 
         Returns:
@@ -1466,21 +1965,17 @@ class BaseClient(BaseConnection, AdminAPI):
         Examples:
             >>> collection = client.get_or_create_collection("my_collection")
         """
-        # Validate collection name before any database interaction
         _validate_collection_name(name)
 
-        # First, try to get the collection
         if self.has_collection(name):
-            # Collection exists, return it
-            # Pass embedding_function (could be _NOT_PROVIDED, None, or an EmbeddingFunction instance)
             return self.get_collection(name, embedding_function=embedding_function)
 
-        # Collection doesn't exist, create it with provided or default configuration
         return self.create_collection(
             name=name,
             schema=schema,
             configuration=configuration,
             embedding_function=embedding_function,
+            use_namespace=use_namespace,
             **kwargs,
         )
 
@@ -2354,6 +2849,8 @@ class BaseClient(BaseConnection, AdminAPI):
         Returns:
             List of normalized row dictionaries
         """
+        if os.environ.get("PYSEEKDB_PRINT_SQL", "").lower() in ("1", "true", "yes"):
+            print(f"[pyseekdb SQL] {sql}  -- params={params}", flush=True)
         if use_context_manager:
             with conn.cursor() as cursor:
                 cursor.execute(sql, params)
@@ -2607,6 +3104,8 @@ class BaseClient(BaseConnection, AdminAPI):
         return is_query_sql(sql)
 
     def _execute(self, sql: str) -> Any:
+        if os.environ.get("PYSEEKDB_PRINT_SQL", "").lower() in ("1", "true", "yes"):
+            print(f"[pyseekdb SQL] {sql}", flush=True)
         conn = self._ensure_connection()
         use_context_manager = self._use_context_manager_for_cursor()
 
@@ -3878,3 +4377,851 @@ class BaseClient(BaseConnection, AdminAPI):
 
         logger.debug(f"✅ Collection '{collection_name}' has {count} items")
         return count
+
+    # ==================== Namespace DML/DQL Methods ====================
+
+    @staticmethod
+    def _rewrite_where_for_ns(where: dict[str, Any]) -> dict[str, Any]:
+        if where is None:
+            return None
+        rewritten = {}
+        for k, v in where.items():
+            if k in ("$and", "$or"):
+                rewritten[k] = [BaseClient._rewrite_where_for_ns(sub) for sub in v]
+            elif k == "$not":
+                rewritten[k] = BaseClient._rewrite_where_for_ns(v)
+            else:
+                rewritten[f"metadata.{k}"] = v
+        return rewritten
+
+    @staticmethod
+    def _append_namespace_filter(
+        where_clause: str,
+        params: list[Any],
+        namespace_id: int,
+        ltable_id: int = 1,
+    ) -> tuple[str, list[Any]]:
+        ns_cond = f"namespace_id = {namespace_id} AND ltable_id = {ltable_id}"
+        if not where_clause:
+            return f"WHERE {ns_cond}", params
+        if where_clause.strip().upper().startswith("WHERE"):
+            inner = where_clause.strip()[5:].strip()
+            return f"WHERE {ns_cond} AND ({inner})", params
+        return f"WHERE {ns_cond} AND ({where_clause})", params
+
+    def _namespace_add(  # noqa: C901
+        self,
+        collection_id: str | None,
+        collection_name: str,
+        namespace_id: str,
+        namespace_name: str,
+        ids: str | list[str],
+        embeddings: list[float] | list[list[float]] | None = None,
+        metadatas: dict | list[dict] | None = None,
+        documents: str | list[str] | None = None,
+        embedding_function: EmbeddingFunction[EmbeddingDocuments] | None = None,
+        **kwargs,
+    ) -> None:
+        if isinstance(ids, str):
+            ids = [ids]
+        _validate_record_ids(ids)
+        if len(ids) > _MAX_NAMESPACE_BATCH_SIZE:
+            raise ValueError(
+                f"Batch size {len(ids)} exceeds maximum allowed {_MAX_NAMESPACE_BATCH_SIZE} records per request."
+            )
+        if isinstance(documents, str):
+            documents = [documents]
+        if metadatas is not None and isinstance(metadatas, dict):
+            metadatas = [metadatas]
+        if (
+            embeddings is not None
+            and isinstance(embeddings, list)
+            and len(embeddings) > 0
+            and not isinstance(embeddings[0], list)
+        ):
+            embeddings = [embeddings]
+
+        if embeddings:
+            pass
+        elif documents:
+            if embedding_function is not None:
+                embeddings = embedding_function(documents)
+            else:
+                raise ValueError(
+                    "Documents provided but no embeddings and no embedding function."
+                )
+        else:
+            raise ValueError("Neither embeddings nor documents provided.")
+
+        num_items = len(ids)
+        if documents and len(documents) != num_items:
+            raise ValueError(f"Number of documents ({len(documents)}) does not match number of ids ({num_items})")
+        if metadatas and len(metadatas) != num_items:
+            raise ValueError(f"Number of metadatas ({len(metadatas)}) does not match number of ids ({num_items})")
+        if embeddings and len(embeddings) != num_items:
+            raise ValueError(f"Number of embeddings ({len(embeddings)}) does not match number of ids ({num_items})")
+
+        table_name = NamespaceCollectionNames.data_table_name(collection_id)
+        ns_id = int(namespace_id)
+        ltable_id = 1
+
+        values_list = []
+        for i in range(num_items):
+            doc_val = documents[i] if documents else None
+            doc_sql = f"'{escape_string(doc_val)}'" if doc_val is not None else "NULL"
+
+            vec_val = embeddings[i] if embeddings else None
+            vec_sql = "NULL" if vec_val is None else _embedding_to_hexstring(vec_val)
+
+            meta_val = metadatas[i] if metadatas else None
+            data_content = {"id": ids[i]}
+            if meta_val is not None:
+                data_content["metadata"] = meta_val
+            dc_json = json.dumps(data_content, ensure_ascii=False)
+            dc_sql = f"'{escape_string(dc_json)}'"
+
+            values_list.append(f"({ns_id}, {ltable_id}, {doc_sql}, {vec_sql}, {dc_sql})")
+
+        columns = (
+            f"{NamespaceFieldNames.NAMESPACE_ID}, {NamespaceFieldNames.LTABLE_ID}, "
+            f"{NamespaceFieldNames.DOCUMENT}, {NamespaceFieldNames.EMBEDDING}, {NamespaceFieldNames.DATA_CONTENT}"
+        )
+        sql = f"INSERT INTO `{table_name}` ({columns}) VALUES {','.join(values_list)}"
+        self._execute(sql)
+
+    def _namespace_update(
+        self,
+        collection_id: str | None,
+        collection_name: str,
+        namespace_id: str,
+        namespace_name: str,
+        ids: str | list[str],
+        embeddings: list[float] | list[list[float]] | None = None,
+        metadatas: dict | list[dict] | None = None,
+        documents: str | list[str] | None = None,
+        embedding_function: EmbeddingFunction[EmbeddingDocuments] | None = None,
+        **kwargs,
+    ) -> None:
+        if isinstance(ids, str):
+            ids = [ids]
+        _validate_record_ids(ids)
+        if len(ids) > _MAX_NAMESPACE_BATCH_SIZE:
+            raise ValueError(
+                f"Batch size {len(ids)} exceeds maximum allowed {_MAX_NAMESPACE_BATCH_SIZE} records per request."
+            )
+        if isinstance(documents, str):
+            documents = [documents]
+        if metadatas is not None and isinstance(metadatas, dict):
+            metadatas = [metadatas]
+        if (
+            embeddings is not None
+            and isinstance(embeddings, list)
+            and len(embeddings) > 0
+            and not isinstance(embeddings[0], list)
+        ):
+            embeddings = [embeddings]
+
+        if embeddings is None and documents is not None and embedding_function is not None:
+            embeddings = embedding_function(documents)
+
+        table_name = NamespaceCollectionNames.data_table_name(collection_id)
+        ns_id = int(namespace_id)
+        ltable_id = 1
+
+        for i, record_id in enumerate(ids):
+            set_parts = []
+            if documents and i < len(documents) and documents[i] is not None:
+                set_parts.append(f"document = '{escape_string(documents[i])}'")
+            if embeddings and i < len(embeddings) and embeddings[i] is not None:
+                set_parts.append(f"embedding = {_embedding_to_hexstring(embeddings[i])}")
+            if metadatas and i < len(metadatas) and metadatas[i] is not None:
+                meta_json = json.dumps(metadatas[i], ensure_ascii=False)
+                set_parts.append(
+                    f"data_content = JSON_SET(data_content, '$.metadata', CAST('{escape_string(meta_json)}' AS JSON))"
+                )
+            if not set_parts:
+                continue
+            id_escaped = escape_string(record_id)
+            user_where = f"WHERE JSON_EXTRACT(data_content, '$.id') = '{id_escaped}'"
+            where_clause, _ = self._append_namespace_filter(user_where, [], ns_id, ltable_id)
+            sql = f"UPDATE `{table_name}` SET {', '.join(set_parts)} {where_clause}"
+            self._execute(sql)
+
+    def _namespace_upsert(
+        self,
+        collection_id: str | None,
+        collection_name: str,
+        namespace_id: str,
+        namespace_name: str,
+        ids: str | list[str],
+        embeddings: list[float] | list[list[float]] | None = None,
+        metadatas: dict | list[dict] | None = None,
+        documents: str | list[str] | None = None,
+        embedding_function: EmbeddingFunction[EmbeddingDocuments] | None = None,
+        **kwargs,
+    ) -> None:
+        if isinstance(ids, str):
+            ids = [ids]
+        _validate_record_ids(ids)
+        if len(ids) > _MAX_NAMESPACE_BATCH_SIZE:
+            raise ValueError(
+                f"Batch size {len(ids)} exceeds maximum allowed {_MAX_NAMESPACE_BATCH_SIZE} records per request."
+            )
+        if isinstance(documents, str):
+            documents = [documents]
+        if metadatas is not None and isinstance(metadatas, dict):
+            metadatas = [metadatas]
+        if (
+            embeddings is not None
+            and isinstance(embeddings, list)
+            and len(embeddings) > 0
+            and not isinstance(embeddings[0], list)
+        ):
+            embeddings = [embeddings]
+
+        table_name = NamespaceCollectionNames.data_table_name(collection_id)
+        ns_id = int(namespace_id)
+        ltable_id = 1
+
+        existing_ids = set()
+        for record_id in ids:
+            id_escaped = escape_string(record_id)
+            user_where = f"WHERE JSON_EXTRACT(data_content, '$.id') = '{id_escaped}'"
+            where_clause, _ = self._append_namespace_filter(user_where, [], ns_id, ltable_id)
+            rows = self._execute(
+                f"SELECT 1 FROM `{table_name}` {where_clause} LIMIT 1"
+            )
+            if rows:
+                existing_ids.add(record_id)
+
+        add_indices = []
+        update_indices = []
+        for i, rid in enumerate(ids):
+            if rid in existing_ids:
+                update_indices.append(i)
+            else:
+                add_indices.append(i)
+
+        if add_indices:
+            add_ids = [ids[i] for i in add_indices]
+            add_docs = [documents[i] for i in add_indices] if documents else None
+            add_metas = [metadatas[i] for i in add_indices] if metadatas else None
+            add_embs = [embeddings[i] for i in add_indices] if embeddings else None
+            self._namespace_add(
+                collection_id=collection_id, collection_name=collection_name,
+                namespace_id=namespace_id, namespace_name=namespace_name,
+                ids=add_ids, embeddings=add_embs, metadatas=add_metas,
+                documents=add_docs, embedding_function=embedding_function, **kwargs,
+            )
+
+        if update_indices:
+            upd_ids = [ids[i] for i in update_indices]
+            upd_docs = [documents[i] for i in update_indices] if documents else None
+            upd_metas = [metadatas[i] for i in update_indices] if metadatas else None
+            upd_embs = [embeddings[i] for i in update_indices] if embeddings else None
+            self._namespace_update(
+                collection_id=collection_id, collection_name=collection_name,
+                namespace_id=namespace_id, namespace_name=namespace_name,
+                ids=upd_ids, embeddings=upd_embs, metadatas=upd_metas,
+                documents=upd_docs, embedding_function=embedding_function, **kwargs,
+            )
+
+    def _namespace_delete(
+        self,
+        collection_id: str | None,
+        collection_name: str,
+        namespace_id: str,
+        namespace_name: str,
+        ids: str | list[str] | None = None,
+        where: dict[str, Any] | None = None,
+        where_document: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> None:
+        if ids is None and where is None and where_document is None:
+            raise ValueError("At least one of ids, where, or where_document must be provided")
+
+        table_name = NamespaceCollectionNames.data_table_name(collection_id)
+        ns_id = int(namespace_id)
+
+        conditions = []
+        params = []
+
+        if ids is not None:
+            if isinstance(ids, str):
+                ids = [ids]
+            _validate_record_ids(ids)
+            id_conditions = []
+            for rid in ids:
+                id_escaped = escape_string(rid)
+                id_conditions.append(f"JSON_EXTRACT(data_content, '$.id') = '{id_escaped}'")
+            conditions.append(f"({' OR '.join(id_conditions)})")
+
+        if where is not None:
+            rewritten = self._rewrite_where_for_ns(where)
+            meta_clause, meta_params = FilterBuilder.build_metadata_filter(rewritten, "data_content")
+            if meta_clause:
+                conditions.append(meta_clause)
+                params.extend(meta_params)
+
+        if where_document is not None:
+            doc_clause, doc_params = FilterBuilder.build_document_filter(where_document, "document")
+            if doc_clause:
+                conditions.append(doc_clause)
+                params.extend(doc_params)
+
+        user_where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        where_clause, params = self._append_namespace_filter(user_where, params, ns_id)
+        sql = f"DELETE FROM `{table_name}` {where_clause}"
+        if params:
+            conn = self._ensure_connection()
+            use_context_manager = self._use_context_manager_for_cursor()
+            if use_context_manager:
+                with conn.cursor() as cursor:
+                    cursor.execute(sql, params)
+            else:
+                cursor = conn.cursor()
+                try:
+                    cursor.execute(sql, params)
+                finally:
+                    cursor.close()
+        else:
+            self._execute(sql)
+
+    def _namespace_query(  # noqa: C901
+        self,
+        collection_id: str | None,
+        collection_name: str,
+        namespace_id: str,
+        namespace_name: str,
+        query_embeddings: list[float] | list[list[float]] | None = None,
+        query_texts: str | list[str] | None = None,
+        n_results: int = 10,
+        where: dict[str, Any] | None = None,
+        where_document: dict[str, Any] | None = None,
+        include: list[str] | None = None,
+        **kwargs,
+    ) -> dict[str, Any]:
+        embedding_function = kwargs.get("embedding_function")
+        distance = kwargs.get("distance", DEFAULT_DISTANCE_METRIC)
+
+        if query_embeddings is not None:
+            pass
+        elif query_texts is not None:
+            if embedding_function is not None:
+                query_embeddings = self._embed_texts(query_texts, embedding_function=embedding_function)
+            else:
+                raise ValueError("query_texts provided but no embedding_function.")
+        else:
+            raise ValueError("Neither query_embeddings nor query_texts provided.")
+
+        query_embeddings = self._normalize_query_embeddings(query_embeddings)
+        include_fields = self._normalize_include_fields(include)
+
+        table_name = NamespaceCollectionNames.data_table_name(collection_id)
+        ns_id = int(namespace_id)
+
+        select_parts = ["JSON_EXTRACT(data_content, '$.id') AS record_id"]
+        if include_fields.get("documents") or include_fields.get("document") or include is None:
+            select_parts.append("document")
+        if include_fields.get("metadatas") or include_fields.get("metadata") or include is None:
+            select_parts.append("JSON_EXTRACT(data_content, '$.metadata') AS metadata")
+        if include_fields.get("embeddings") or include_fields.get("embedding"):
+            select_parts.append("embedding")
+
+        user_conditions = []
+        filter_params = []
+
+        if where is not None:
+            rewritten = self._rewrite_where_for_ns(where)
+            meta_clause, meta_params = FilterBuilder.build_metadata_filter(rewritten, "data_content")
+            if meta_clause:
+                user_conditions.append(meta_clause)
+                filter_params.extend(meta_params)
+
+        if where_document is not None:
+            doc_clause, doc_params = FilterBuilder.build_document_filter(where_document, "document")
+            if doc_clause:
+                user_conditions.append(doc_clause)
+                filter_params.extend(doc_params)
+
+        user_where = f"WHERE {' AND '.join(user_conditions)}" if user_conditions else ""
+        where_clause, filter_params = self._append_namespace_filter(user_where, filter_params, ns_id)
+
+        distance_function_map = {
+            "l2": "l2_distance",
+            "cosine": "cosine_distance",
+            "inner_product": "inner_product",
+        }
+        distance_func = distance_function_map.get(distance, "l2_distance")
+
+        conn = self._ensure_connection()
+        use_context_manager = self._use_context_manager_for_cursor()
+
+        all_ids = []
+        all_documents = []
+        all_metadatas = []
+        all_embeddings = []
+        all_distances = []
+
+        for query_vector in query_embeddings:
+            vector_str = _embedding_to_hexstring(query_vector)
+            select_clause = ", ".join(select_parts)
+            sql = (
+                f"SELECT {select_clause}, "
+                f"{distance_func}(embedding, {vector_str}) AS distance "
+                f"FROM `{table_name}` "
+                f"{where_clause} "
+                f"ORDER BY {distance_func}(embedding, {vector_str}) "
+                f"APPROXIMATE LIMIT %s"
+            )
+            query_params = [*filter_params, n_results]
+            rows = self._execute_query_with_cursor(conn, sql, query_params, use_context_manager)
+
+            q_ids = []
+            q_documents = []
+            q_metadatas = []
+            q_embeddings = []
+            q_distances = []
+
+            for row in rows:
+                if isinstance(row, dict):
+                    rid_raw = row.get("record_id")
+                    rid = json.loads(rid_raw) if isinstance(rid_raw, str) else rid_raw
+                    q_ids.append(rid)
+                    if "documents" in include_fields or "document" in include_fields or include is None:
+                        q_documents.append(row.get("document"))
+                    if "metadatas" in include_fields or "metadata" in include_fields or include is None:
+                        meta_raw = row.get("metadata")
+                        if isinstance(meta_raw, str):
+                            meta_raw = json.loads(meta_raw)
+                        q_metadatas.append(meta_raw or {})
+                    if "embeddings" in include_fields or "embedding" in include_fields:
+                        emb = row.get("embedding")
+                        if isinstance(emb, bytes):
+                            emb = self._parse_embedding_from_bytes(emb)
+                        elif isinstance(emb, str):
+                            emb = json.loads(emb)
+                        q_embeddings.append(emb)
+                    q_distances.append(row.get("distance"))
+                elif isinstance(row, (list, tuple)):
+                    idx = 0
+                    rid_raw = row[idx]; idx += 1
+                    rid = json.loads(rid_raw) if isinstance(rid_raw, str) else rid_raw
+                    q_ids.append(rid)
+                    if "documents" in include_fields or "document" in include_fields or include is None:
+                        q_documents.append(row[idx]); idx += 1
+                    if "metadatas" in include_fields or "metadata" in include_fields or include is None:
+                        meta_raw = row[idx]; idx += 1
+                        if isinstance(meta_raw, str):
+                            meta_raw = json.loads(meta_raw)
+                        q_metadatas.append(meta_raw or {})
+                    if "embeddings" in include_fields or "embedding" in include_fields:
+                        emb = row[idx]; idx += 1
+                        if isinstance(emb, bytes):
+                            emb = self._parse_embedding_from_bytes(emb)
+                        elif isinstance(emb, str):
+                            emb = json.loads(emb)
+                        q_embeddings.append(emb)
+                    q_distances.append(row[idx])
+
+            all_ids.append(q_ids)
+            if "documents" in include_fields or "document" in include_fields or include is None:
+                all_documents.append(q_documents)
+            if "metadatas" in include_fields or "metadata" in include_fields or include is None:
+                all_metadatas.append(q_metadatas)
+            if "embeddings" in include_fields or "embedding" in include_fields:
+                all_embeddings.append(q_embeddings)
+            all_distances.append(q_distances)
+
+        result = {"ids": all_ids, "distances": all_distances}
+        if "documents" in include_fields or "document" in include_fields or include is None:
+            result["documents"] = all_documents
+        if "metadatas" in include_fields or "metadata" in include_fields or include is None:
+            result["metadatas"] = all_metadatas
+        if "embeddings" in include_fields or "embedding" in include_fields:
+            result["embeddings"] = all_embeddings
+        return result
+
+    def _namespace_get(  # noqa: C901
+        self,
+        collection_id: str | None,
+        collection_name: str,
+        namespace_id: str,
+        namespace_name: str,
+        ids: str | list[str] | None = None,
+        where: dict[str, Any] | None = None,
+        where_document: dict[str, Any] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        include: list[str] | None = None,
+        **kwargs,
+    ) -> dict[str, Any]:
+        include_fields = self._normalize_include_fields(include)
+        table_name = NamespaceCollectionNames.data_table_name(collection_id)
+        ns_id = int(namespace_id)
+
+        select_parts = ["JSON_EXTRACT(data_content, '$.id') AS record_id"]
+        if include_fields.get("documents") or include_fields.get("document") or include is None:
+            select_parts.append("document")
+        if include_fields.get("metadatas") or include_fields.get("metadata") or include is None:
+            select_parts.append("JSON_EXTRACT(data_content, '$.metadata') AS metadata")
+        if include_fields.get("embeddings") or include_fields.get("embedding"):
+            select_parts.append("embedding")
+
+        user_conditions = []
+        params = []
+
+        if ids is not None:
+            if isinstance(ids, str):
+                ids = [ids]
+            id_conds = []
+            for rid in ids:
+                id_escaped = escape_string(rid)
+                id_conds.append(f"JSON_EXTRACT(data_content, '$.id') = '{id_escaped}'")
+            user_conditions.append(f"({' OR '.join(id_conds)})")
+
+        if where is not None:
+            rewritten = self._rewrite_where_for_ns(where)
+            meta_clause, meta_params = FilterBuilder.build_metadata_filter(rewritten, "data_content")
+            if meta_clause:
+                user_conditions.append(meta_clause)
+                params.extend(meta_params)
+
+        if where_document is not None:
+            doc_clause, doc_params = FilterBuilder.build_document_filter(where_document, "document")
+            if doc_clause:
+                user_conditions.append(doc_clause)
+                params.extend(doc_params)
+
+        user_where = f"WHERE {' AND '.join(user_conditions)}" if user_conditions else ""
+        where_str, params = self._append_namespace_filter(user_where, params, ns_id)
+        select_clause = ", ".join(select_parts)
+        sql = f"SELECT {select_clause} FROM `{table_name}` {where_str}"
+        if limit is not None:
+            sql += f" LIMIT {int(limit)}"
+            if offset is not None:
+                sql += f" OFFSET {int(offset)}"
+
+        conn = self._ensure_connection()
+        use_context_manager = self._use_context_manager_for_cursor()
+        rows = self._execute_query_with_cursor(conn, sql, params if params else [], use_context_manager)
+
+        result_ids = []
+        result_documents = []
+        result_metadatas = []
+        result_embeddings = []
+
+        for row in rows:
+            if isinstance(row, dict):
+                rid_raw = row.get("record_id")
+                rid = json.loads(rid_raw) if isinstance(rid_raw, str) else rid_raw
+                result_ids.append(rid)
+                if "documents" in include_fields or "document" in include_fields or include is None:
+                    result_documents.append(row.get("document"))
+                if "metadatas" in include_fields or "metadata" in include_fields or include is None:
+                    meta_raw = row.get("metadata")
+                    if isinstance(meta_raw, str):
+                        meta_raw = json.loads(meta_raw)
+                    result_metadatas.append(meta_raw or {})
+                if "embeddings" in include_fields or "embedding" in include_fields:
+                    emb = row.get("embedding")
+                    if isinstance(emb, bytes):
+                        emb = self._parse_embedding_from_bytes(emb)
+                    elif isinstance(emb, str):
+                        emb = json.loads(emb)
+                    result_embeddings.append(emb)
+            elif isinstance(row, (list, tuple)):
+                idx = 0
+                rid_raw = row[idx]; idx += 1
+                rid = json.loads(rid_raw) if isinstance(rid_raw, str) else rid_raw
+                result_ids.append(rid)
+                if "documents" in include_fields or "document" in include_fields or include is None:
+                    result_documents.append(row[idx]); idx += 1
+                if "metadatas" in include_fields or "metadata" in include_fields or include is None:
+                    meta_raw = row[idx]; idx += 1
+                    if isinstance(meta_raw, str):
+                        meta_raw = json.loads(meta_raw)
+                    result_metadatas.append(meta_raw or {})
+                if "embeddings" in include_fields or "embedding" in include_fields:
+                    emb = row[idx]; idx += 1
+                    if isinstance(emb, bytes):
+                        emb = self._parse_embedding_from_bytes(emb)
+                    elif isinstance(emb, str):
+                        emb = json.loads(emb)
+                    result_embeddings.append(emb)
+
+        result = {"ids": result_ids}
+        if "documents" in include_fields or "document" in include_fields or include is None:
+            result["documents"] = result_documents
+        if "metadatas" in include_fields or "metadata" in include_fields or include is None:
+            result["metadatas"] = result_metadatas
+        if "embeddings" in include_fields or "embedding" in include_fields:
+            result["embeddings"] = result_embeddings
+        return result
+
+    def _namespace_count(
+        self,
+        collection_id: str | None,
+        collection_name: str,
+        namespace_id: str,
+        namespace_name: str,
+        **kwargs,
+    ) -> int:
+        table_name = NamespaceCollectionNames.data_table_name(collection_id)
+        ns_id = int(namespace_id)
+        where_clause, _ = self._append_namespace_filter("", [], ns_id)
+        sql = f"SELECT COUNT(*) AS cnt FROM `{table_name}` {where_clause}"
+        conn = self._ensure_connection()
+        use_context_manager = self._use_context_manager_for_cursor()
+        rows = self._execute_query_with_cursor(conn, sql, [], use_context_manager)
+        if not rows:
+            return 0
+        row = rows[0]
+        if isinstance(row, dict):
+            return row.get("cnt", 0)
+        elif isinstance(row, (tuple, list)):
+            return row[0] if len(row) > 0 else 0
+        return int(row) if row else 0
+
+    def _namespace_peek(
+        self,
+        collection_id: str | None,
+        collection_name: str,
+        namespace_id: str,
+        namespace_name: str,
+        limit: int = 10,
+        **kwargs,
+    ) -> dict[str, Any]:
+        return self._namespace_get(
+            collection_id=collection_id,
+            collection_name=collection_name,
+            namespace_id=namespace_id,
+            namespace_name=namespace_name,
+            limit=limit,
+            offset=0,
+            include=["documents", "metadatas", "embeddings"],
+        )
+
+    def _adapt_search_parm_for_ns(self, search_parm: dict[str, Any], ns_id: int) -> dict[str, Any]:
+        ns_filter = [
+            {"term": {"namespace_id": ns_id}},
+            {"term": {"ltable_id": 1}},
+        ]
+
+        def _rewrite_field_refs(obj):
+            if isinstance(obj, dict):
+                new_dict = {}
+                for k, v in obj.items():
+                    new_key = k
+                    if k == "_id":
+                        new_key = "(JSON_EXTRACT(data_content, '$.id'))"
+                    elif isinstance(k, str) and "JSON_EXTRACT(metadata, '$." in k:
+                        new_key = k.replace(
+                            "JSON_EXTRACT(metadata, '$.",
+                            "JSON_EXTRACT(data_content, '$.metadata.",
+                        )
+                    new_dict[new_key] = _rewrite_field_refs(v)
+                return new_dict
+            elif isinstance(obj, list):
+                return [_rewrite_field_refs(item) for item in obj]
+            return obj
+
+        search_parm = _rewrite_field_refs(search_parm)
+
+        if "_source" in search_parm:
+            needs_data_content = False
+            new_source = []
+            for field in search_parm["_source"]:
+                if field in ("_id", "metadata"):
+                    needs_data_content = True
+                else:
+                    new_source.append(field)
+            if needs_data_content:
+                new_source.insert(0, "data_content")
+            search_parm["_source"] = new_source
+
+        def _inject_filter_into_knn(node):
+            if isinstance(node, dict):
+                if "filter" in node:
+                    existing = node["filter"]
+                    if isinstance(existing, list):
+                        node["filter"] = existing + ns_filter
+                    else:
+                        node["filter"] = [existing] + ns_filter
+                else:
+                    node["filter"] = list(ns_filter)
+            return node
+
+        def _inject_filter_into_query(node):
+            if not isinstance(node, dict):
+                return node
+            if "bool" in node:
+                bool_node = node["bool"]
+                if "filter" in bool_node:
+                    existing = bool_node["filter"]
+                    if isinstance(existing, list):
+                        bool_node["filter"] = existing + ns_filter
+                    else:
+                        bool_node["filter"] = [existing] + ns_filter
+                else:
+                    bool_node["filter"] = list(ns_filter)
+                return node
+            return {"bool": {"must": [node], "filter": list(ns_filter)}}
+
+        if "query" in search_parm:
+            q = search_parm["query"]
+            if isinstance(q, list):
+                search_parm["query"] = [_inject_filter_into_query(item) for item in q]
+            else:
+                search_parm["query"] = _inject_filter_into_query(q)
+
+        if "knn" in search_parm:
+            knn = search_parm["knn"]
+            if isinstance(knn, list):
+                for item in knn:
+                    _inject_filter_into_knn(item)
+            else:
+                _inject_filter_into_knn(knn)
+
+        if "query" not in search_parm and "knn" not in search_parm:
+            search_parm["query"] = {"bool": {"filter": list(ns_filter)}}
+
+        return search_parm
+
+    def _namespace_hybrid_search(
+        self,
+        collection_id: str | None,
+        collection_name: str,
+        namespace_id: str,
+        namespace_name: str,
+        query: dict[str, Any] | None = None,
+        knn: dict[str, Any] | None = None,
+        rank: dict[str, Any] | None = None,
+        n_results: int = 10,
+        include: list[str] | None = None,
+        query_hint: QueryHint | None = None,
+        **kwargs,
+    ) -> dict[str, Any]:
+        conn = self._ensure_connection()
+        table_name = NamespaceCollectionNames.data_table_name(collection_id)
+        ns_id = int(namespace_id)
+
+        search_parm = self._build_search_parm(
+            query, knn, rank, n_results,
+            include=include,
+            dimension=kwargs.get("dimension"),
+            **{k: v for k, v in kwargs.items() if k != "dimension"},
+        )
+        search_parm = self._adapt_search_parm_for_ns(search_parm, ns_id)
+
+        search_parm_json = json.dumps(search_parm, ensure_ascii=False)
+        use_context_manager = self._use_context_manager_for_cursor()
+
+        escaped_params = escape_string(search_parm_json)
+        set_sql = f"SET @search_parm = '{escaped_params}'"
+        self._execute_query_with_cursor(conn, set_sql, [], use_context_manager)
+
+        get_sql_query = f"SELECT DBMS_HYBRID_SEARCH.GET_SQL('{table_name}', @search_parm) as query_sql FROM dual"
+        rows = self._execute_query_with_cursor(conn, get_sql_query, [], use_context_manager)
+
+        if not rows or not rows[0].get("query_sql"):
+            return {
+                "ids": [[]], "distances": [[]], "metadatas": [[]],
+                "documents": [[]], "embeddings": [[]],
+            }
+
+        query_sql = rows[0]["query_sql"]
+        if isinstance(query_sql, str):
+            query_sql = query_sql.strip().strip("'\"")
+
+        hint_sql = _query_hint_to_sql(query_hint, table_name=table_name)
+        if hint_sql and query_sql.upper().startswith("SELECT"):
+            query_sql = f"SELECT {hint_sql} {query_sql[len('SELECT'):]}"
+
+        result_rows = self._execute_query_with_cursor(conn, query_sql, [], use_context_manager)
+        return self._transform_ns_hybrid_result(result_rows, include)
+
+    def _transform_ns_hybrid_result(
+        self, result_rows: list[dict[str, Any]], include: list[str] | None
+    ) -> dict[str, Any]:
+        if not result_rows:
+            return {
+                "ids": [[]], "distances": [[]], "metadatas": [[]],
+                "documents": [[]], "embeddings": [[]],
+            }
+
+        ids = []
+        distances = []
+        metadatas = []
+        documents = []
+        embeddings = []
+
+        for row in result_rows:
+            dc_raw = row.get("data_content") or row.get("DATA_CONTENT")
+            dc = {}
+            if isinstance(dc_raw, str):
+                with contextlib.suppress(json.JSONDecodeError):
+                    dc = json.loads(dc_raw)
+            elif isinstance(dc_raw, dict):
+                dc = dc_raw
+
+            row_id = dc.get("id")
+            if row_id is None:
+                for key in ("id", "_id", "ID"):
+                    if key in row and row[key] is not None:
+                        row_id = row[key]
+                        break
+            row_id = self._convert_id_from_bytes(row_id)
+            ids.append(row_id)
+
+            distance = (
+                row.get("_distance") or row.get("distance")
+                or row.get("_score") or row.get("score") or 0.0
+            )
+            distances.append(distance)
+
+            if include is None or "metadatas" in include or "metadata" in include:
+                meta = dc.get("metadata")
+                if meta is None:
+                    meta = row.get("metadata") or row.get("METADATA")
+                if isinstance(meta, str):
+                    with contextlib.suppress(json.JSONDecodeError):
+                        meta = json.loads(meta)
+                metadatas.append(meta or {})
+            else:
+                metadatas.append(None)
+
+            if include is None or "documents" in include or "document" in include:
+                documents.append(row.get("document") or row.get("DOCUMENT"))
+            else:
+                documents.append(None)
+
+            if include and ("embeddings" in include or "embedding" in include):
+                emb = row.get("embedding") or row.get("EMBEDDING")
+                if isinstance(emb, str):
+                    with contextlib.suppress(json.JSONDecodeError):
+                        emb = json.loads(emb)
+                elif isinstance(emb, bytes):
+                    emb = self._parse_embedding_from_bytes(emb)
+                embeddings.append(emb)
+            else:
+                embeddings.append(None)
+
+        result = {"ids": [ids], "distances": [distances]}
+        if include is None or "documents" in include or "document" in include:
+            result["documents"] = [documents]
+        if include is None or "metadatas" in include or "metadata" in include:
+            result["metadatas"] = [metadatas]
+        if include and ("embeddings" in include or "embedding" in include):
+            result["embeddings"] = [embeddings]
+        return result
+
+    def _namespace_prewarm(
+        self,
+        collection_id: str | None,
+        collection_name: str,
+        namespace_id: str,
+        namespace_name: str,
+        **kwargs,
+    ) -> None:
+        raise NotImplementedError("prewarm is not supported in this client mode")
