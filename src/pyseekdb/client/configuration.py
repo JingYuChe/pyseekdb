@@ -205,6 +205,17 @@ class HNSWIndexLib(str, Enum):
     VSAG = "vsag"
 
 
+class IVFIndexType(str, Enum):
+    IVF_FLAT = "ivf_flat"
+    IVF_SQ8 = "ivf_sq8"
+    IVF_PQ = "ivf_pq"
+
+
+class IVFIndexLib(str, Enum):
+    OB = "ob"
+    VSAG = "vsag"
+
+
 class FulltextAnalyzer(str, Enum):
     SPACE = "space"
     NGRAM = "ngram"
@@ -317,13 +328,64 @@ class BengProperties(TypedDict, total=False):
 
 
 @dataclass
+class IVFConfiguration:
+    """
+    IVF (Inverted File) index configuration for Agent Database namespace-enabled collections.
+
+    Args:
+        dimension: Vector dimension (number of elements in each vector)
+        distance: Distance metric for similarity calculation (e.g., 'l2', 'cosine', 'inner_product')
+        type: IVF index subtype ('ivf_flat', 'ivf_sq8', 'ivf_pq')
+        use_spfresh: Whether to enable SPFresh optimization for online index updates
+        properties: Optional dictionary of additional IVF index properties
+    """
+
+    dimension: int = DEFAULT_VECTOR_DIMENSION
+    distance: str | DistanceMetric = DistanceMetric.COSINE.value
+    type: str | IVFIndexType = IVFIndexType.IVF_FLAT.value
+    lib: str | IVFIndexLib = IVFIndexLib.OB.value
+    use_spfresh: bool | None = None
+    properties: dict[str, PrimitiveValue] | None = None
+
+    def __post_init__(self):
+        if isinstance(self.dimension, bool) or not isinstance(self.dimension, int):
+            raise TypeError(f"dimension must be an integer, got {type(self.dimension).__name__}")
+        _validate_int_range(self.dimension, key="dimension", min_value=1, max_value=4096)
+
+        self.distance = _normalize_str_enum(self.distance, field_name="distance")
+        valid_distances = [e.value for e in DistanceMetric]
+        if self.distance not in valid_distances:
+            raise ValueError(f"distance must be one of {valid_distances}, got {self.distance}")
+
+        self.type = _normalize_str_enum(self.type, field_name="type")
+        valid_types = [e.value for e in IVFIndexType]
+        if self.type not in valid_types:
+            raise ValueError(f"type must be one of {valid_types}, got {self.type}")
+
+        self.lib = _normalize_str_enum(self.lib, field_name="lib")
+        valid_libs = [e.value for e in IVFIndexLib]
+        if self.lib not in valid_libs:
+            raise ValueError(f"lib must be one of {valid_libs}, got {self.lib}")
+
+        if self.use_spfresh is not None and not isinstance(self.use_spfresh, bool):
+            raise TypeError(f"use_spfresh must be a bool, got {type(self.use_spfresh).__name__}")
+
+        _ensure_primitive_properties(self.properties)
+
+
+@dataclass
 class VectorIndexConfig:
+    ivf: IVFConfiguration | None = None
     hnsw: HNSWConfiguration | None = None
     embedding_function: EmbeddingFunction | None = _NOT_PROVIDED
 
     def __post_init__(self):
+        if self.ivf is not None and self.hnsw is not None:
+            raise ValueError("Only one of ivf or hnsw can be configured")
         if self.embedding_function is _NOT_PROVIDED:
             self.embedding_function = DefaultEmbeddingFunction()
+        if self.ivf is not None:
+            self.ivf.__post_init__()
         if self.hnsw is not None:
             self.hnsw.__post_init__()
 

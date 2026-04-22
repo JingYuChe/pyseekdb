@@ -194,6 +194,7 @@ class _ClientProxy:
         schema: SchemaParam = None,
         configuration: ConfigurationParam = _NOT_PROVIDED,
         embedding_function: EmbeddingFunctionParam = _NOT_PROVIDED,
+        use_namespace: bool = False,
         **kwargs,
     ) -> "Collection":
         """Proxy to server implementation - collection operations only"""
@@ -202,6 +203,7 @@ class _ClientProxy:
             schema=schema,
             configuration=configuration,
             embedding_function=embedding_function,
+            use_namespace=use_namespace,
             **kwargs,
         )
 
@@ -227,6 +229,7 @@ class _ClientProxy:
         schema: SchemaParam = None,
         configuration: ConfigurationParam = _NOT_PROVIDED,
         embedding_function: EmbeddingFunctionParam = _NOT_PROVIDED,
+        use_namespace: bool = False,
         **kwargs,
     ) -> "Collection":
         """Proxy to server implementation - collection operations only"""
@@ -235,6 +238,7 @@ class _ClientProxy:
             schema=schema,
             configuration=configuration,
             embedding_function=embedding_function,
+            use_namespace=use_namespace,
             **kwargs,
         )
 

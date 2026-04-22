@@ -1,0 +1,290 @@
+"""
+Namespace query integration tests.
+Tests vector similarity query, metadata filtering, include control, and multi-namespace isolation.
+"""
+
+import time
+
+import pytest
+
+from pyseekdb import IVFConfiguration
+from pyseekdb.client.configuration import VectorIndexConfig
+from pyseekdb.client.schema import Schema
+
+
+class TestNamespaceQuery:
+
+    def _setup(self, client, suffix=""):
+        name = f"test_ns_q_{int(time.time() * 1000)}{suffix}"
+        schema = Schema(
+            vector_index=VectorIndexConfig(
+                ivf=IVFConfiguration(dimension=3, distance="l2"),
+                embedding_function=None,
+            ),
+        )
+        collection = client.create_collection(name=name, schema=schema, use_namespace=True)
+        return collection
+
+    def _insert_data(self, ns):
+        ns.add(
+            ids=["q1", "q2", "q3", "q4", "q5"],
+            embeddings=[
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [1.0, 1.0, 0.0],
+                [0.0, 1.0, 1.0],
+            ],
+            documents=[
+                "Machine learning basics",
+                "Python programming guide",
+                "OceanBase distributed database",
+                "Advanced ML algorithms",
+                "Data science with Python",
+            ],
+            metadatas=[
+                {"category": "AI", "score": 95},
+                {"category": "Programming", "score": 88},
+                {"category": "Database", "score": 92},
+                {"category": "AI", "score": 90},
+                {"category": "Data Science", "score": 85},
+            ],
+        )
+
+    def test_basic_vector_query(self, db_client):
+        collection = self._setup(db_client)
+        ns = collection.create_namespace("qns")
+        try:
+            self._insert_data(ns)
+            result = ns.query(query_embeddings=[1.0, 0.0, 0.0], n_results=3)
+            assert result is not None
+            assert "ids" in result
+            assert len(result["ids"]) > 0
+            assert len(result["ids"][0]) <= 3
+        finally:
+            db_client.delete_collection(name=collection.name)
+
+    def test_query_with_metadata_filter(self, db_client):
+        collection = self._setup(db_client)
+        ns = collection.create_namespace("qns_meta")
+        try:
+            self._insert_data(ns)
+            result = ns.query(
+                query_embeddings=[1.0, 0.0, 0.0],
+                n_results=5,
+                where={"category": "AI"},
+            )
+            assert result is not None
+            assert len(result["ids"][0]) > 0
+            if "metadatas" in result and result["metadatas"]:
+                for meta in result["metadatas"][0]:
+                    assert meta["category"] == "AI"
+        finally:
+            db_client.delete_collection(name=collection.name)
+
+    def test_query_with_score_filter(self, db_client):
+        collection = self._setup(db_client)
+        ns = collection.create_namespace("qns_score")
+        try:
+            self._insert_data(ns)
+            result = ns.query(
+                query_embeddings=[1.0, 0.0, 0.0],
+                n_results=5,
+                where={"score": {"$gte": 90}},
+            )
+            assert result is not None
+            assert len(result["ids"][0]) > 0
+        finally:
+            db_client.delete_collection(name=collection.name)
+
+    def test_query_with_include(self, db_client):
+        collection = self._setup(db_client)
+        ns = collection.create_namespace("qns_inc")
+        try:
+            self._insert_data(ns)
+            result = ns.query(
+                query_embeddings=[1.0, 0.0, 0.0],
+                n_results=3,
+                include=["documents", "metadatas"],
+            )
+            assert "documents" in result
+            assert "metadatas" in result
+            assert len(result["documents"][0]) == len(result["ids"][0])
+            assert len(result["metadatas"][0]) == len(result["ids"][0])
+        finally:
+            db_client.delete_collection(name=collection.name)
+
+    def test_query_include_embeddings(self, db_client):
+        collection = self._setup(db_client)
+        ns = collection.create_namespace("qns_emb")
+        try:
+            self._insert_data(ns)
+            result = ns.query(
+                query_embeddings=[1.0, 0.0, 0.0],
+                n_results=2,
+                include=["embeddings"],
+            )
+            assert "embeddings" in result
+            if result["embeddings"] and result["embeddings"][0]:
+                assert len(result["embeddings"][0][0]) == 3
+        finally:
+            db_client.delete_collection(name=collection.name)
+
+    def test_multi_namespace_isolation(self, db_client):
+        collection = self._setup(db_client, suffix="_iso")
+        ns_a = collection.create_namespace("tenant_a")
+        ns_b = collection.create_namespace("tenant_b")
+        try:
+            ns_a.add(
+                ids=["a1"],
+                embeddings=[[1.0, 0.0, 0.0]],
+                documents=["Data from tenant A"],
+                metadatas=[{"owner": "A"}],
+            )
+            ns_b.add(
+                ids=["b1"],
+                embeddings=[[0.0, 1.0, 0.0]],
+                documents=["Data from tenant B"],
+                metadatas=[{"owner": "B"}],
+            )
+
+            result_a = ns_a.query(query_embeddings=[1.0, 0.0, 0.0], n_results=10)
+            result_b = ns_b.query(query_embeddings=[1.0, 0.0, 0.0], n_results=10)
+
+            ids_a = result_a["ids"][0] if result_a["ids"] else []
+            ids_b = result_b["ids"][0] if result_b["ids"] else []
+
+            assert "a1" in ids_a
+            assert "b1" not in ids_a
+            assert "b1" in ids_b
+            assert "a1" not in ids_b
+        finally:
+            db_client.delete_collection(name=collection.name)
+
+    def test_same_id_different_namespaces(self, db_client):
+        collection = self._setup(db_client, suffix="_sameid")
+        ns_x = collection.create_namespace("ns_x")
+        ns_y = collection.create_namespace("ns_y")
+        try:
+            ns_x.add(ids="shared_id", embeddings=[1.0, 0.0, 0.0], metadatas={"src": "X"})
+            ns_y.add(ids="shared_id", embeddings=[0.0, 1.0, 0.0], metadatas={"src": "Y"})
+
+            res_x = ns_x.get(ids="shared_id", include=["metadatas"])
+            res_y = ns_y.get(ids="shared_id", include=["metadatas"])
+
+            assert len(res_x["ids"]) == 1
+            assert res_x["metadatas"][0]["src"] == "X"
+            assert len(res_y["ids"]) == 1
+            assert res_y["metadatas"][0]["src"] == "Y"
+        finally:
+            db_client.delete_collection(name=collection.name)
+
+
+    # ==================== hybrid_search tests ====================
+
+    def test_hybrid_search_fulltext_only(self, db_client):
+        collection = self._setup(db_client)
+        ns = collection.create_namespace("qns_hs_ft")
+        try:
+            self._insert_data(ns)
+            time.sleep(1)
+            result = ns.hybrid_search(
+                query={"where_document": {"$contains": "machine learning"}},
+                n_results=3,
+                include=["documents", "metadatas"],
+            )
+            assert result is not None
+            assert "ids" in result
+            assert len(result["ids"]) > 0
+            assert len(result["ids"][0]) > 0
+            if "documents" in result and result["documents"][0]:
+                for doc in result["documents"][0]:
+                    if doc:
+                        assert "machine" in doc.lower() or "learning" in doc.lower()
+        finally:
+            db_client.delete_collection(name=collection.name)
+
+    def test_hybrid_search_vector_only(self, db_client):
+        collection = self._setup(db_client)
+        ns = collection.create_namespace("qns_hs_vec")
+        try:
+            self._insert_data(ns)
+            time.sleep(1)
+            result = ns.hybrid_search(
+                knn={"query_embeddings": [1.0, 0.0, 0.0], "n_results": 3},
+                n_results=3,
+                include=["documents"],
+            )
+            assert result is not None
+            assert "ids" in result
+            assert "distances" in result
+            assert len(result["ids"]) > 0
+            assert len(result["ids"][0]) > 0
+            for dist in result["distances"][0]:
+                assert dist >= 0
+        finally:
+            db_client.delete_collection(name=collection.name)
+
+    def test_hybrid_search_combined(self, db_client):
+        collection = self._setup(db_client)
+        ns = collection.create_namespace("qns_hs_comb")
+        try:
+            self._insert_data(ns)
+            time.sleep(1)
+            result = ns.hybrid_search(
+                query={"where_document": {"$contains": "machine"}, "n_results": 5},
+                knn={"query_embeddings": [1.0, 0.0, 0.0], "n_results": 5},
+                rank={"rrf": {"rank_window_size": 60, "rank_constant": 60}},
+                n_results=3,
+                include=["documents", "metadatas"],
+            )
+            assert result is not None
+            assert "ids" in result
+            assert len(result["ids"]) > 0
+            assert len(result["ids"][0]) > 0
+        finally:
+            db_client.delete_collection(name=collection.name)
+
+    def test_hybrid_search_namespace_isolation(self, db_client):
+        collection = self._setup(db_client, suffix="_hs_iso")
+        ns_a = collection.create_namespace("hs_tenant_a")
+        ns_b = collection.create_namespace("hs_tenant_b")
+        try:
+            ns_a.add(
+                ids=["ha1"],
+                embeddings=[[1.0, 0.0, 0.0]],
+                documents=["Machine learning from tenant A"],
+                metadatas=[{"owner": "A"}],
+            )
+            ns_b.add(
+                ids=["hb1"],
+                embeddings=[[0.0, 1.0, 0.0]],
+                documents=["Python programming from tenant B"],
+                metadatas=[{"owner": "B"}],
+            )
+            time.sleep(1)
+
+            result_a = ns_a.hybrid_search(
+                knn={"query_embeddings": [1.0, 0.0, 0.0], "n_results": 10},
+                n_results=10,
+                include=["documents"],
+            )
+            result_b = ns_b.hybrid_search(
+                knn={"query_embeddings": [1.0, 0.0, 0.0], "n_results": 10},
+                n_results=10,
+                include=["documents"],
+            )
+
+            ids_a = result_a["ids"][0] if result_a["ids"] else []
+            ids_b = result_b["ids"][0] if result_b["ids"] else []
+
+            assert "ha1" in ids_a
+            assert "hb1" not in ids_a
+            assert "hb1" in ids_b
+            assert "ha1" not in ids_b
+        finally:
+            db_client.delete_collection(name=collection.name)
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v", "-s"])

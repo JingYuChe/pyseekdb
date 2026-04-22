@@ -55,3 +55,51 @@ class CollectionNames:
     @staticmethod
     def sdk_collections_table_name() -> str:
         return "sdk_collections"
+
+
+class NamespaceCollectionNames:
+    _LOGIC_DATA_SUFFIX = "_logic_data_table"
+    _HOT_SUFFIX = "_hot_table"
+    _KV_DATA_SUFFIX = "_kv_data_table"
+    _LOGIC_SCHEMA_SUFFIX = "_logic_schema_table"
+    _TG_SUFFIX = "_tg"
+
+    @staticmethod
+    def sdk_ns_namespaces_table() -> str:
+        return "sdk_ns_namespaces"
+
+    @staticmethod
+    def sdk_ns_ltables_table() -> str:
+        return "sdk_ns_ltables"
+
+    @staticmethod
+    def data_table_name(collection_id: str) -> str:
+        return f"{collection_id}{NamespaceCollectionNames._LOGIC_DATA_SUFFIX}"
+
+    @staticmethod
+    def hot_table_name(collection_id: str) -> str:
+        return f"{collection_id}{NamespaceCollectionNames._HOT_SUFFIX}"
+
+    @staticmethod
+    def kv_data_table_name(collection_id: str) -> str:
+        return f"{collection_id}{NamespaceCollectionNames._KV_DATA_SUFFIX}"
+
+    @staticmethod
+    def logic_schema_table_name(collection_id: str) -> str:
+        return f"{collection_id}{NamespaceCollectionNames._LOGIC_SCHEMA_SUFFIX}"
+
+    @staticmethod
+    def tablegroup_name(collection_id: str) -> str:
+        return f"{collection_id}{NamespaceCollectionNames._TG_SUFFIX}"
+
+    @staticmethod
+    def is_ns_data_table(table_name: str) -> bool:
+        return table_name.endswith(NamespaceCollectionNames._LOGIC_DATA_SUFFIX)
+
+
+class NamespaceFieldNames:
+    NAMESPACE_ID = "namespace_id"
+    LTABLE_ID = "ltable_id"
+    DOCUMENT = "document"
+    EMBEDDING = "embedding"
+    DATA_CONTENT = "data_content"

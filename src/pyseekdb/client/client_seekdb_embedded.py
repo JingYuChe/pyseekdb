@@ -270,6 +270,16 @@ class SeekdbEmbeddedClient(BaseClient):
         """
         return super().list_databases(limit=limit, offset=offset, tenant=tenant)
 
+    def _namespace_prewarm(
+        self,
+        collection_id: str | None,
+        collection_name: str,
+        namespace_id: str,
+        namespace_name: str,
+        **kwargs,
+    ) -> None:
+        raise ValueError("prewarm is only supported in shared-storage remote deployment")
+
     def __repr__(self):
         status = "connected" if self.is_connected() else "disconnected"
         return f"<SeekdbEmbeddedClient path={self.path} database={self.database} status={status}>"
