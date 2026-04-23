@@ -13,7 +13,7 @@ Key features:
 
 ## Documentation
 
-- Docs home: https://docs.seekdb.ai/seekdb/seekdb-overview/
+- Docs home: https://docs.seekdb.ai
 - User guide: https://docs.seekdb.ai/seekdb/deploy-overview
 - API reference: https://docs.seekdb.ai/seekdb/api-overview
 - RAG demo: [English](demo/rag/README.md) / [中文](demo/rag/README_CN.md)
