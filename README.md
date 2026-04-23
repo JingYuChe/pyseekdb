@@ -46,7 +46,7 @@ print(results["ids"][0])
 ```
 
 For full usage, connection modes, collection management, and operations, see the
-User Guide: https://oceanbase.github.io/pyseekdb/guide/.
+[User Guide](https://oceanbase.github.io/pyseekdb/guide/).
 
 ## License
 
