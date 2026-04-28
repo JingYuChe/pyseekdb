@@ -1182,11 +1182,9 @@ class BaseClient(BaseConnection, AdminAPI):
                 data_content JSON NOT NULL,
                 created_by VARCHAR(64) DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                -- TODO: uncomment when OceanBase supports NAMESPACE KEY syntax
-                -- NAMESPACE KEY(namespace_id, ltable_id),
                 FULLTEXT INDEX idx_fts(document) {fulltext_clause},
                 SEARCH INDEX idx_json(data_content) WITH PARSER json
-            ) TABLEGROUP=`{tg_name}` COMMENT='逻辑表主数据' DEFAULT CHARSET=utf8mb4 ORGANIZATION HEAP
+            ) TABLEGROUP=`{tg_name}` COMMENT='逻辑表主数据' DEFAULT CHARSET=utf8mb4 ORGANIZATION HEAP IS_LOGIC_TABLE = TRUE
             {partition_clause}"""
 
             data_sql_without_search = f"""CREATE TABLE `{data_table}` (
@@ -1197,10 +1195,8 @@ class BaseClient(BaseConnection, AdminAPI):
                 data_content JSON NOT NULL,
                 created_by VARCHAR(64) DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                -- TODO: uncomment when OceanBase supports NAMESPACE KEY syntax
-                -- NAMESPACE KEY(namespace_id, ltable_id),
                 FULLTEXT INDEX idx_fts(document) {fulltext_clause}
-            ) TABLEGROUP=`{tg_name}` COMMENT='逻辑表主数据' DEFAULT CHARSET=utf8mb4 ORGANIZATION HEAP
+            ) TABLEGROUP=`{tg_name}` COMMENT='逻辑表主数据' DEFAULT CHARSET=utf8mb4 ORGANIZATION HEAP IS_LOGIC_TABLE = TRUE
             {partition_clause}"""
 
             try:
