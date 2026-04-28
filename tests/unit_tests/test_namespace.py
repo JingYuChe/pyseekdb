@@ -706,9 +706,9 @@ class TestValidateNamespaceName:
         from pyseekdb.client.client_base import _validate_namespace_name
         _validate_namespace_name("a")
 
-    def test_valid_boundary_512_chars(self):
+    def test_valid_boundary_256_chars(self):
         from pyseekdb.client.client_base import _validate_namespace_name
-        _validate_namespace_name("a" * 512)
+        _validate_namespace_name("a" * 256)
 
     def test_empty_name_raises(self):
         from pyseekdb.client.client_base import _validate_namespace_name
@@ -723,7 +723,7 @@ class TestValidateNamespaceName:
     def test_too_long_raises(self):
         from pyseekdb.client.client_base import _validate_namespace_name
         with pytest.raises(ValueError, match="too long"):
-            _validate_namespace_name("a" * 513)
+            _validate_namespace_name("a" * 257)
 
     def test_hyphen_raises(self):
         from pyseekdb.client.client_base import _validate_namespace_name

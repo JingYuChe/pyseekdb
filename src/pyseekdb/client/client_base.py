@@ -124,6 +124,8 @@ def _validate_collection_name(name: str) -> None:
 
 from .validators import _MAX_NAMESPACE_BATCH_SIZE, _validate_namespace_name, _validate_record_ids  # noqa: F401
 
+_NS_PARTITION_COUNT = 1000
+
 
 def _build_default_ltable_schema() -> dict:
     return {
@@ -1190,7 +1192,7 @@ class BaseClient(BaseConnection, AdminAPI):
 
         fulltext_clause = _get_fulltext_index_sql(fulltext_config)
         vector_index_sql = _get_ivf_vector_index_sql(ivf_config)
-        partition_clause = "PARTITION BY KEY(namespace_id) PARTITIONS 8"
+        partition_clause = f"PARTITION BY KEY(namespace_id) PARTITIONS {_NS_PARTITION_COUNT}"
 
         try:
             self._execute(f"CREATE TABLEGROUP `{tg_name}` SHARDING='ADAPTIVE'")
