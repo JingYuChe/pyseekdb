@@ -126,6 +126,22 @@ def _validate_collection_name(name: str) -> None:
 from .validators import _MAX_NAMESPACE_BATCH_SIZE, _validate_namespace_name, _validate_record_ids  # noqa: F401
 
 
+def _build_default_ltable_schema() -> dict:
+    return {
+        "col_info": [
+            {"col_idx": 1, "col_name": "metadata",  "col_type": "JSON"},
+            {"col_idx": 2, "col_name": "content",   "col_type": "TEXT"},
+            {"col_idx": 3, "col_name": "embedding", "col_type": "VECTOR"},
+        ],
+        "index_info": [
+            {"index_seq": 0, "index_type": "PRIMARY",      "indexed_columns": []},
+            {"index_seq": 1, "index_type": "SEARCH_INDEX",  "indexed_columns": [1]},
+            {"index_seq": 2, "index_type": "FULLTEXT",      "indexed_columns": [2]},
+            {"index_seq": 3, "index_type": "IVF",           "indexed_columns": [3]},
+        ],
+    }
+
+
 def _get_fulltext_index_sql(
     fulltext_config: FulltextIndexConfig | None = None,
 ) -> str:
@@ -392,6 +408,18 @@ class BaseClient(BaseConnection, AdminAPI):
         db_type, _version = self.detect_db_type_and_version()
         if db_type.lower() != "oceanbase":
             raise ValueError("use_namespace=True is only supported on OceanBase")
+
+    def _is_shared_storage_mode(self) -> bool:
+        try:
+            rows = self._execute(
+                "SELECT VALUE FROM oceanbase.GV$OB_PARAMETERS WHERE name = 'ob_startup_mode'"
+            )
+            if rows:
+                val = rows[0][0] if isinstance(rows[0], (list, tuple)) else rows[0]["VALUE"]
+                return str(val).upper() == "SHARED_STORAGE"
+        except Exception:
+            pass
+        return False
 
     def detect_db_type_and_version(self) -> tuple[str, "Version"]:  # noqa: C901
         """
@@ -923,11 +951,13 @@ class BaseClient(BaseConnection, AdminAPI):
         if dimension < 1 or dimension > 4096:
             raise ValueError(f"Dimension must be between 1 and 4096, got {dimension}")
 
+        is_ss = self._is_shared_storage_mode()
         settings = {
             "version": 2,
             "use_namespace": True,
             "dense_index_type": "ivf",
             "use_spfresh": True,
+            "storage_mode": "ss" if is_ss else "sn",
             "dimension": dimension,
             "distance": distance,
         }
@@ -947,6 +977,7 @@ class BaseClient(BaseConnection, AdminAPI):
             dimension=dimension,
             ivf_config=ivf_config,
             fulltext_config=schema.fulltext_index,
+            is_shared_storage=is_ss,
         )
 
         return Collection(
@@ -1137,6 +1168,10 @@ class BaseClient(BaseConnection, AdminAPI):
             raise ValueError(f"Namespace collection '{collection_name}' not found")
         collection_id = meta["collection_id"]
         collection_id_escaped = escape_string(collection_id)
+        self._execute(
+            f"DELETE FROM `{CollectionNames.sdk_collections_table_name()}` "
+            f"WHERE collection_id = '{collection_id_escaped}'"
+        )
         with contextlib.suppress(Exception):
             self._execute(
                 f"DELETE FROM `{NamespaceCollectionNames.sdk_ns_ltables_table()}` "
@@ -1148,10 +1183,6 @@ class BaseClient(BaseConnection, AdminAPI):
                 f"WHERE collection_id = '{collection_id_escaped}'"
             )
         self._cleanup_namespace_physical_tables(collection_id)
-        self._execute(
-            f"DELETE FROM `{CollectionNames.sdk_collections_table_name()}` "
-            f"WHERE collection_id = '{collection_id_escaped}'"
-        )
         self._session_cache.invalidate_collection(collection_id)
 
     def _create_namespace_physical_tables(
@@ -1160,10 +1191,10 @@ class BaseClient(BaseConnection, AdminAPI):
         dimension: int,
         ivf_config,
         fulltext_config=None,
+        is_shared_storage: bool = False,
     ) -> None:
         tg_name = NamespaceCollectionNames.tablegroup_name(collection_id)
         data_table = NamespaceCollectionNames.data_table_name(collection_id)
-        hot_table = NamespaceCollectionNames.hot_table_name(collection_id)
         kv_table = NamespaceCollectionNames.kv_data_table_name(collection_id)
         schema_table = NamespaceCollectionNames.logic_schema_table_name(collection_id)
 
@@ -1207,14 +1238,16 @@ class BaseClient(BaseConnection, AdminAPI):
             ivf_index_sql = f"CREATE VECTOR INDEX idx_vec ON `{data_table}` (embedding) {vector_index_sql}"
             self._execute(ivf_index_sql)
 
-            self._execute(f"""CREATE TABLE `{hot_table}` (
-                namespace_id BIGINT UNSIGNED NOT NULL,
-                last_access_time TIMESTAMP(6) NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                PRIMARY KEY(namespace_id)
-            ) TABLEGROUP=`{tg_name}` COMMENT='热点/TTL附属表' DEFAULT CHARSET=utf8mb4
-            {partition_clause}""")
+            if is_shared_storage:
+                hot_table = NamespaceCollectionNames.hot_table_name(collection_id)
+                self._execute(f"""CREATE TABLE `{hot_table}` (
+                    namespace_id BIGINT UNSIGNED NOT NULL,
+                    last_access_time TIMESTAMP(6) NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    PRIMARY KEY(namespace_id)
+                ) TABLEGROUP=`{tg_name}` COMMENT='热点/TTL附属表' DEFAULT CHARSET=utf8mb4
+                {partition_clause}""")
 
             self._execute(f"""CREATE TABLE `{kv_table}` (
                 namespace_id BIGINT UNSIGNED NOT NULL,
@@ -1273,7 +1306,7 @@ class BaseClient(BaseConnection, AdminAPI):
         )
         lt_id = int(lt_rows[0][0] if isinstance(lt_rows[0], (list, tuple)) else lt_rows[0]["ltable_id"])
         schema_table = NamespaceCollectionNames.logic_schema_table_name(collection_id)
-        schema_content = json.dumps({"columns": {}})
+        schema_content = json.dumps(_build_default_ltable_schema())
         with contextlib.suppress(Exception):
             self._execute(
                 f"INSERT INTO `{schema_table}` (namespace_id, ltable_id, schema_content) "
