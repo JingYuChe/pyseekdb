@@ -40,7 +40,6 @@ from .embedding_function import (
 )
 from .filters import FilterBuilder
 from .meta_info import CollectionFieldNames, CollectionNames, NamespaceCollectionNames, NamespaceFieldNames
-from .session_cache import SessionCache
 from .query_types import QueryHint
 from .schema import Schema, SparseVectorIndexConfig
 from .sparse_embedding_function import (
@@ -393,14 +392,6 @@ class BaseClient(BaseConnection, AdminAPI):
 
     Inherits connection management from BaseConnection and database operations from AdminAPI.
     """
-
-    # ==================== Session Cache ====================
-
-    @property
-    def _session_cache(self) -> SessionCache:
-        if not hasattr(self, "_session_cache_instance"):
-            self._session_cache_instance = SessionCache()
-        return self._session_cache_instance
 
     # ==================== Database Type Detection ====================
 
@@ -1183,7 +1174,6 @@ class BaseClient(BaseConnection, AdminAPI):
                 f"WHERE collection_id = '{collection_id_escaped}'"
             )
         self._cleanup_namespace_physical_tables(collection_id)
-        self._session_cache.invalidate_collection(collection_id)
 
     def _create_namespace_physical_tables(
         self,
@@ -1312,8 +1302,6 @@ class BaseClient(BaseConnection, AdminAPI):
                 f"INSERT INTO `{schema_table}` (namespace_id, ltable_id, schema_content) "
                 f"VALUES ({ns_id}, {lt_id}, '{escape_string(schema_content)}')"
             )
-        self._session_cache.set_namespace_id(collection_id, namespace_name, ns_id)
-        self._session_cache.set_ltable_id(collection_id, ns_id, "default", lt_id)
         return {"namespace_id": str(ns_id), "namespace_name": namespace_name}
 
     def _get_ns_namespace_meta(self, collection_id: str, namespace_name: str) -> dict | None:
@@ -1350,7 +1338,6 @@ class BaseClient(BaseConnection, AdminAPI):
             f"DELETE FROM `{NamespaceCollectionNames.sdk_ns_namespaces_table()}` "
             f"WHERE namespace_id = {ns_id}"
         )
-        self._session_cache.invalidate_namespace(collection_id, namespace_name)
 
     def _list_ns_namespaces(self, collection_id: str) -> list[dict]:
         collection_id_escaped = escape_string(collection_id)

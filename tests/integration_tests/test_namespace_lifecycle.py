@@ -157,6 +157,49 @@ class TestNamespaceLifecycle:
         with pytest.raises(ValueError, match="HNSW is not allowed"):
             db_client.create_collection(name=name, schema=schema, use_namespace=True)
 
+    def test_ss_mode_creates_hot_table(self, oceanbase_client):
+        """Verify hot_table is created when _is_shared_storage_mode returns True (SS mode)."""
+        import json
+        from unittest.mock import patch
+        from pyseekdb.client.meta_info import NamespaceCollectionNames
+
+        client = oceanbase_client
+
+        with patch.object(
+            type(client._server), "_is_shared_storage_mode", return_value=True
+        ):
+            name = f"test_ns_ss_{int(time.time() * 1000)}"
+            schema = Schema(
+                vector_index=VectorIndexConfig(
+                    ivf=IVFConfiguration(dimension=3, distance="cosine"),
+                    embedding_function=None,
+                ),
+            )
+            collection = client.create_collection(
+                name=name, schema=schema, use_namespace=True
+            )
+
+        try:
+            collection_id = collection.id
+
+            # Verify settings has storage_mode=ss
+            rows = client._server._execute(
+                f"SELECT settings FROM sdk_collections WHERE collection_id = '{collection_id}'"
+            )
+            settings = json.loads(rows[0]["settings"])
+            assert settings["storage_mode"] == "ss", f"Expected ss, got {settings.get('storage_mode')}"
+
+            # Verify hot_table was actually created
+            hot_table = NamespaceCollectionNames.hot_table_name(collection_id)
+            rows = client._server._execute(f"DESCRIBE `{hot_table}`")
+            assert rows is not None and len(rows) > 0, "hot_table should exist in SS mode"
+
+            col_names = {r["Field"] for r in rows}
+            assert "namespace_id" in col_names
+            assert "last_access_time" in col_names
+        finally:
+            client.delete_collection(name=name)
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

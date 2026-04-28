@@ -869,60 +869,6 @@ class TestNamespaceBatchLimit:
             c._namespace_delete(**self._common_kwargs(), ids="bad-id")
 
 
-# ==================== SessionCache Tests ====================
-
-
-class TestSessionCache:
-
-    def test_namespace_id_get_set(self):
-        from pyseekdb.client.session_cache import SessionCache
-        cache = SessionCache()
-        assert cache.get_namespace_id("c1", "ns1") is None
-        cache.set_namespace_id("c1", "ns1", 10)
-        assert cache.get_namespace_id("c1", "ns1") == 10
-
-    def test_ltable_id_get_set(self):
-        from pyseekdb.client.session_cache import SessionCache
-        cache = SessionCache()
-        assert cache.get_ltable_id("c1", 10, "default") is None
-        cache.set_ltable_id("c1", 10, "default", 1)
-        assert cache.get_ltable_id("c1", 10, "default") == 1
-
-    def test_invalidate_namespace(self):
-        from pyseekdb.client.session_cache import SessionCache
-        cache = SessionCache()
-        cache.set_namespace_id("c1", "ns1", 10)
-        cache.invalidate_namespace("c1", "ns1")
-        assert cache.get_namespace_id("c1", "ns1") is None
-
-    def test_invalidate_collection(self):
-        from pyseekdb.client.session_cache import SessionCache
-        cache = SessionCache()
-        cache.set_namespace_id("c1", "ns1", 10)
-        cache.set_namespace_id("c1", "ns2", 20)
-        cache.set_ltable_id("c1", 10, "default", 1)
-        cache.invalidate_collection("c1")
-        assert cache.get_namespace_id("c1", "ns1") is None
-        assert cache.get_namespace_id("c1", "ns2") is None
-        assert cache.get_ltable_id("c1", 10, "default") is None
-
-    def test_invalidate_ltable(self):
-        from pyseekdb.client.session_cache import SessionCache
-        cache = SessionCache()
-        cache.set_ltable_id("c1", 10, "default", 1)
-        cache.invalidate_ltable("c1", 10, "default")
-        assert cache.get_ltable_id("c1", 10, "default") is None
-
-    def test_separate_collections_isolated(self):
-        from pyseekdb.client.session_cache import SessionCache
-        cache = SessionCache()
-        cache.set_namespace_id("c1", "ns1", 10)
-        cache.set_namespace_id("c2", "ns1", 20)
-        cache.invalidate_collection("c1")
-        assert cache.get_namespace_id("c1", "ns1") is None
-        assert cache.get_namespace_id("c2", "ns1") == 20
-
-
 # ==================== Physical Table Names Tests ====================
 
 
