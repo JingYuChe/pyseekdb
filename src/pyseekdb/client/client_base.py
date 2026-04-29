@@ -1116,6 +1116,7 @@ class BaseClient(BaseConnection, AdminAPI):
             f"WHERE collection_name = '{collection_name_escaped}'"
         )
         collection_id = str(rows[0][0] if isinstance(rows[0], (list, tuple)) else rows[0]["collection_id"])
+        self._set_session_ns_context(collection_id=collection_id)
         return {"collection_id": collection_id, "collection_name": collection_name}
 
     def _get_ns_collection_meta(self, collection_name: str) -> dict | None:
@@ -1276,6 +1277,19 @@ class BaseClient(BaseConnection, AdminAPI):
         with contextlib.suppress(Exception):
             self._execute(f"DROP TABLEGROUP IF EXISTS `{NamespaceCollectionNames.tablegroup_name(collection_id)}`")
 
+    def _set_session_ns_context(
+        self,
+        collection_id: str | None = None,
+        namespace_id: int | None = None,
+        ltable_id: int | None = None,
+    ) -> None:
+        if collection_id is not None:
+            self._execute(f"SET @collection_id = '{escape_string(str(collection_id))}'")
+        if namespace_id is not None:
+            self._execute(f"SET @namespace_id = {int(namespace_id)}")
+        if ltable_id is not None:
+            self._execute(f"SET @ltable_id = {int(ltable_id)}")
+
     def _create_ns_namespace_meta(self, collection_id: str, namespace_name: str) -> dict:
         namespace_name_escaped = escape_string(namespace_name)
         collection_id_escaped = escape_string(collection_id)
@@ -1304,6 +1318,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 f"INSERT INTO `{schema_table}` (namespace_id, ltable_id, schema_content) "
                 f"VALUES ({ns_id}, {lt_id}, '{escape_string(schema_content)}')"
             )
+        self._set_session_ns_context(namespace_id=ns_id, ltable_id=lt_id)
         return {"namespace_id": str(ns_id), "namespace_name": namespace_name}
 
     def _get_ns_namespace_meta(self, collection_id: str, namespace_name: str) -> dict | None:
@@ -1317,8 +1332,13 @@ class BaseClient(BaseConnection, AdminAPI):
             return None
         row = rows[0]
         if isinstance(row, (list, tuple)):
-            return {"namespace_id": str(row[0]), "namespace_name": row[1]}
-        return {"namespace_id": str(row["namespace_id"]), "namespace_name": row["namespace_name"]}
+            ns_id = str(row[0])
+            ns_name = row[1]
+        else:
+            ns_id = str(row["namespace_id"])
+            ns_name = row["namespace_name"]
+        self._set_session_ns_context(namespace_id=int(ns_id))
+        return {"namespace_id": ns_id, "namespace_name": ns_name}
 
     def _has_ns_namespace(self, collection_id: str, namespace_name: str) -> bool:
         return self._get_ns_namespace_meta(collection_id, namespace_name) is not None
