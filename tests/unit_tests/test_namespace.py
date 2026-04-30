@@ -525,11 +525,12 @@ class TestNamespaceSQLGeneration:
         sql = c.executed_sqls[-1]
         assert sql.startswith("UPDATE")
         assert f"`{self.TABLE}`" in sql
+        assert "CASE" in sql
         assert "JSON_SET(data_content, '$.metadata'," in sql
         assert "CAST(" in sql
         assert "AS JSON)" in sql
         assert "namespace_id = 7" in sql
-        assert """JSON_EXTRACT(data_content, '$.id') = 'd1'""" in sql
+        assert "'d1'" in sql
 
     def test_update_embedding_and_document_sql(self):
         c = self._client()
@@ -539,10 +540,13 @@ class TestNamespaceSQLGeneration:
             embeddings=[9.0, 8.0, 7.0],
             documents="Updated",
         )
-        sql = c.executed_sqls[-1]
-        assert "document = 'Updated'" in sql
-        assert "embedding = X'" in sql
-        assert "namespace_id = 7" in sql
+        emb_sql = c.executed_sqls[-2]
+        assert "embedding = X'" in emb_sql
+        assert "namespace_id = 7" in emb_sql
+        doc_sql = c.executed_sqls[-1]
+        assert "CASE" in doc_sql
+        assert "'Updated'" in doc_sql
+        assert "namespace_id = 7" in doc_sql
 
     # ---- DELETE ----
 
@@ -556,7 +560,8 @@ class TestNamespaceSQLGeneration:
         assert sql.startswith("DELETE FROM")
         assert f"`{self.TABLE}`" in sql
         assert "namespace_id = 7" in sql
-        assert """JSON_EXTRACT(data_content, '$.id') = 'd1'""" in sql
+        assert "JSON_EXTRACT(data_content, '$.id') = " in sql
+        assert "'d1'" in sql
 
     def test_delete_by_where_sql(self):
         c = self._client()
@@ -944,14 +949,42 @@ class TestDeleteNamespaceUsesKernel:
     def test_delete_namespace_calls_dbms_logic_table(self):
         c = FakeClient()
         c._execute = MagicMock(side_effect=[
-            [{"namespace_id": 10, "namespace_name": "ns1"}],
-            None,
-            None,
-            None,
+            [{"namespace_id": 10, "namespace_name": "ns1", "ltable_id": 7}],
+            None,  # _get_ns_namespace_meta -> _set_session_ns_context SET @namespace_id
+            None,  # _get_ns_namespace_meta -> _set_session_ns_context SET @ltable_id
+            None,  # _delete_ns_namespace_meta -> SET @collection_id
+            None,  # _delete_ns_namespace_meta -> SET @namespace_id
+            None,  # _delete_ns_namespace_meta -> SET @ltable_id
+            None,  # CALL DBMS_LOGIC_TABLE.DROP_NAMESPACE
+            None,  # DELETE FROM sdk_ns_ltables
+            None,  # DELETE FROM sdk_ns_namespaces
         ])
         c._delete_ns_namespace_meta("abc123", "ns1")
         calls = [str(call) for call in c._execute.call_args_list]
         assert any("DBMS_LOGIC_TABLE.DROP_NAMESPACE" in s for s in calls)
+        # session context must be set BEFORE DROP_NAMESPACE so the kernel sees the
+        # right @collection_id / @namespace_id / @ltable_id for this call.
+        drop_idx = next(i for i, s in enumerate(calls) if "DBMS_LOGIC_TABLE.DROP_NAMESPACE" in s)
+        before_drop = " | ".join(calls[:drop_idx])
+        assert "SET @collection_id" in before_drop
+        assert "SET @namespace_id" in before_drop
+        assert "SET @ltable_id" in before_drop
+
+    def test_get_ns_namespace_meta_sets_ltable_id(self):
+        """get_namespace must populate @ltable_id along with @namespace_id."""
+        c = FakeClient()
+        c._execute = MagicMock(side_effect=[
+            [{"namespace_id": 10, "namespace_name": "ns1", "ltable_id": 7}],
+            None,  # SET @namespace_id
+            None,  # SET @ltable_id
+        ])
+        meta = c._get_ns_namespace_meta("abc123", "ns1")
+        assert meta == {"namespace_id": "10", "namespace_name": "ns1", "ltable_id": "7"}
+        calls = [str(call) for call in c._execute.call_args_list]
+        # JOIN against sdk_ns_ltables so we can resolve the default ltable in one round trip.
+        assert any("sdk_ns_ltables" in s for s in calls)
+        assert any("SET @namespace_id" in s for s in calls)
+        assert any("SET @ltable_id" in s for s in calls)
 
 
 if __name__ == "__main__":

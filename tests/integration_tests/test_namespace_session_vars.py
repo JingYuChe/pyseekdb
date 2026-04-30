@@ -61,18 +61,23 @@ class TestNamespaceSessionVars:
         try:
             ns1 = collection.create_namespace("sess_get_ns")
             ns1_id = int(ns1.namespace_id)
+            ns1_ltid = int(self._query_session_vars(db_client)["ltid"])
 
             ns2 = collection.create_namespace("sess_get_ns2")
             ns2_id = int(ns2.namespace_id)
+            ns2_ltid = int(self._query_session_vars(db_client)["ltid"])
 
-            # After creating ns2, session should have ns2's id
+            # After creating ns2, session should have ns2's id and its own @ltable_id
             vars_ = self._query_session_vars(db_client)
             assert int(vars_["nsid"]) == ns2_id
+            assert int(vars_["ltid"]) == ns2_ltid
 
-            # Now get_namespace(ns1) should update session to ns1's id
+            # Now get_namespace(ns1) should update session to ns1's id AND ns1's @ltable_id;
+            # otherwise kernel-side ops would observe ns2's stale @ltable_id while ns1 is in use.
             ns1_again = collection.get_namespace("sess_get_ns")
             vars_ = self._query_session_vars(db_client)
             assert int(vars_["nsid"]) == ns1_id
+            assert int(vars_["ltid"]) == ns1_ltid
             assert int(ns1_again.namespace_id) == ns1_id
         finally:
             db_client.delete_collection(name=collection.name)

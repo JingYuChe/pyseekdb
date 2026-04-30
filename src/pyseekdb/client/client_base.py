@@ -965,13 +965,22 @@ class BaseClient(BaseConnection, AdminAPI):
 
         self._ensure_namespace_catalogs()
 
-        self._create_namespace_physical_tables(
-            collection_id=collection_id,
-            dimension=dimension,
-            ivf_config=ivf_config,
-            fulltext_config=schema.fulltext_index,
-            is_shared_storage=is_ss,
-        )
+        try:
+            self._create_namespace_physical_tables(
+                collection_id=collection_id,
+                dimension=dimension,
+                ivf_config=ivf_config,
+                fulltext_config=schema.fulltext_index,
+                is_shared_storage=is_ss,
+            )
+        except Exception:
+            with contextlib.suppress(Exception):
+                collection_id_escaped = escape_string(collection_id)
+                self._execute(
+                    f"DELETE FROM `{CollectionNames.sdk_collections_table_name()}` "
+                    f"WHERE collection_id = '{collection_id_escaped}'"
+                )
+            raise
 
         return Collection(
             client=self,
@@ -1324,9 +1333,18 @@ class BaseClient(BaseConnection, AdminAPI):
     def _get_ns_namespace_meta(self, collection_id: str, namespace_name: str) -> dict | None:
         namespace_name_escaped = escape_string(namespace_name)
         collection_id_escaped = escape_string(collection_id)
+        ns_table = NamespaceCollectionNames.sdk_ns_namespaces_table()
+        lt_table = NamespaceCollectionNames.sdk_ns_ltables_table()
         rows = self._execute(
-            f"SELECT namespace_id, namespace_name FROM `{NamespaceCollectionNames.sdk_ns_namespaces_table()}` "
-            f"WHERE collection_id = '{collection_id_escaped}' AND namespace_name = '{namespace_name_escaped}'"
+            f"SELECT n.namespace_id AS namespace_id, n.namespace_name AS namespace_name, "
+            f"l.ltable_id AS ltable_id "
+            f"FROM `{ns_table}` n "
+            f"LEFT JOIN `{lt_table}` l "
+            f"ON l.collection_id = n.collection_id "
+            f"AND l.namespace_id = n.namespace_id "
+            f"AND l.ltable_name = 'default' "
+            f"WHERE n.collection_id = '{collection_id_escaped}' "
+            f"AND n.namespace_name = '{namespace_name_escaped}'"
         )
         if not rows:
             return None
@@ -1334,11 +1352,17 @@ class BaseClient(BaseConnection, AdminAPI):
         if isinstance(row, (list, tuple)):
             ns_id = str(row[0])
             ns_name = row[1]
+            lt_raw = row[2] if len(row) > 2 else None
         else:
             ns_id = str(row["namespace_id"])
             ns_name = row["namespace_name"]
-        self._set_session_ns_context(namespace_id=int(ns_id))
-        return {"namespace_id": ns_id, "namespace_name": ns_name}
+            lt_raw = row.get("ltable_id")
+        lt_id = int(lt_raw) if lt_raw is not None else None
+        self._set_session_ns_context(namespace_id=int(ns_id), ltable_id=lt_id)
+        meta: dict = {"namespace_id": ns_id, "namespace_name": ns_name}
+        if lt_id is not None:
+            meta["ltable_id"] = str(lt_id)
+        return meta
 
     def _has_ns_namespace(self, collection_id: str, namespace_name: str) -> bool:
         return self._get_ns_namespace_meta(collection_id, namespace_name) is not None
@@ -1348,7 +1372,14 @@ class BaseClient(BaseConnection, AdminAPI):
         if meta is None:
             raise ValueError(f"Namespace '{namespace_name}' not found")
         ns_id = meta["namespace_id"]
+        lt_id_raw = meta.get("ltable_id")
+        lt_id = int(lt_id_raw) if lt_id_raw is not None else None
         collection_id_escaped = escape_string(collection_id)
+        # Ensure DBMS_LOGIC_TABLE.DROP_NAMESPACE sees the right session context;
+        # otherwise it may read stale @collection_id / @ltable_id from a previous call.
+        self._set_session_ns_context(
+            collection_id=collection_id, namespace_id=int(ns_id), ltable_id=lt_id
+        )
         self._execute(
             f"CALL DBMS_LOGIC_TABLE.DROP_NAMESPACE('{collection_id_escaped}', {ns_id})"
         )
@@ -4401,7 +4432,7 @@ class BaseClient(BaseConnection, AdminAPI):
     # ==================== Namespace DML/DQL Methods ====================
 
     @staticmethod
-    def _rewrite_where_for_ns(where: dict[str, Any]) -> dict[str, Any]:
+    def _rewrite_where_for_ns(where: dict[str, Any] | None) -> dict[str, Any] | None:
         if where is None:
             return None
         rewritten = {}
@@ -4548,24 +4579,96 @@ class BaseClient(BaseConnection, AdminAPI):
         ns_id = int(namespace_id)
         ltable_id = 1
 
+        id_expr = "JSON_EXTRACT(data_content, '$.id')"
+        active_ids = []
         for i, record_id in enumerate(ids):
-            set_parts = []
-            if documents and i < len(documents) and documents[i] is not None:
-                set_parts.append(f"document = '{escape_string(documents[i])}'")
+            has_update = (
+                (documents and i < len(documents) and documents[i] is not None)
+                or (embeddings and i < len(embeddings) and embeddings[i] is not None)
+                or (metadatas and i < len(metadatas) and metadatas[i] is not None)
+            )
+            if has_update:
+                active_ids.append((i, record_id))
+
+        if not active_ids:
+            return
+
+        conn = self._ensure_connection()
+        use_context_manager = self._use_context_manager_for_cursor()
+
+        # VECTOR columns do not support CASE-WHEN in OceanBase, so embedding
+        # updates are executed per-row while document/metadata use batch CASE-WHEN.
+        emb_ids = []
+        for i, record_id in active_ids:
             if embeddings and i < len(embeddings) and embeddings[i] is not None:
-                set_parts.append(f"embedding = {_embedding_to_hexstring(embeddings[i])}")
-            if metadatas and i < len(metadatas) and metadatas[i] is not None:
-                meta_json = json.dumps(metadatas[i], ensure_ascii=False)
-                set_parts.append(
-                    f"data_content = JSON_SET(data_content, '$.metadata', CAST('{escape_string(meta_json)}' AS JSON))"
+                emb_ids.append((i, record_id))
+
+        if emb_ids:
+            for i, record_id in emb_ids:
+                vec_sql = _embedding_to_hexstring(embeddings[i])
+                sql = (
+                    f"UPDATE `{table_name}` SET embedding = {vec_sql} "
+                    f"WHERE namespace_id = {ns_id} AND ltable_id = {ltable_id} "
+                    f"AND {id_expr} = %s"
                 )
-            if not set_parts:
-                continue
-            id_escaped = escape_string(record_id)
-            user_where = f"WHERE JSON_EXTRACT(data_content, '$.id') = '{id_escaped}'"
-            where_clause, _ = self._append_namespace_filter(user_where, [], ns_id, ltable_id)
-            sql = f"UPDATE `{table_name}` SET {', '.join(set_parts)} {where_clause}"
-            self._execute(sql)
+                if use_context_manager:
+                    with conn.cursor() as cursor:
+                        cursor.execute(sql, [record_id])
+                else:
+                    cursor = conn.cursor()
+                    try:
+                        cursor.execute(sql, [record_id])
+                    finally:
+                        cursor.close()
+
+        doc_case_parts = []
+        meta_case_parts = []
+        params = []
+        has_doc = False
+        has_meta = False
+        batch_ids = []
+
+        for i, record_id in active_ids:
+            if documents and i < len(documents) and documents[i] is not None:
+                has_doc = True
+                doc_case_parts.append(f"WHEN {id_expr} = %s THEN %s")
+                params.extend([record_id, documents[i]])
+                if record_id not in [rid for rid in batch_ids]:
+                    batch_ids.append(record_id)
+            if metadatas and i < len(metadatas) and metadatas[i] is not None:
+                has_meta = True
+                meta_json = json.dumps(metadatas[i], ensure_ascii=False)
+                meta_case_parts.append(
+                    f"WHEN {id_expr} = %s THEN JSON_SET(data_content, '$.metadata', CAST(%s AS JSON))"
+                )
+                params.extend([record_id, meta_json])
+                if record_id not in batch_ids:
+                    batch_ids.append(record_id)
+
+        if has_doc or has_meta:
+            set_clauses = []
+            if has_doc:
+                set_clauses.append(f"document = CASE {' '.join(doc_case_parts)} ELSE document END")
+            if has_meta:
+                set_clauses.append(f"data_content = CASE {' '.join(meta_case_parts)} ELSE data_content END")
+
+            id_placeholders = ", ".join(["%s"] * len(batch_ids))
+            params.extend(batch_ids)
+
+            sql = (
+                f"UPDATE `{table_name}` SET {', '.join(set_clauses)} "
+                f"WHERE namespace_id = {ns_id} AND ltable_id = {ltable_id} "
+                f"AND {id_expr} IN ({id_placeholders})"
+            )
+            if use_context_manager:
+                with conn.cursor() as cursor:
+                    cursor.execute(sql, params)
+            else:
+                cursor = conn.cursor()
+                try:
+                    cursor.execute(sql, params)
+                finally:
+                    cursor.close()
 
     def _namespace_upsert(
         self,
@@ -4604,15 +4707,21 @@ class BaseClient(BaseConnection, AdminAPI):
         ltable_id = 1
 
         existing_ids = set()
-        for record_id in ids:
-            id_escaped = escape_string(record_id)
-            user_where = f"WHERE JSON_EXTRACT(data_content, '$.id') = '{id_escaped}'"
-            where_clause, _ = self._append_namespace_filter(user_where, [], ns_id, ltable_id)
-            rows = self._execute(
-                f"SELECT 1 FROM `{table_name}` {where_clause} LIMIT 1"
-            )
-            if rows:
-                existing_ids.add(record_id)
+        id_expr = "JSON_EXTRACT(data_content, '$.id')"
+        id_placeholders = ", ".join(["%s"] * len(ids))
+        check_sql = (
+            f"SELECT {id_expr} AS rid FROM `{table_name}` "
+            f"WHERE namespace_id = {ns_id} AND ltable_id = {ltable_id} "
+            f"AND {id_expr} IN ({id_placeholders})"
+        )
+        conn = self._ensure_connection()
+        use_ctx = self._use_context_manager_for_cursor()
+        rows = self._execute_query_with_cursor(conn, check_sql, list(ids), use_ctx)
+        for row in rows:
+            rid_raw = row.get("rid") if isinstance(row, dict) else row[0]
+            rid = json.loads(rid_raw) if isinstance(rid_raw, str) else rid_raw
+            if rid is not None:
+                existing_ids.add(str(rid))
 
         add_indices = []
         update_indices = []
@@ -4670,11 +4779,9 @@ class BaseClient(BaseConnection, AdminAPI):
             if isinstance(ids, str):
                 ids = [ids]
             _validate_record_ids(ids)
-            id_conditions = []
-            for rid in ids:
-                id_escaped = escape_string(rid)
-                id_conditions.append(f"JSON_EXTRACT(data_content, '$.id') = '{id_escaped}'")
-            conditions.append(f"({' OR '.join(id_conditions)})")
+            id_placeholders = " OR ".join(["JSON_EXTRACT(data_content, '$.id') = %s"] * len(ids))
+            conditions.append(f"({id_placeholders})")
+            params.extend(ids)
 
         if where is not None:
             rewritten = self._rewrite_where_for_ns(where)
