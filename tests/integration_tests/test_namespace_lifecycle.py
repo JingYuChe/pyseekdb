@@ -13,20 +13,6 @@ from pyseekdb.client.configuration import VectorIndexConfig
 from pyseekdb.client.schema import Schema
 
 
-# delete_namespace currently calls into the OceanBase PL package
-# `DBMS_LOGIC_TABLE.DROP_NAMESPACE`, which is missing on fresh deployments.
-# Catch the resulting (1049 "Unknown database 'DBMS_LOGIC_TABLE'") so xfail can
-# match it precisely; once the package is installed, this test should XPASS and
-# we can drop the marker.
-try:
-    from pymysql.err import OperationalError as _PyMysqlOperationalError
-except Exception:  # pragma: no cover
-    _PyMysqlOperationalError = Exception
-_DELETE_NS_XFAIL_RAISES: tuple[type[BaseException], ...] = (
-    _PyMysqlOperationalError,
-    Exception,
-)
-
 
 class TestNamespaceLifecycle:
 
@@ -105,15 +91,6 @@ class TestNamespaceLifecycle:
         finally:
             db_client.delete_collection(name=collection.name)
 
-    @pytest.mark.xfail(
-        strict=False,
-        raises=_DELETE_NS_XFAIL_RAISES,
-        reason=(
-            "delete_namespace requires the OceanBase PL package "
-            "DBMS_LOGIC_TABLE.DROP_NAMESPACE, which is not installed on fresh "
-            "deployments. Test will XPASS once the package is available."
-        ),
-    )
     def test_delete_namespace(self, db_client):
         collection = self._create_ns_collection(db_client)
         try:

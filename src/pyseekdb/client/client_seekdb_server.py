@@ -208,7 +208,7 @@ class RemoteServerClient(BaseClient):
         namespace_name: str,
         **kwargs,
     ) -> None:
-        sql = f"CALL DBMS_LOGIC_TABLE.PREWARM({collection_id}, {namespace_id})"
+        sql = f"CALL DBMS_LOGIC_TABLE.PREWARM('{collection_id}', {namespace_id})"
         self._execute(sql)
 
     def __repr__(self):

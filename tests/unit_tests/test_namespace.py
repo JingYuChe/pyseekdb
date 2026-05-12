@@ -956,8 +956,6 @@ class TestDeleteNamespaceUsesKernel:
             None,  # _delete_ns_namespace_meta -> SET @namespace_id
             None,  # _delete_ns_namespace_meta -> SET @ltable_id
             None,  # CALL DBMS_LOGIC_TABLE.DROP_NAMESPACE
-            None,  # DELETE FROM sdk_ns_ltables
-            None,  # DELETE FROM sdk_ns_namespaces
         ])
         c._delete_ns_namespace_meta("abc123", "ns1")
         calls = [str(call) for call in c._execute.call_args_list]

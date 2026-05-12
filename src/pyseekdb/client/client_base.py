@@ -1383,14 +1383,6 @@ class BaseClient(BaseConnection, AdminAPI):
         self._execute(
             f"CALL DBMS_LOGIC_TABLE.DROP_NAMESPACE('{collection_id_escaped}', {ns_id})"
         )
-        self._execute(
-            f"DELETE FROM `{NamespaceCollectionNames.sdk_ns_ltables_table()}` "
-            f"WHERE collection_id = '{collection_id_escaped}' AND namespace_id = {ns_id}"
-        )
-        self._execute(
-            f"DELETE FROM `{NamespaceCollectionNames.sdk_ns_namespaces_table()}` "
-            f"WHERE namespace_id = {ns_id}"
-        )
 
     def _list_ns_namespaces(self, collection_id: str) -> list[dict]:
         collection_id_escaped = escape_string(collection_id)
