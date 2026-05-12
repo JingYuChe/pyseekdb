@@ -593,6 +593,19 @@ class Collection:
             **kwargs,
         )
 
+    def refresh_index(self) -> None:
+        """
+        Flush async vector index build tasks.
+
+        This executes ``CALL dbms_index_manager.refresh();`` and returns only
+        after the database completes the refresh procedure.
+
+        Note:
+            This method is only available for seekdb version 1.3.0.0 or higher.
+            In 1.2.0.0 and earlier, this method is a no-op.
+        """
+        self._client.refresh_index()
+
     # ==================== Collection Info ====================
 
     def count(self) -> int:
