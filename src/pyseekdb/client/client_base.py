@@ -1107,8 +1107,23 @@ class BaseClient(BaseConnection, AdminAPI):
             UNIQUE KEY uk_sdk_lt_coll_ns_name (collection_id, namespace_id, ltable_name),
             KEY idx_sdk_lt_by_ns (collection_id, namespace_id)
         ) COMMENT='LTable catalog';"""
+        namespaces_stats_sql = f"""CREATE TABLE IF NOT EXISTS `{NamespaceCollectionNames.sdk_namespaces_stats_table()}` (
+            collection_id CHAR(32) NOT NULL COMMENT 'collection id',
+            namespace_id BIGINT UNSIGNED NOT NULL COMMENT 'namespace internal id',
+            ltable_id BIGINT UNSIGNED NOT NULL COMMENT 'logic table internal id, 0 means namespace summary',
+            estimated_rows BIGINT NOT NULL DEFAULT 0 COMMENT 'estimated row count',
+            average_row_size BIGINT NOT NULL DEFAULT 0 COMMENT 'average row size in bytes',
+            row_limit BIGINT NOT NULL DEFAULT -1 COMMENT 'row count limit, -1 means unlimited',
+            size_limit BIGINT NOT NULL DEFAULT -1 COMMENT 'storage size limit in bytes, -1 means unlimited',
+            last_estimate_time TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT 'last estimate time',
+            included_index BOOL NOT NULL DEFAULT FALSE COMMENT 'whether stats include index data',
+            PRIMARY KEY (namespace_id, ltable_id, included_index),
+            KEY idx_sdk_ns_stat_by_collection (collection_id)
+        ) COMMENT='Logic table row count and storage size statistics' DEFAULT CHARSET=utf8mb4
+        PARTITION BY KEY(namespace_id) PARTITIONS 1000;"""
         self._execute(ns_namespaces_sql)
         self._execute(ns_ltables_sql)
+        self._execute(namespaces_stats_sql)
 
     def _create_ns_collection_meta(self, collection_name: str, settings: dict) -> dict:
         self._create_sdk_collections_if_not_exists()
@@ -1183,6 +1198,11 @@ class BaseClient(BaseConnection, AdminAPI):
         with contextlib.suppress(Exception):
             self._execute(
                 f"DELETE FROM `{NamespaceCollectionNames.sdk_ns_namespaces_table()}` "
+                f"WHERE collection_id = '{collection_id_escaped}'"
+            )
+        with contextlib.suppress(Exception):
+            self._execute(
+                f"DELETE FROM `{NamespaceCollectionNames.sdk_namespaces_stats_table()}` "
                 f"WHERE collection_id = '{collection_id_escaped}'"
             )
         self._cleanup_namespace_physical_tables(collection_id)

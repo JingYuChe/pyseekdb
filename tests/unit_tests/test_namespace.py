@@ -899,6 +899,12 @@ class TestPhysicalTableNames:
         from pyseekdb.client.meta_info import NamespaceCollectionNames
         assert NamespaceCollectionNames.tablegroup_name("my_coll") == "my_coll_tg"
 
+    def test_namespace_catalog_table_names(self):
+        from pyseekdb.client.meta_info import NamespaceCollectionNames
+        assert NamespaceCollectionNames.sdk_ns_namespaces_table() == "sdk_ns_namespaces"
+        assert NamespaceCollectionNames.sdk_ns_ltables_table() == "sdk_ns_ltables"
+        assert NamespaceCollectionNames.sdk_namespaces_stats_table() == "sdk_namespaces_stats"
+
     def test_is_ns_data_table_true(self):
         from pyseekdb.client.meta_info import NamespaceCollectionNames
         assert NamespaceCollectionNames.is_ns_data_table("my_coll_logic_data_table") is True
@@ -906,6 +912,54 @@ class TestPhysicalTableNames:
     def test_is_ns_data_table_false(self):
         from pyseekdb.client.meta_info import NamespaceCollectionNames
         assert NamespaceCollectionNames.is_ns_data_table("my_coll_hot_table") is False
+
+
+# ==================== Namespace Catalog Tests ====================
+
+
+class TestNamespaceCatalogs:
+
+    def test_ensure_namespace_catalogs_creates_all_catalog_tables(self):
+        c = FakeClient()
+        c._ensure_namespace_catalogs()
+
+        sql = "\n".join(c.executed_sqls)
+        assert "CREATE TABLE IF NOT EXISTS `sdk_ns_namespaces`" in sql
+        assert "PRIMARY KEY (namespace_id)" in sql
+        assert "UNIQUE KEY uk_sdk_ns_coll_name (collection_id, namespace_name)" in sql
+
+        assert "CREATE TABLE IF NOT EXISTS `sdk_ns_ltables`" in sql
+        assert "PRIMARY KEY (ltable_id)" in sql
+        assert "UNIQUE KEY uk_sdk_lt_coll_ns_name (collection_id, namespace_id, ltable_name)" in sql
+
+        assert "CREATE TABLE IF NOT EXISTS `sdk_namespaces_stats`" in sql
+        assert "collection_id CHAR(32) NOT NULL" in sql
+        assert "namespace_id BIGINT UNSIGNED NOT NULL" in sql
+        assert "ltable_id BIGINT UNSIGNED NOT NULL" in sql
+        assert "included_index BOOL" in sql
+        assert "PRIMARY KEY (namespace_id, ltable_id, included_index)" in sql
+        assert "PARTITION BY KEY(namespace_id) PARTITIONS 1000" in sql
+
+    def test_ensure_namespace_catalogs_creates_catalog_tables_in_order(self):
+        c = FakeClient()
+        c._ensure_namespace_catalogs()
+
+        assert len(c.executed_sqls) == 3
+        assert "`sdk_ns_namespaces`" in c.executed_sqls[0]
+        assert "`sdk_ns_ltables`" in c.executed_sqls[1]
+        assert "`sdk_namespaces_stats`" in c.executed_sqls[2]
+
+    def test_delete_ns_collection_meta_cleans_namespaces_stats_table(self):
+        c = FakeClient()
+        c._get_ns_collection_meta = MagicMock(return_value={"collection_id": "abc123"})
+        c._cleanup_namespace_physical_tables = MagicMock()
+        c._execute = MagicMock()
+
+        c._delete_ns_collection_meta("coll")
+
+        calls = [str(call) for call in c._execute.call_args_list]
+        assert any("DELETE FROM `sdk_namespaces_stats`" in s for s in calls)
+        assert any("WHERE collection_id = 'abc123'" in s for s in calls)
 
 
 # ==================== UseNamespace Validation Tests ====================
