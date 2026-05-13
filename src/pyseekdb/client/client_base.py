@@ -1207,7 +1207,7 @@ class BaseClient(BaseConnection, AdminAPI):
         try:
             self._execute(f"CREATE TABLEGROUP `{tg_name}` SHARDING='ADAPTIVE'")
 
-            data_sql_with_search = f"""CREATE TABLE `{data_table}` (
+            data_sql = f"""CREATE TABLE `{data_table}` (
                 namespace_id BIGINT UNSIGNED NOT NULL,
                 ltable_id BIGINT UNSIGNED NOT NULL,
                 document LONGTEXT,
@@ -1216,26 +1216,11 @@ class BaseClient(BaseConnection, AdminAPI):
                 created_by VARCHAR(64) DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FULLTEXT INDEX idx_fts(document) {fulltext_clause},
-                SEARCH INDEX idx_json(data_content) WITH PARSER json
+                SEARCH INDEX idx_json(data_content)
             ) TABLEGROUP=`{tg_name}` COMMENT='逻辑表主数据' DEFAULT CHARSET=utf8mb4 ORGANIZATION HEAP IS_LOGIC_TABLE = TRUE
             {partition_clause}"""
 
-            data_sql_without_search = f"""CREATE TABLE `{data_table}` (
-                namespace_id BIGINT UNSIGNED NOT NULL,
-                ltable_id BIGINT UNSIGNED NOT NULL,
-                document LONGTEXT,
-                embedding VECTOR({dimension}),
-                data_content JSON NOT NULL,
-                created_by VARCHAR(64) DEFAULT '',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FULLTEXT INDEX idx_fts(document) {fulltext_clause}
-            ) TABLEGROUP=`{tg_name}` COMMENT='逻辑表主数据' DEFAULT CHARSET=utf8mb4 ORGANIZATION HEAP IS_LOGIC_TABLE = TRUE
-            {partition_clause}"""
-
-            try:
-                self._execute(data_sql_with_search)
-            except Exception:
-                self._execute(data_sql_without_search)
+            self._execute(data_sql)
 
             ivf_index_sql = f"CREATE VECTOR INDEX idx_vec ON `{data_table}` (embedding) {vector_index_sql}"
             self._execute(ivf_index_sql)
