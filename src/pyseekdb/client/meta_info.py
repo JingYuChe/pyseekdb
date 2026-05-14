@@ -73,6 +73,10 @@ class NamespaceCollectionNames:
         return "sdk_ns_ltables"
 
     @staticmethod
+    def sdk_namespaces_stats_table() -> str:
+        return "sdk_namespaces_stats"
+
+    @staticmethod
     def data_table_name(collection_id: str) -> str:
         return f"{collection_id}{NamespaceCollectionNames._LOGIC_DATA_SUFFIX}"
 
