@@ -102,8 +102,10 @@ from .client import (
     VectorIndexConfig,
     Version,
     get_default_embedding_function,
+    get_namespace_partition_count,
     register_embedding_function,
     register_sparse_embedding_function,
+    set_namespace_partition_count,
 )
 from .client.collection import Collection
 from .client.namespace import Namespace
@@ -149,6 +151,8 @@ __all__ = [
     "VectorIndexConfig",
     "Version",
     "get_default_embedding_function",
+    "get_namespace_partition_count",
     "register_embedding_function",
     "register_sparse_embedding_function",
+    "set_namespace_partition_count",
 ]

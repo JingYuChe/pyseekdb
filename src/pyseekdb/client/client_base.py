@@ -127,6 +127,17 @@ from .validators import _MAX_NAMESPACE_BATCH_SIZE, _validate_namespace_name, _va
 _NS_PARTITION_COUNT = 1000
 
 
+def set_namespace_partition_count(n: int) -> None:
+    global _NS_PARTITION_COUNT
+    if n < 1:
+        raise ValueError("namespace partition count must be >= 1")
+    _NS_PARTITION_COUNT = n
+
+
+def get_namespace_partition_count() -> int:
+    return _NS_PARTITION_COUNT
+
+
 def _build_default_ltable_schema() -> dict:
     return {
         "col_info": [

@@ -15,8 +15,6 @@ repo_root = Path(__file__).resolve().parents[2]
 src_root = repo_root / "src"
 sys.path.insert(0, str(src_root))
 
-from unittest.mock import patch
-
 import pyseekdb  # noqa: E402
 
 # ==================== Environment Variable Configuration ====================
@@ -275,5 +273,8 @@ def oceanbase_admin_client():
 @pytest.fixture(autouse=True)
 def _reduce_namespace_partitions():
     """Use a small partition count in integration tests to speed up DDL."""
-    with patch("pyseekdb.client.client_base._NS_PARTITION_COUNT", 8):
-        yield
+    from pyseekdb import get_namespace_partition_count, set_namespace_partition_count
+    original = get_namespace_partition_count()
+    set_namespace_partition_count(8)
+    yield
+    set_namespace_partition_count(original)
