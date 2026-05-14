@@ -202,5 +202,29 @@ class TestNamespaceLifecycle:
             client.delete_collection(name=name)
 
 
+    def test_custom_namespace_partition_count(self, oceanbase_client):
+        """Verify set_namespace_partition_count controls the PARTITIONS clause."""
+        from pyseekdb import get_namespace_partition_count, set_namespace_partition_count
+        from pyseekdb.client.meta_info import NamespaceCollectionNames
+
+        original = get_namespace_partition_count()
+        try:
+            set_namespace_partition_count(4)
+            collection = self._create_ns_collection(oceanbase_client, suffix="_pc")
+            try:
+                data_table = NamespaceCollectionNames.data_table_name(collection.id)
+                rows = oceanbase_client._server._execute(f"SHOW CREATE TABLE `{data_table}`")
+                create_sql = rows[0].get("Create Table", "") if rows else ""
+                import re
+                partitions = re.findall(r"partition `p\d+`", create_sql)
+                assert len(partitions) == 4, (
+                    f"Expected 4 partitions, found {len(partitions)}: {create_sql[-300:]}"
+                )
+            finally:
+                oceanbase_client.delete_collection(name=collection.name)
+        finally:
+            set_namespace_partition_count(original)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

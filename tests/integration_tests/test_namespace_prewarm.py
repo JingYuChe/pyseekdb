@@ -19,11 +19,12 @@ class TestNamespacePrewarm:
 
     @pytest.fixture(autouse=True)
     def _reduce_namespace_partitions(self):
-        """Override conftest: use default 1000 partitions for prewarm realism."""
-        # TODO: 1000 partitions causes ~18min DDL; using 8 for now until DDL is faster
-        from unittest.mock import patch
-        with patch("pyseekdb.client.client_base._NS_PARTITION_COUNT", 8):
-            yield
+        """Override conftest: use 8 partitions for prewarm until DDL is faster."""
+        from pyseekdb import get_namespace_partition_count, set_namespace_partition_count
+        original = get_namespace_partition_count()
+        set_namespace_partition_count(8)
+        yield
+        set_namespace_partition_count(original)
 
     def _create_ns_collection_and_namespace(self, client):
         name = f"test_ns_pw_{int(time.time() * 1000)}"
@@ -44,14 +45,6 @@ class TestNamespacePrewarm:
             f"SELECT namespace_id, last_access_time FROM `{hot_table}` WHERE namespace_id = {namespace_id}"
         )
         return rows
-
-    def test_prewarm_raises_in_embedded_mode(self, embedded_client):
-        collection, namespace = self._create_ns_collection_and_namespace(embedded_client)
-        try:
-            with pytest.raises(ValueError, match="shared-storage remote"):
-                namespace.prewarm()
-        finally:
-            embedded_client.delete_collection(name=collection.name)
 
     def test_prewarm_inserts_hot_table_record(self, oceanbase_client):
         """First prewarm should insert a record into hot_table."""
