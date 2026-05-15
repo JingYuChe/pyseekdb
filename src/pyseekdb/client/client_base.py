@@ -1269,7 +1269,7 @@ class BaseClient(BaseConnection, AdminAPI):
 
             self._execute(f"""CREATE TABLE `{kv_table}` (
                 namespace_id BIGINT UNSIGNED NOT NULL,
-                kv_key VARCHAR(1024) NOT NULL,
+                kv_key VARBINARY(1024) NOT NULL,
                 kv_value LONGBLOB NOT NULL,
                 PRIMARY KEY(namespace_id, kv_key)
             ) TABLEGROUP=`{tg_name}` COMMENT='索引与映射KV表' DEFAULT CHARSET=utf8mb4
