@@ -4043,7 +4043,10 @@ class BaseClient(BaseConnection, AdminAPI):
     def _build_search_parm_field_name(self, key: str) -> str:
         """
         Build field name used in search_parm filters.
-        Supports special "#id" to refer to the primary key column directly.
+
+        Uses ``JSON_EXTRACT``-wrapped keys for ``DBMS_HYBRID_SEARCH.GET_SQL`` (collection path).
+        Namespace ``hybrid_search(TABLE ...)`` rewrites these to ``data_content.metadata.*`` DSL
+        keys in ``_adapt_search_parm_for_ns``.
         """
         if key == "#id" or key == CollectionFieldNames.ID:
             return CollectionFieldNames.ID
@@ -5149,12 +5152,13 @@ class BaseClient(BaseConnection, AdminAPI):
                 for k, v in obj.items():
                     new_key = k
                     if k == "_id":
-                        new_key = "(JSON_EXTRACT(data_content, '$.id'))"
-                    elif isinstance(k, str) and "JSON_EXTRACT(metadata, '$." in k:
-                        new_key = k.replace(
-                            "JSON_EXTRACT(metadata, '$.",
-                            "JSON_EXTRACT(data_content, '$.metadata.",
-                        )
+                        new_key = "data_content.id"
+                    elif isinstance(k, str):
+                        prefix = "(JSON_EXTRACT(metadata, '$."
+                        suffix = "'))"
+                        if k.startswith(prefix) and k.endswith(suffix) and len(k) > len(prefix) + len(suffix):
+                            inner = k[len(prefix) : -len(suffix)]
+                            new_key = f"data_content.metadata.{inner}"
                     new_dict[new_key] = _rewrite_field_refs(v)
                 return new_dict
             elif isinstance(obj, list):

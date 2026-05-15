@@ -285,6 +285,72 @@ class TestNamespaceQuery:
         finally:
             db_client.delete_collection(name=collection.name)
 
+    def test_hybrid_search_with_data_content_filter(self, db_client):
+        """
+        Namespace hybrid_search applies metadata / id filters on JSON under ``data_content``
+        (SDK maps ``metadata.*`` / ``_id`` to ``data_content.metadata.*`` / ``data_content.id``
+        for OceanBase hybrid_search field syntax).
+        """
+        collection = self._setup(db_client)
+        ns = collection.create_namespace("qns_hs_dc")
+        try:
+            self._insert_data(ns)
+            time.sleep(1)
+
+            # Full-text + filter on data_content.metadata.category
+            result_ft = ns.hybrid_search(
+                query={
+                    "where_document": {"$contains": "Python"},
+                    "where": {"category": "Programming"},
+                    "n_results": 10,
+                },
+                n_results=10,
+                include=["documents", "metadatas"],
+            )
+            ids_ft = result_ft["ids"][0] if result_ft["ids"] else []
+            assert ids_ft == ["q2"], ids_ft
+            if result_ft.get("metadatas") and result_ft["metadatas"][0]:
+                for meta in result_ft["metadatas"][0]:
+                    if meta:
+                        assert meta["category"] == "Programming"
+        finally:
+            db_client.delete_collection(name=collection.name)
+
+    def test_hybrid_search_with_data_content_filter_knn_branch(self, db_client, request):
+        """
+        KNN + metadata / id filters on ``data_content`` (same field mapping as full-text branch).
+
+        OceanBase ``hybrid_search`` KNN currently requires an HNSW vector index; namespace
+        logical tables are created with IVF only, so this branch is skipped for ``[oceanbase]``.
+        """
+        if "oceanbase" in request.node.nodeid:
+            pytest.skip("OceanBase hybrid_search KNN requires HNSW; namespace collections use IVF only.")
+        collection = self._setup(db_client)
+        ns = collection.create_namespace("qns_hs_dc_knn")
+        try:
+            self._insert_data(ns)
+            time.sleep(1)
+            result_knn = ns.hybrid_search(
+                knn={
+                    "query_embeddings": [1.0, 0.0, 0.0],
+                    "where": {
+                        "$and": [
+                            {"score": {"$gte": 90}},
+                            {"#id": "q1"},
+                        ]
+                    },
+                    "n_results": 10,
+                },
+                n_results=10,
+                include=["metadatas"],
+            )
+            ids_knn = result_knn["ids"][0] if result_knn["ids"] else []
+            assert ids_knn == ["q1"], ids_knn
+            if result_knn.get("metadatas") and result_knn["metadatas"][0]:
+                assert result_knn["metadatas"][0][0]["score"] >= 90
+        finally:
+            db_client.delete_collection(name=collection.name)
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])
