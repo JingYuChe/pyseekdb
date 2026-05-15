@@ -5249,31 +5249,25 @@ class BaseClient(BaseConnection, AdminAPI):
         )
         search_parm = self._adapt_search_parm_for_ns(search_parm, ns_id)
 
+        search_parm.pop("_source", None)
+
         search_parm_json = json.dumps(search_parm, ensure_ascii=False)
         use_context_manager = self._use_context_manager_for_cursor()
 
-        escaped_params = escape_string(search_parm_json)
-        set_sql = f"SET @search_parm = '{escaped_params}'"
-        self._execute_query_with_cursor(conn, set_sql, [], use_context_manager)
+        escaped_params = search_parm_json.replace("'", "''")
 
-        get_sql_query = f"SELECT DBMS_HYBRID_SEARCH.GET_SQL('{table_name}', @search_parm) as query_sql FROM dual"
-        rows = self._execute_query_with_cursor(conn, get_sql_query, [], use_context_manager)
+        hint_sql = _query_hint_to_sql(query_hint, table_name=table_name) or ""
+        hybrid_sql = (
+            f"SELECT {hint_sql + ' ' if hint_sql else ''}* "
+            f"FROM hybrid_search(TABLE `{table_name}`, '{escaped_params}')"
+        )
 
-        if not rows or not rows[0].get("query_sql"):
+        result_rows = self._execute_query_with_cursor(conn, hybrid_sql, [], use_context_manager)
+        if not result_rows:
             return {
                 "ids": [[]], "distances": [[]], "metadatas": [[]],
                 "documents": [[]], "embeddings": [[]],
             }
-
-        query_sql = rows[0]["query_sql"]
-        if isinstance(query_sql, str):
-            query_sql = query_sql.strip().strip("'\"")
-
-        hint_sql = _query_hint_to_sql(query_hint, table_name=table_name)
-        if hint_sql and query_sql.upper().startswith("SELECT"):
-            query_sql = f"SELECT {hint_sql} {query_sql[len('SELECT'):]}"
-
-        result_rows = self._execute_query_with_cursor(conn, query_sql, [], use_context_manager)
         return self._transform_ns_hybrid_result(result_rows, include)
 
     def _transform_ns_hybrid_result(
