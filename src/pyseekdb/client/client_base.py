@@ -1131,7 +1131,7 @@ class BaseClient(BaseConnection, AdminAPI):
             PRIMARY KEY (namespace_id, ltable_id, included_index),
             KEY idx_sdk_ns_stat_by_collection (collection_id)
         ) COMMENT='Logic table row count and storage size statistics' DEFAULT CHARSET=utf8mb4
-        PARTITION BY KEY(namespace_id) PARTITIONS 1000;"""
+        PARTITION BY KEY(namespace_id) PARTITIONS {_NS_PARTITION_COUNT};"""
         self._execute(ns_namespaces_sql)
         self._execute(ns_ltables_sql)
         self._execute(namespaces_stats_sql)
@@ -4484,6 +4484,9 @@ class BaseClient(BaseConnection, AdminAPI):
         embedding_function: EmbeddingFunction[EmbeddingDocuments] | None = None,
         **kwargs,
     ) -> None:
+        self._set_session_ns_context(
+            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=1,
+        )
         if isinstance(ids, str):
             ids = [ids]
         _validate_record_ids(ids)
@@ -4564,6 +4567,9 @@ class BaseClient(BaseConnection, AdminAPI):
         embedding_function: EmbeddingFunction[EmbeddingDocuments] | None = None,
         **kwargs,
     ) -> None:
+        self._set_session_ns_context(
+            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=1,
+        )
         if isinstance(ids, str):
             ids = [ids]
         _validate_record_ids(ids)
@@ -4694,6 +4700,9 @@ class BaseClient(BaseConnection, AdminAPI):
         embedding_function: EmbeddingFunction[EmbeddingDocuments] | None = None,
         **kwargs,
     ) -> None:
+        self._set_session_ns_context(
+            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=1,
+        )
         if isinstance(ids, str):
             ids = [ids]
         _validate_record_ids(ids)
@@ -4777,6 +4786,9 @@ class BaseClient(BaseConnection, AdminAPI):
         where_document: dict[str, Any] | None = None,
         **kwargs,
     ) -> None:
+        self._set_session_ns_context(
+            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=1,
+        )
         if ids is None and where is None and where_document is None:
             raise ValueError("At least one of ids, where, or where_document must be provided")
 
@@ -4839,6 +4851,9 @@ class BaseClient(BaseConnection, AdminAPI):
         include: list[str] | None = None,
         **kwargs,
     ) -> dict[str, Any]:
+        self._set_session_ns_context(
+            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=1,
+        )
         embedding_function = kwargs.get("embedding_function")
         distance = kwargs.get("distance", DEFAULT_DISTANCE_METRIC)
 
@@ -4994,6 +5009,9 @@ class BaseClient(BaseConnection, AdminAPI):
         include: list[str] | None = None,
         **kwargs,
     ) -> dict[str, Any]:
+        self._set_session_ns_context(
+            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=1,
+        )
         include_fields = self._normalize_include_fields(include)
         table_name = NamespaceCollectionNames.data_table_name(collection_id)
         ns_id = int(namespace_id)
@@ -5105,6 +5123,9 @@ class BaseClient(BaseConnection, AdminAPI):
         namespace_name: str,
         **kwargs,
     ) -> int:
+        self._set_session_ns_context(
+            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=1,
+        )
         table_name = NamespaceCollectionNames.data_table_name(collection_id)
         ns_id = int(namespace_id)
         where_clause, _ = self._append_namespace_filter("", [], ns_id)
@@ -5241,6 +5262,9 @@ class BaseClient(BaseConnection, AdminAPI):
         query_hint: QueryHint | None = None,
         **kwargs,
     ) -> dict[str, Any]:
+        self._set_session_ns_context(
+            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=1,
+        )
         conn = self._ensure_connection()
         table_name = NamespaceCollectionNames.data_table_name(collection_id)
         ns_id = int(namespace_id)
