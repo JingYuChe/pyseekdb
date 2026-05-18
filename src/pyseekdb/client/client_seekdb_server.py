@@ -208,6 +208,9 @@ class RemoteServerClient(BaseClient):
         namespace_name: str,
         **kwargs,
     ) -> None:
+        self._set_session_ns_context(
+            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=1,
+        )
         sql = f"CALL DBMS_LOGIC_TABLE.PREWARM('{collection_id}', {namespace_id})"
         self._execute(sql)
 
