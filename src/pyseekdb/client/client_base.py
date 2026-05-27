@@ -1302,6 +1302,50 @@ class BaseClient(BaseConnection, AdminAPI):
         with contextlib.suppress(Exception):
             self._execute(f"DROP TABLEGROUP IF EXISTS `{NamespaceCollectionNames.tablegroup_name(collection_id)}`")
 
+    def _resolve_namespace_ltable_id(
+        self, collection_id: str, namespace_id: int
+    ) -> int:
+        """Resolve the default ltable_id for (collection_id, namespace_id) from
+        sdk_ns_ltables. Cached per (collection_id, namespace_id) on the client
+        instance to avoid the extra round-trip on every DML/DQL call.
+
+        The cache is also seeded by `_create_ns_namespace_meta` and
+        `_get_ns_namespace_meta` once they have read/created the row.
+        """
+        key = (str(collection_id), int(namespace_id))
+        cache = getattr(self, "_ns_ltable_id_cache", None)
+        if cache is None:
+            cache = {}
+            self._ns_ltable_id_cache = cache
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+        coll_id_escaped = escape_string(str(collection_id))
+        rows = self._execute(
+            f"SELECT ltable_id FROM `{NamespaceCollectionNames.sdk_ns_ltables_table()}` "
+            f"WHERE collection_id = '{coll_id_escaped}' AND namespace_id = {int(namespace_id)} "
+            f"AND ltable_name = 'default' LIMIT 1"
+        )
+        if not rows:
+            raise ValueError(
+                f"No default ltable found for collection_id={collection_id}, "
+                f"namespace_id={namespace_id} in sdk_ns_ltables"
+            )
+        row = rows[0]
+        lt_id = int(row[0] if isinstance(row, (list, tuple)) else row["ltable_id"])
+        cache[key] = lt_id
+        return lt_id
+
+    def _cache_namespace_ltable_id(
+        self, collection_id: str, namespace_id: int, ltable_id: int
+    ) -> None:
+        key = (str(collection_id), int(namespace_id))
+        cache = getattr(self, "_ns_ltable_id_cache", None)
+        if cache is None:
+            cache = {}
+            self._ns_ltable_id_cache = cache
+        cache[key] = int(ltable_id)
+
     def _set_session_ns_context(
         self,
         collection_id: str | None = None,
@@ -1336,6 +1380,7 @@ class BaseClient(BaseConnection, AdminAPI):
             f"WHERE collection_id = '{collection_id_escaped}' AND namespace_id = {ns_id} AND ltable_name = 'default'"
         )
         lt_id = int(lt_rows[0][0] if isinstance(lt_rows[0], (list, tuple)) else lt_rows[0]["ltable_id"])
+        self._cache_namespace_ltable_id(collection_id, ns_id, lt_id)
         schema_table = NamespaceCollectionNames.logic_schema_table_name(collection_id)
         schema_content = json.dumps(_build_default_ltable_schema())
         with contextlib.suppress(Exception):
@@ -1374,6 +1419,8 @@ class BaseClient(BaseConnection, AdminAPI):
             ns_name = row["namespace_name"]
             lt_raw = row.get("ltable_id")
         lt_id = int(lt_raw) if lt_raw is not None else None
+        if lt_id is not None:
+            self._cache_namespace_ltable_id(collection_id, int(ns_id), lt_id)
         self._set_session_ns_context(namespace_id=int(ns_id), ltable_id=lt_id)
         meta: dict = {"namespace_id": ns_id, "namespace_name": ns_name}
         if lt_id is not None:
@@ -4461,7 +4508,7 @@ class BaseClient(BaseConnection, AdminAPI):
         where_clause: str,
         params: list[Any],
         namespace_id: int,
-        ltable_id: int = 1,
+        ltable_id: int,
     ) -> tuple[str, list[Any]]:
         ns_cond = f"namespace_id = {namespace_id} AND ltable_id = {ltable_id}"
         if not where_clause:
@@ -4484,8 +4531,9 @@ class BaseClient(BaseConnection, AdminAPI):
         embedding_function: EmbeddingFunction[EmbeddingDocuments] | None = None,
         **kwargs,
     ) -> None:
+        ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._set_session_ns_context(
-            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=1,
+            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
         )
         if isinstance(ids, str):
             ids = [ids]
@@ -4528,7 +4576,6 @@ class BaseClient(BaseConnection, AdminAPI):
 
         table_name = NamespaceCollectionNames.data_table_name(collection_id)
         ns_id = int(namespace_id)
-        ltable_id = 1
 
         values_list = []
         for i in range(num_items):
@@ -4567,8 +4614,9 @@ class BaseClient(BaseConnection, AdminAPI):
         embedding_function: EmbeddingFunction[EmbeddingDocuments] | None = None,
         **kwargs,
     ) -> None:
+        ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._set_session_ns_context(
-            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=1,
+            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
         )
         if isinstance(ids, str):
             ids = [ids]
@@ -4594,7 +4642,6 @@ class BaseClient(BaseConnection, AdminAPI):
 
         table_name = NamespaceCollectionNames.data_table_name(collection_id)
         ns_id = int(namespace_id)
-        ltable_id = 1
 
         id_expr = "JSON_EXTRACT(data_content, '$.id')"
         active_ids = []
@@ -4700,8 +4747,9 @@ class BaseClient(BaseConnection, AdminAPI):
         embedding_function: EmbeddingFunction[EmbeddingDocuments] | None = None,
         **kwargs,
     ) -> None:
+        ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._set_session_ns_context(
-            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=1,
+            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
         )
         if isinstance(ids, str):
             ids = [ids]
@@ -4724,7 +4772,6 @@ class BaseClient(BaseConnection, AdminAPI):
 
         table_name = NamespaceCollectionNames.data_table_name(collection_id)
         ns_id = int(namespace_id)
-        ltable_id = 1
 
         existing_ids = set()
         id_expr = "JSON_EXTRACT(data_content, '$.id')"
@@ -4786,8 +4833,9 @@ class BaseClient(BaseConnection, AdminAPI):
         where_document: dict[str, Any] | None = None,
         **kwargs,
     ) -> None:
+        ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._set_session_ns_context(
-            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=1,
+            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
         )
         if ids is None and where is None and where_document is None:
             raise ValueError("At least one of ids, where, or where_document must be provided")
@@ -4820,7 +4868,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 params.extend(doc_params)
 
         user_where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        where_clause, params = self._append_namespace_filter(user_where, params, ns_id)
+        where_clause, params = self._append_namespace_filter(user_where, params, ns_id, ltable_id)
         sql = f"DELETE FROM `{table_name}` {where_clause}"
         if params:
             conn = self._ensure_connection()
@@ -4851,8 +4899,9 @@ class BaseClient(BaseConnection, AdminAPI):
         include: list[str] | None = None,
         **kwargs,
     ) -> dict[str, Any]:
+        ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._set_session_ns_context(
-            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=1,
+            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
         )
         embedding_function = kwargs.get("embedding_function")
         distance = kwargs.get("distance", DEFAULT_DISTANCE_METRIC)
@@ -4898,7 +4947,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 filter_params.extend(doc_params)
 
         user_where = f"WHERE {' AND '.join(user_conditions)}" if user_conditions else ""
-        where_clause, filter_params = self._append_namespace_filter(user_where, filter_params, ns_id)
+        where_clause, filter_params = self._append_namespace_filter(user_where, filter_params, ns_id, ltable_id)
 
         distance_function_map = {
             "l2": "l2_distance",
@@ -5009,8 +5058,9 @@ class BaseClient(BaseConnection, AdminAPI):
         include: list[str] | None = None,
         **kwargs,
     ) -> dict[str, Any]:
+        ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._set_session_ns_context(
-            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=1,
+            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
         )
         include_fields = self._normalize_include_fields(include)
         table_name = NamespaceCollectionNames.data_table_name(collection_id)
@@ -5050,7 +5100,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 params.extend(doc_params)
 
         user_where = f"WHERE {' AND '.join(user_conditions)}" if user_conditions else ""
-        where_str, params = self._append_namespace_filter(user_where, params, ns_id)
+        where_str, params = self._append_namespace_filter(user_where, params, ns_id, ltable_id)
         select_clause = ", ".join(select_parts)
         sql = f"SELECT {select_clause} FROM `{table_name}` {where_str}"
         if limit is not None:
@@ -5123,12 +5173,13 @@ class BaseClient(BaseConnection, AdminAPI):
         namespace_name: str,
         **kwargs,
     ) -> int:
+        ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._set_session_ns_context(
-            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=1,
+            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
         )
         table_name = NamespaceCollectionNames.data_table_name(collection_id)
         ns_id = int(namespace_id)
-        where_clause, _ = self._append_namespace_filter("", [], ns_id)
+        where_clause, _ = self._append_namespace_filter("", [], ns_id, ltable_id)
         sql = f"SELECT COUNT(*) AS cnt FROM `{table_name}` {where_clause}"
         conn = self._ensure_connection()
         use_context_manager = self._use_context_manager_for_cursor()
@@ -5161,10 +5212,10 @@ class BaseClient(BaseConnection, AdminAPI):
             include=["documents", "metadatas", "embeddings"],
         )
 
-    def _adapt_search_parm_for_ns(self, search_parm: dict[str, Any], ns_id: int) -> dict[str, Any]:
+    def _adapt_search_parm_for_ns(self, search_parm: dict[str, Any], ns_id: int, lt_id: int) -> dict[str, Any]:
         ns_filter = [
             {"term": {"namespace_id": ns_id}},
-            {"term": {"ltable_id": 1}},
+            {"term": {"ltable_id": int(lt_id)}},
         ]
 
         def _rewrite_field_refs(obj):
@@ -5262,8 +5313,9 @@ class BaseClient(BaseConnection, AdminAPI):
         query_hint: QueryHint | None = None,
         **kwargs,
     ) -> dict[str, Any]:
+        ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._set_session_ns_context(
-            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=1,
+            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
         )
         conn = self._ensure_connection()
         table_name = NamespaceCollectionNames.data_table_name(collection_id)
@@ -5275,7 +5327,7 @@ class BaseClient(BaseConnection, AdminAPI):
             dimension=kwargs.get("dimension"),
             **{k: v for k, v in kwargs.items() if k != "dimension"},
         )
-        search_parm = self._adapt_search_parm_for_ns(search_parm, ns_id)
+        search_parm = self._adapt_search_parm_for_ns(search_parm, ns_id, ltable_id)
 
         search_parm.pop("_source", None)
 
