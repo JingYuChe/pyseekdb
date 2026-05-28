@@ -4043,6 +4043,7 @@ class BaseClient(BaseConnection, AdminAPI):
                     "query_string": {
                         "fields": ["document"],
                         "query": " ".join(escaped_queries),
+                        "default_operator": "and",
                     }
                 })
 
