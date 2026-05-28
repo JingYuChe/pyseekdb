@@ -4061,7 +4061,8 @@ class BaseClient(BaseConnection, AdminAPI):
                 return _with_boost({
                     "query_string": {
                         "fields": ["document"],
-                        "query": " OR ".join(escaped_queries),
+                        "query": " ".join(escaped_queries),
+                        "default_operator": "or",
                     }
                 })
 
