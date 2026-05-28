@@ -397,6 +397,11 @@ class FakeClient(BaseClient):
         self.executed_sqls.append(sql)
         return None
 
+    # Bypass the sdk_ns_ltables lookup in unit tests: SQL-generation tests don't
+    # have a real database, so return a fixed ltable_id matching test assertions.
+    def _resolve_namespace_ltable_id(self, collection_id, namespace_id):
+        return 1
+
     def _execute_query_with_cursor(self, conn, sql, params, use_context_manager=True):
         resolved = sql
         for p in params:
