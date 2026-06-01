@@ -10,9 +10,11 @@ from pathlib import Path
 
 import pytest
 
-# Add project path (repo root + src)
-repo_root = Path(__file__).resolve().parents[2]
+# Add project path (repo root + src + this directory for local test helpers)
+integration_tests_root = Path(__file__).resolve().parent
+repo_root = integration_tests_root.parents[1]
 src_root = repo_root / "src"
+sys.path.insert(0, str(integration_tests_root))
 sys.path.insert(0, str(src_root))
 
 import pyseekdb  # noqa: E402

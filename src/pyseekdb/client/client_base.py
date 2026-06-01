@@ -1247,14 +1247,12 @@ class BaseClient(BaseConnection, AdminAPI):
                 created_by VARCHAR(64) DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FULLTEXT INDEX idx_fts(document) {fulltext_clause},
-                SEARCH INDEX idx_json(data_content)
+                SEARCH INDEX idx_json(data_content),
+                VECTOR INDEX idx_vec(embedding) {vector_index_sql}
             ) TABLEGROUP=`{tg_name}` COMMENT='逻辑表主数据' DEFAULT CHARSET=utf8mb4 ORGANIZATION HEAP IS_LOGIC_TABLE = TRUE
             {partition_clause}"""
 
             self._execute(data_sql)
-
-            ivf_index_sql = f"CREATE VECTOR INDEX idx_vec ON `{data_table}` (embedding) {vector_index_sql}"
-            self._execute(ivf_index_sql)
 
             if is_shared_storage:
                 hot_table = NamespaceCollectionNames.hot_table_name(collection_id)
@@ -4061,7 +4059,8 @@ class BaseClient(BaseConnection, AdminAPI):
                 return _with_boost({
                     "query_string": {
                         "fields": ["document"],
-                        "query": " OR ".join(escaped_queries),
+                        "query": " ".join(escaped_queries),
+                        "default_operator": "or",
                     }
                 })
 
@@ -4300,6 +4299,24 @@ class BaseClient(BaseConnection, AdminAPI):
 
         return source
 
+    def _hybrid_row_score(self, row: dict[str, Any]) -> float:
+        """Extract relevance score from a hybrid_search SQL row (OB uses ``__score``)."""
+        for key in (
+            "_distance",
+            "distance",
+            "_score",
+            "score",
+            "__score",
+            "DISTANCE",
+            "_DISTANCE",
+            "SCORE",
+            "__SCORE",
+        ):
+            val = row.get(key)
+            if val is not None:
+                return float(val)
+        return 0.0
+
     def _transform_sql_result(  # noqa: C901
         self, result_rows: list[dict[str, Any]], include: list[str] | None
     ) -> dict[str, Any]:
@@ -4344,18 +4361,7 @@ class BaseClient(BaseConnection, AdminAPI):
             row_id = self._convert_id_from_bytes(row_id)
             ids.append(row_id)
 
-            # Extract distance/score (may be in different column names)
-            distance = (
-                row.get("_distance")
-                or row.get("distance")
-                or row.get("_score")
-                or row.get("score")
-                or row.get("DISTANCE")
-                or row.get("_DISTANCE")
-                or row.get("SCORE")
-                or 0.0
-            )
-            distances.append(distance)
+            distances.append(self._hybrid_row_score(row))
 
             # Extract metadata
             if include is None or "metadatas" in include or "metadata" in include:
@@ -5342,7 +5348,7 @@ class BaseClient(BaseConnection, AdminAPI):
             f"SELECT {hint_sql + ' ' if hint_sql else ''}* "
             f"FROM hybrid_search(TABLE `{table_name}`, '{escaped_params}')"
         )
-
+        print(f"hybrid_sql: {hybrid_sql}")
         result_rows = self._execute_query_with_cursor(conn, hybrid_sql, [], use_context_manager)
         if not result_rows:
             return {
@@ -5384,11 +5390,7 @@ class BaseClient(BaseConnection, AdminAPI):
             row_id = self._convert_id_from_bytes(row_id)
             ids.append(row_id)
 
-            distance = (
-                row.get("_distance") or row.get("distance")
-                or row.get("_score") or row.get("score") or 0.0
-            )
-            distances.append(distance)
+            distances.append(self._hybrid_row_score(row))
 
             if include is None or "metadatas" in include or "metadata" in include:
                 meta = dc.get("metadata")

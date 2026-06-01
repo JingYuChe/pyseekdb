@@ -11,6 +11,8 @@ from pyseekdb import IVFConfiguration
 from pyseekdb.client.configuration import VectorIndexConfig
 from pyseekdb.client.schema import Schema
 
+from namespace_dml_helpers import assert_get_absent, assert_get_present, cleanup, create_ns_collection
+
 
 class TestNamespaceDML:
 
@@ -161,6 +163,79 @@ class TestNamespaceDML:
             assert "metadatas" in result
         finally:
             db_client.delete_collection(name=collection.name)
+
+
+class TestNamespaceDMLFullCycle:
+
+    def test_full_dml_cycle_verified_by_get(self, db_client):
+        collection = create_ns_collection(db_client, suffix="_cycle")
+        ns = collection.create_namespace("cycle_ns")
+        doc_id = "cycle_doc"
+        try:
+            ns.add(
+                ids=doc_id,
+                embeddings=[0.1, 0.2, 0.3],
+                documents="Original document",
+                metadatas={"stage": "added"},
+            )
+            assert_get_present(
+                ns,
+                doc_id,
+                embeddings=[0.1, 0.2, 0.3],
+                documents="Original document",
+                metadatas={"stage": "added"},
+            )
+
+            ns.update(
+                ids=doc_id,
+                embeddings=[0.4, 0.5, 0.6],
+                documents="Updated document",
+                metadatas={"stage": "updated"},
+            )
+            assert_get_present(
+                ns,
+                doc_id,
+                embeddings=[0.4, 0.5, 0.6],
+                documents="Updated document",
+                metadatas={"stage": "updated"},
+            )
+
+            ns.upsert(
+                ids=doc_id,
+                embeddings=[0.7, 0.8, 0.9],
+                documents="Upserted document",
+                metadatas={"stage": "upserted"},
+            )
+            assert_get_present(
+                ns,
+                doc_id,
+                embeddings=[0.7, 0.8, 0.9],
+                documents="Upserted document",
+                metadatas={"stage": "upserted"},
+            )
+
+            ns.delete(ids=doc_id)
+            assert_get_absent(ns, doc_id)
+        finally:
+            cleanup(db_client, collection)
+
+    def test_batch_add_then_get_each(self, db_client):
+        collection = create_ns_collection(db_client, suffix="_batch")
+        ns = collection.create_namespace("batch_ns")
+        try:
+            ns.add(
+                ids=["b1", "b2", "b3"],
+                embeddings=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                documents=["Doc 1", "Doc 2", "Doc 3"],
+                metadatas=[{"n": 1}, {"n": 2}, {"n": 3}],
+            )
+            result = ns.get(ids=["b1", "b2", "b3"], include=["documents", "metadatas"])
+            assert len(result["ids"]) == 3
+            assert set(result["ids"]) == {"b1", "b2", "b3"}
+            assert set(result["documents"]) == {"Doc 1", "Doc 2", "Doc 3"}
+            assert {m["n"] for m in result["metadatas"]} == {1, 2, 3}
+        finally:
+            cleanup(db_client, collection)
 
 
 if __name__ == "__main__":
