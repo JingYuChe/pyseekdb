@@ -1254,6 +1254,15 @@ class BaseClient(BaseConnection, AdminAPI):
 
             self._execute(data_sql)
 
+            # Vector indexes are rejected in shared-storage mode on this kernel branch
+            # (both inline `VECTOR INDEX` in CREATE TABLE and standalone `CREATE VECTOR
+            # INDEX` fail with OB-1235 "vector index in shared storage mode is not
+            # supported"). Keep the embedding column but skip the vector index in SS;
+            # full-text and metadata SEARCH INDEX hybrid_search still work.
+            # if not is_shared_storage:
+            #     ivf_index_sql = f"CREATE VECTOR INDEX idx_vec ON `{data_table}` (embedding) {vector_index_sql}"
+            #     self._execute(ivf_index_sql)
+
             if is_shared_storage:
                 hot_table = NamespaceCollectionNames.hot_table_name(collection_id)
                 self._execute(f"""CREATE TABLE `{hot_table}` (
@@ -3950,14 +3959,33 @@ class BaseClient(BaseConnection, AdminAPI):
         if not where_document and where:
             filter_conditions = self._build_metadata_filter_for_search_parm(where)
             if filter_conditions:
-                # If only one filter condition, check its type
-                if len(filter_conditions) == 1:
-                    filter_cond = filter_conditions[0]
-                    # Directly return supported single condition types
-                    if any(key in filter_cond for key in ("range", "term", "terms", "bool")):
-                        return filter_cond
-                # Multiple filter conditions, wrap in bool filter
-                return {"bool": {"filter": filter_conditions}}
+                # Wrap scalar conditions in a (non-scoring) `filter` clause: a
+                # top-level bool is scoring by default and the kernel rejects scalar
+                # term/range queries inside must/should of a scoring bool
+                # (`scalar ... query in must/should clause not supported`). Negation
+                # conditions ($not/$ne/$nin) come back as pure `{"bool": {"must_not"}}`
+                # nodes; a bool with only must_not is rejected with `bool query ...
+                # should have at least one positive clause`, so hoist their must_not
+                # clauses onto the outer bool (which gains a positive `filter` once the
+                # namespace filter is injected) instead of nesting them standalone.
+                positive: list[dict[str, Any]] = []
+                negative: list[dict[str, Any]] = []
+                for cond in filter_conditions:
+                    if (
+                        isinstance(cond, dict)
+                        and set(cond.keys()) == {"bool"}
+                        and isinstance(cond["bool"], dict)
+                        and set(cond["bool"].keys()) == {"must_not"}
+                    ):
+                        negative.extend(cond["bool"]["must_not"])
+                    else:
+                        positive.append(cond)
+                bool_q: dict[str, Any] = {}
+                if positive:
+                    bool_q["filter"] = positive
+                if negative:
+                    bool_q["must_not"] = negative
+                return {"bool": bool_q}
 
         # Case 2: Full-text search (with or without metadata filtering)
         if where_document:
@@ -4134,7 +4162,11 @@ class BaseClient(BaseConnection, AdminAPI):
                 sub_filters = self._build_metadata_filter_conditions(sub_condition)
                 must_conditions.extend(sub_filters)
             if must_conditions:
-                result.append({"bool": {"must": must_conditions}})
+                # Scalar conditions must be ANDed via a (non-scoring) `filter`
+                # clause, not `must`: the kernel rejects scalar term/range queries
+                # inside must/should with `scalar ... query in must/should clause
+                # not supported`.
+                result.append({"bool": {"filter": must_conditions}})
             return result
 
         if "$or" in condition:
@@ -4143,7 +4175,13 @@ class BaseClient(BaseConnection, AdminAPI):
                 sub_filters = self._build_metadata_filter_conditions(sub_condition)
                 should_conditions.extend(sub_filters)
             if should_conditions:
-                result.append({"bool": {"should": should_conditions}})
+                # `minimum_should_match: 1` makes this an explicit OR. In a
+                # non-scoring (filter) context the kernel does not reliably apply the
+                # implicit "at least one should" default, which otherwise yields an
+                # intermittent `1210 Invalid argument`.
+                result.append(
+                    {"bool": {"should": should_conditions, "minimum_should_match": 1}}
+                )
             return result
 
         if "$not" in condition:
@@ -5281,6 +5319,13 @@ class BaseClient(BaseConnection, AdminAPI):
                     node["filter"] = list(ns_filter)
             return node
 
+        # Scoring (full-text) leaf queries may live in a `must` clause; scalar
+        # leaf queries (term/terms/range/json/array) MUST go into `filter`. The
+        # kernel rejects a scalar query inside must/should of a scoring bool with
+        # `OB_NOT_SUPPORTED: scalar term query in must/should clause`, and a
+        # top-level bool query is treated as scoring by default.
+        _scoring_leaf_keys = {"query_string", "match", "multi_match", "match_phrase"}
+
         def _inject_filter_into_query(node):
             if not isinstance(node, dict):
                 return node
@@ -5295,7 +5340,9 @@ class BaseClient(BaseConnection, AdminAPI):
                 else:
                     bool_node["filter"] = list(ns_filter)
                 return node
-            return {"bool": {"must": [node], "filter": list(ns_filter)}}
+            if _scoring_leaf_keys & node.keys():
+                return {"bool": {"must": [node], "filter": list(ns_filter)}}
+            return {"bool": {"filter": [node, *ns_filter]}}
 
         if "query" in search_parm:
             q = search_parm["query"]
