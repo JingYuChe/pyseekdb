@@ -351,6 +351,45 @@ class TestNamespaceQuery:
         finally:
             db_client.delete_collection(name=collection.name)
 
+    def test_hybrid_search_scalar_only_metadata_filter(self, db_client):
+        """
+        Scalar-only hybrid_search (only ``where``, no ``where_document`` and no ``knn``).
+
+        Regression: the namespace filter injection used to wrap the scalar leaf query in a
+        ``must`` clause, which the kernel rejects with
+        ``OB_NOT_SUPPORTED: scalar term query in must/should clause`` because a top-level
+        bool query is scoring by default. Scalar leaves must go into ``filter``.
+        """
+        collection = self._setup(db_client)
+        ns = collection.create_namespace("qns_hs_scalar")
+        try:
+            self._insert_data(ns)
+            time.sleep(1)
+
+            # term filter
+            result_term = ns.hybrid_search(
+                query={"where": {"category": "AI"}},
+                n_results=10,
+                include=["metadatas"],
+            )
+            ids_term = sorted(result_term["ids"][0]) if result_term["ids"] else []
+            assert ids_term == ["q1", "q4"], ids_term
+            if result_term.get("metadatas") and result_term["metadatas"][0]:
+                for meta in result_term["metadatas"][0]:
+                    if meta:
+                        assert meta["category"] == "AI"
+
+            # range filter
+            result_range = ns.hybrid_search(
+                query={"where": {"score": {"$gte": 90}}},
+                n_results=10,
+                include=["metadatas"],
+            )
+            ids_range = sorted(result_range["ids"][0]) if result_range["ids"] else []
+            assert ids_range == ["q1", "q3", "q4"], ids_range
+        finally:
+            db_client.delete_collection(name=collection.name)
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])
