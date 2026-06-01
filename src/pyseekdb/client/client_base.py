@@ -3839,6 +3839,17 @@ class BaseClient(BaseConnection, AdminAPI):
             # Remove any surrounding quotes if present
             query_sql = query_sql.strip().strip("'\"")
 
+        # OB's GET_SQL wraps field names in backticks, which turns
+        # `JSON_EXTRACT(metadata, '$.key')` (with or without outer
+        # parentheses) into a literal column name instead of a
+        # function call. Strip the backticks so OB evaluates the
+        # expression as a function call.
+        query_sql = re.sub(
+            r"`([^`]*JSON_EXTRACT[^`]*)`",
+            r"\1",
+            query_sql,
+        )
+
         # Add query hint to the generated SQL
         hint_sql = _query_hint_to_sql(query_hint, table_name=table_name)
         if hint_sql and query_sql.upper().startswith("SELECT"):
