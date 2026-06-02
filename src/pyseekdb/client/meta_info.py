@@ -65,12 +65,12 @@ class NamespaceCollectionNames:
     _TG_SUFFIX = "_tg"
 
     @staticmethod
-    def sdk_ns_namespaces_table() -> str:
-        return "sdk_ns_namespaces"
+    def sdk_namespaces_table() -> str:
+        return "sdk_namespaces"
 
     @staticmethod
-    def sdk_ns_ltables_table() -> str:
-        return "sdk_ns_ltables"
+    def sdk_ltables_table() -> str:
+        return "sdk_ltables"
 
     @staticmethod
     def sdk_namespaces_stats_table() -> str:

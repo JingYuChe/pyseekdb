@@ -32,14 +32,14 @@ class TestIVFConfiguration:
         config = IVFConfiguration()
         assert config.dimension == 384
         assert config.distance == "cosine"
-        assert config.use_spfresh is None
+        assert config.fresh_mode is None
         assert config.properties is None
 
     def test_valid_custom(self):
-        config = IVFConfiguration(dimension=128, distance="l2", use_spfresh=True)
+        config = IVFConfiguration(dimension=128, distance="l2", fresh_mode="spfresh")
         assert config.dimension == 128
         assert config.distance == "l2"
-        assert config.use_spfresh is True
+        assert config.fresh_mode == "spfresh"
 
     def test_valid_inner_product(self):
         config = IVFConfiguration(dimension=1024, distance="inner_product")
@@ -77,9 +77,9 @@ class TestIVFConfiguration:
         with pytest.raises(ValueError, match="distance must be one of"):
             IVFConfiguration(distance="invalid")
 
-    def test_invalid_use_spfresh_type(self):
-        with pytest.raises(TypeError, match="use_spfresh must be a bool"):
-            IVFConfiguration(use_spfresh="yes")
+    def test_invalid_fresh_mode_type(self):
+        with pytest.raises(TypeError, match="fresh_mode must be a str"):
+            IVFConfiguration(fresh_mode=True)
 
     def test_properties_valid(self):
         config = IVFConfiguration(properties={"nlist": 128, "nprobe": 16})
@@ -397,7 +397,7 @@ class FakeClient(BaseClient):
         self.executed_sqls.append(sql)
         return None
 
-    # Bypass the sdk_ns_ltables lookup in unit tests: SQL-generation tests don't
+    # Bypass the sdk_ltables lookup in unit tests: SQL-generation tests don't
     # have a real database, so return a fixed ltable_id matching test assertions.
     def _resolve_namespace_ltable_id(self, collection_id, namespace_id):
         return 1
@@ -906,8 +906,8 @@ class TestPhysicalTableNames:
 
     def test_namespace_catalog_table_names(self):
         from pyseekdb.client.meta_info import NamespaceCollectionNames
-        assert NamespaceCollectionNames.sdk_ns_namespaces_table() == "sdk_ns_namespaces"
-        assert NamespaceCollectionNames.sdk_ns_ltables_table() == "sdk_ns_ltables"
+        assert NamespaceCollectionNames.sdk_namespaces_table() == "sdk_namespaces"
+        assert NamespaceCollectionNames.sdk_ltables_table() == "sdk_ltables"
         assert NamespaceCollectionNames.sdk_namespaces_stats_table() == "sdk_namespaces_stats"
 
     def test_is_ns_data_table_true(self):
@@ -929,11 +929,11 @@ class TestNamespaceCatalogs:
         c._ensure_namespace_catalogs()
 
         sql = "\n".join(c.executed_sqls)
-        assert "CREATE TABLE IF NOT EXISTS `sdk_ns_namespaces`" in sql
+        assert "CREATE TABLE IF NOT EXISTS `sdk_namespaces`" in sql
         assert "PRIMARY KEY (namespace_id)" in sql
         assert "UNIQUE KEY uk_sdk_ns_coll_name (collection_id, namespace_name)" in sql
 
-        assert "CREATE TABLE IF NOT EXISTS `sdk_ns_ltables`" in sql
+        assert "CREATE TABLE IF NOT EXISTS `sdk_ltables`" in sql
         assert "PRIMARY KEY (ltable_id)" in sql
         assert "UNIQUE KEY uk_sdk_lt_coll_ns_name (collection_id, namespace_id, ltable_name)" in sql
 
@@ -950,8 +950,8 @@ class TestNamespaceCatalogs:
         c._ensure_namespace_catalogs()
 
         assert len(c.executed_sqls) == 3
-        assert "`sdk_ns_namespaces`" in c.executed_sqls[0]
-        assert "`sdk_ns_ltables`" in c.executed_sqls[1]
+        assert "`sdk_namespaces`" in c.executed_sqls[0]
+        assert "`sdk_ltables`" in c.executed_sqls[1]
         assert "`sdk_namespaces_stats`" in c.executed_sqls[2]
 
     def test_delete_ns_collection_meta_cleans_namespaces_stats_table(self):
@@ -986,17 +986,17 @@ class TestUseNamespaceValidation:
         c.detect_db_type_and_version = MagicMock(return_value=("mysql", "8.0"))
         from pyseekdb.client.schema import Schema
         from pyseekdb.client.configuration import VectorIndexConfig
-        schema = Schema(vector_index=VectorIndexConfig(ivf=IVFConfiguration(dimension=3, use_spfresh=True), embedding_function=None))
+        schema = Schema(vector_index=VectorIndexConfig(ivf=IVFConfiguration(dimension=3, fresh_mode="spfresh"), embedding_function=None))
         with pytest.raises(ValueError, match="only supported on OceanBase"):
             c._create_namespace_collection("test", schema)
 
-    def test_use_spfresh_false_raises(self):
+    def test_fresh_mode_false_raises(self):
         c = FakeClient()
         c.detect_db_type_and_version = MagicMock(return_value=("oceanbase", "4.3"))
         from pyseekdb.client.schema import Schema
         from pyseekdb.client.configuration import VectorIndexConfig
-        schema = Schema(vector_index=VectorIndexConfig(ivf=IVFConfiguration(dimension=3, use_spfresh=False), embedding_function=None))
-        with pytest.raises(ValueError, match="requires use_spfresh=True"):
+        schema = Schema(vector_index=VectorIndexConfig(ivf=IVFConfiguration(dimension=3, fresh_mode="none"), embedding_function=None))
+        with pytest.raises(ValueError, match="requires fresh_mode='spfresh'"):
             c._create_namespace_collection("test", schema)
 
 
@@ -1038,8 +1038,8 @@ class TestDeleteNamespaceUsesKernel:
         meta = c._get_ns_namespace_meta("abc123", "ns1")
         assert meta == {"namespace_id": "10", "namespace_name": "ns1", "ltable_id": "7"}
         calls = [str(call) for call in c._execute.call_args_list]
-        # JOIN against sdk_ns_ltables so we can resolve the default ltable in one round trip.
-        assert any("sdk_ns_ltables" in s for s in calls)
+        # JOIN against sdk_ltables so we can resolve the default ltable in one round trip.
+        assert any("sdk_ltables" in s for s in calls)
         assert any("SET @namespace_id" in s for s in calls)
         assert any("SET @ltable_id" in s for s in calls)
 
