@@ -574,7 +574,8 @@ class HybridTripleBranchCase:
     where: dict[str, Any] | None = None
     knn: dict[str, Any] | None = None
     use_rrf: bool = False
-    check_fts_ranking: bool = True
+    # Triple-branch always runs KNN; fused __score order need not match pure FTS tiers.
+    check_fts_ranking: bool = False
     min_hits: int = 1
     exact_match_count: int | None = None
 
@@ -1061,7 +1062,6 @@ TRIPLE_BRANCH_CASES: list[HybridTripleBranchCase] = [
         where=WHERE_FILLER_SEQ,
         knn=_default_knn(20, where=WHERE_FILLER_SEQ),
         n_results=20,
-        check_fts_ranking=False,
     ),
     HybridTripleBranchCase(
         name="fts_and_zpx_alp",
