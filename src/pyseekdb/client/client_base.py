@@ -4022,18 +4022,38 @@ class BaseClient(BaseConnection, AdminAPI):
         return clauses
 
     @staticmethod
+    def _collect_scalar_fields_from_filter_clause(clause: dict[str, Any]) -> list[str]:
+        """Collect scalar field names from term/terms leaves (including nested bool clauses)."""
+        fields: list[str] = []
+        if not isinstance(clause, dict):
+            return fields
+        term_body = clause.get("term")
+        if isinstance(term_body, dict):
+            fields.extend(term_body.keys())
+        terms_body = clause.get("terms")
+        if isinstance(terms_body, dict):
+            fields.extend(terms_body.keys())
+        range_body = clause.get("range")
+        if isinstance(range_body, dict):
+            fields.extend(range_body.keys())
+        bool_node = clause.get("bool")
+        if isinstance(bool_node, dict):
+            for key in ("filter", "must", "should", "must_not"):
+                sub = bool_node.get(key)
+                if isinstance(sub, list):
+                    for item in sub:
+                        fields.extend(BaseClient._collect_scalar_fields_from_filter_clause(item))
+                elif isinstance(sub, dict):
+                    fields.extend(BaseClient._collect_scalar_fields_from_filter_clause(sub))
+        return fields
+
+    @staticmethod
     def _positive_clause_for_must_not(must_not_clauses: list[dict[str, Any]]) -> dict[str, Any]:
         """Build a permissive positive filter leaf for must_not-only bools (OB rejects match_all)."""
         for clause in must_not_clauses:
             if not isinstance(clause, dict):
                 continue
-            term_body = clause.get("term")
-            if isinstance(term_body, dict) and term_body:
-                field = next(iter(term_body))
-                return {"range": {field: {"gte": -9223372036854775808}}}
-            terms_body = clause.get("terms")
-            if isinstance(terms_body, dict) and terms_body:
-                field = next(iter(terms_body))
+            for field in BaseClient._collect_scalar_fields_from_filter_clause(clause):
                 return {"range": {field: {"gte": -9223372036854775808}}}
             qs_body = clause.get("query_string")
             if isinstance(qs_body, dict):
@@ -4113,10 +4133,6 @@ class BaseClient(BaseConnection, AdminAPI):
                     bool_q["filter"] = pos_filters
                 if must_not_all:
                     bool_q["must_not"] = must_not_all
-                # Pure negation ($not_contains, $ne, …) needs a positive clause unless
-                # a scoring `must` is already present.
-                if doc_must_not is not None and not pos_filters and "must" not in bool_q:
-                    bool_q["filter"] = [self._positive_clause_for_must_not(must_not_all)]
                 return {"bool": bool_q}
 
         return None
