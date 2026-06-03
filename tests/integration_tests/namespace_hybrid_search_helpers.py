@@ -8,8 +8,9 @@ metadata (JSON SEARCH INDEX), and vector branches share one ground-truth dataset
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from namespace_fts_helpers import (
     BATCH_SIZE,
@@ -26,7 +27,11 @@ from namespace_fts_helpers import (
     doc_matches_where_metadata,
     get_fts_case,
     insert_corpus_in_batches,
+    insert_corpus_into_collection,
+    insert_corpus_into_namespace,
     run_hybrid_search_fts_case,
+    ns_schema,
+    flat_hybrid_search_schema,
     setup_fts_namespace_with_corpus,
     setup_large_fts_collection,
     setup_multi_coll_multi_ns_fts,
@@ -41,6 +46,20 @@ from namespace_fts_helpers import (
 KNN_QUERY_VECTOR: list[float] = [1.0, 1.0, 0.0]
 
 RRF_RANK = {"rrf": {"rank_window_size": 60, "rank_constant": 60}}
+
+# Broad filters so a third branch stays active without narrowing the primary signal under test.
+WHERE_DOCUMENT_UNIVERSAL: dict[str, str] = {"$contains": "document"}
+WHERE_BROAD_METADATA: dict[str, Any] = {"rel_hint": {"$gte": 0}}
+# Filler rows start after the deterministic FTS tier block (~43 rows).
+WHERE_FILLER_SEQ: dict[str, Any] = {"seq": {"$gte": 43}}
+# ``both_tokens`` row — use numeric fields for baseline-compatible filters.
+# Boolean ``has_both`` is not filterable on flat collection (HNSW / GET_SQL) path.
+WHERE_BOTH_TOKENS_NUMERIC: dict[str, Any] = {
+    "$and": [{"zpx_hint": 5}, {"alp_hint": 5}],
+}
+WHERE_NOT_BOTH_TOKENS_NUMERIC: dict[str, Any] = {
+    "$not": {"$and": [{"zpx_hint": 5}, {"alp_hint": 5}]},
+}
 
 
 @dataclass(frozen=True)
@@ -74,16 +93,6 @@ class HybridCombinedCase:
     check_fts_ranking: bool = True
     # When True, only assert non-empty results in corpus (RRF reorders across branches).
     rrf_smoke_only: bool = False
-
-
-def skip_oceanbase_knn(request: Any) -> None:
-    """OceanBase hybrid_search KNN on namespace logical tables requires HNSW (collections use IVF)."""
-    import pytest
-
-    if "oceanbase" in request.node.nodeid:
-        pytest.skip(
-            "OceanBase hybrid_search KNN requires HNSW; namespace collections use IVF only."
-        )
 
 
 def corpus_matches_where(record: CorpusRecord, where: dict[str, Any]) -> bool:
@@ -545,6 +554,877 @@ def get_hybrid_combined_case(name: str) -> HybridCombinedCase:
     raise KeyError(f"unknown combined hybrid case: {name!r}")
 
 
+# --- Triple-branch hybrid_search (vector + full-text + search index) ---
+
+
+@dataclass(frozen=True)
+class HybridTripleBranchCase:
+    """
+    Namespace hybrid_search with ``query`` (FTS + search index) and ``knn`` all active.
+
+    ``verify`` selects which branch supplies ground-truth assertions; the other branches
+    use broad aligned filters so every signal participates without masking the operator
+    under test.
+    """
+
+    name: str
+    n_results: int
+    verify: Literal["fts", "search_index", "knn", "intersection", "not_contains", "rrf_fusion"]
+    where_document: dict[str, Any] | str | None = None
+    where: dict[str, Any] | None = None
+    knn: dict[str, Any] | None = None
+    use_rrf: bool = False
+    check_fts_ranking: bool = True
+    min_hits: int = 1
+    exact_match_count: int | None = None
+
+
+def _default_knn(
+    n_results: int,
+    *,
+    where: dict[str, Any] | None = None,
+    knn_n_results: int | None = None,
+) -> dict[str, Any]:
+    return {
+        "query_embeddings": KNN_QUERY_VECTOR,
+        "n_results": knn_n_results or max(n_results * 2, 20),
+        "where": where or WHERE_BROAD_METADATA,
+    }
+
+
+def corpus_matches_triple_intersection(
+    record: CorpusRecord,
+    case: HybridTripleBranchCase,
+) -> bool:
+    if case.where_document is not None:
+        if not doc_matches_where_document(record.document, case.where_document):
+            return False
+    if case.where is not None:
+        if not corpus_matches_where(record, case.where):
+            return False
+    if case.knn is not None:
+        knn_where = case.knn.get("where")
+        if knn_where is not None and not corpus_matches_where(record, knn_where):
+            return False
+    return True
+
+
+def count_triple_intersection_matches(
+    corpus: list[CorpusRecord],
+    case: HybridTripleBranchCase,
+) -> int:
+    return sum(1 for rec in corpus if corpus_matches_triple_intersection(rec, case))
+
+
+def _slice_hybrid_result(
+    result: dict[str, Any],
+    corpus: list[CorpusRecord],
+    predicate,
+) -> dict[str, Any]:
+    corpus_by_id = {rec.doc_id: rec for rec in corpus}
+    ids = result["ids"][0]
+    indices = [
+        i
+        for i, doc_id in enumerate(ids)
+        if doc_id in corpus_by_id and predicate(corpus_by_id[doc_id])
+    ]
+    sliced: dict[str, Any] = {"ids": [[ids[i] for i in indices]]}
+    for key in ("distances", "documents", "metadatas"):
+        rows = result.get(key)
+        if rows and rows[0] is not None:
+            sliced[key] = [[rows[0][i] for i in indices]]
+    return sliced
+
+
+def assert_hybrid_triple_branch_result(
+    corpus: list[CorpusRecord],
+    result: dict[str, Any],
+    case: HybridTripleBranchCase,
+) -> None:
+    assert result is not None
+    assert "ids" in result and result["ids"]
+    ids = result["ids"][0]
+    assert len(ids) <= case.n_results
+    assert len(ids) >= case.min_hits, (
+        f"case {case.name!r}: expected at least {case.min_hits} hits, got {len(ids)}"
+    )
+
+    corpus_by_id = {rec.doc_id: rec for rec in corpus}
+    for doc_id in ids:
+        assert doc_id in corpus_by_id, f"unknown id {doc_id!r}"
+
+    if case.verify == "not_contains":
+        assert case.where_document is not None
+        assert_not_contains_no_token_leak(corpus, result, TOKEN_ZPX)
+        if case.where is not None:
+            for doc_id in ids:
+                assert doc_matches_where_metadata(
+                    corpus_by_id[doc_id].metadata, case.where
+                ), f"id={doc_id!r} violates query.where={case.where!r}"
+        if case.knn and case.knn.get("where"):
+            for doc_id in ids:
+                assert corpus_matches_where(corpus_by_id[doc_id], case.knn["where"]), (
+                    f"id={doc_id!r} violates knn.where={case.knn['where']!r}"
+                )
+        return
+
+    if case.verify == "fts":
+        assert case.where_document is not None
+
+        def _fts_row(rec: CorpusRecord) -> bool:
+            if not doc_matches_where_document(rec.document, case.where_document):
+                return False
+            if case.where is not None and not doc_matches_where_metadata(rec.metadata, case.where):
+                return False
+            return True
+
+        fts_result = _slice_hybrid_result(result, corpus, _fts_row)
+        fts_ids = fts_result["ids"][0]
+        assert len(fts_ids) >= 1, (
+            f"case {case.name!r}: expected at least one FTS-matching row in hybrid result"
+        )
+        assert_hybrid_fulltext_result(
+            corpus,
+            fts_result,
+            case.where_document,
+            min(len(fts_ids), case.n_results),
+            where=case.where,
+            check_ranking=case.check_fts_ranking,
+        )
+        if case.knn and case.knn.get("where"):
+            for doc_id in ids:
+                assert corpus_matches_where(corpus_by_id[doc_id], case.knn["where"]), (
+                    f"id={doc_id!r} violates knn.where={case.knn['where']!r}"
+                )
+        return
+
+    if case.verify == "search_index":
+        assert case.where is not None
+
+        def _si_row(rec: CorpusRecord) -> bool:
+            if not corpus_matches_where(rec, case.where):
+                return False
+            if case.where_document is not None and not doc_matches_where_document(
+                rec.document, case.where_document
+            ):
+                return False
+            return True
+
+        si_result = _slice_hybrid_result(result, corpus, _si_row)
+        si_ids = si_result["ids"][0]
+        assert len(si_ids) >= case.min_hits, (
+            f"case {case.name!r}: expected at least {case.min_hits} search-index rows"
+        )
+        assert_hybrid_search_index_result(
+            corpus,
+            si_result,
+            case.where,
+            min(len(si_ids), case.n_results),
+            min_hits=case.min_hits,
+            exact_match_count=case.exact_match_count,
+        )
+        if case.knn and case.knn.get("where"):
+            for doc_id in ids:
+                assert corpus_matches_where(corpus_by_id[doc_id], case.knn["where"]), (
+                    f"id={doc_id!r} violates knn.where={case.knn['where']!r}"
+                )
+        return
+
+    if case.verify == "knn":
+        assert case.knn is not None
+        knn_where = case.knn.get("where")
+
+        def _knn_row(rec: CorpusRecord) -> bool:
+            if knn_where is not None and not corpus_matches_where(rec, knn_where):
+                return False
+            if case.where is not None and not doc_matches_where_metadata(rec.metadata, case.where):
+                return False
+            if case.where_document is not None and not doc_matches_where_document(
+                rec.document, case.where_document
+            ):
+                return False
+            return True
+
+        knn_result = _slice_hybrid_result(result, corpus, _knn_row)
+        knn_ids = knn_result["ids"][0]
+        assert len(knn_ids) >= 1, (
+            f"case {case.name!r}: expected at least one KNN-eligible row in hybrid result"
+        )
+        assert_hybrid_knn_result(
+            corpus,
+            knn_result,
+            case.knn["query_embeddings"],
+            min(len(knn_ids), case.n_results),
+            knn_where,
+            check_top1=True,
+        )
+        return
+
+    if case.verify == "intersection":
+        total = count_triple_intersection_matches(corpus, case)
+        if case.exact_match_count is not None:
+            assert total == case.exact_match_count, (
+                f"case {case.name!r}: expected {case.exact_match_count} intersection "
+                f"matches, corpus has {total}"
+            )
+        for doc_id in ids:
+            assert corpus_matches_triple_intersection(corpus_by_id[doc_id], case), (
+                f"id={doc_id!r} outside triple-branch intersection for case {case.name!r}"
+            )
+        if case.exact_match_count is not None and case.exact_match_count <= case.n_results:
+            expected_ids = {
+                rec.doc_id
+                for rec in corpus
+                if corpus_matches_triple_intersection(rec, case)
+            }
+            assert set(ids) == expected_ids
+        return
+
+    if case.verify == "rrf_fusion":
+        if case.where is not None:
+            for doc_id in ids:
+                assert doc_matches_where_metadata(
+                    corpus_by_id[doc_id].metadata, case.where
+                ), f"id={doc_id!r} violates query.where={case.where!r}"
+        if case.knn and case.knn.get("where"):
+            for doc_id in ids:
+                assert corpus_matches_where(corpus_by_id[doc_id], case.knn["where"]), (
+                    f"id={doc_id!r} violates knn.where={case.knn['where']!r}"
+                )
+        intersection_ids = {
+            rec.doc_id
+            for rec in corpus
+            if corpus_matches_triple_intersection(rec, case)
+        }
+        assert intersection_ids, (
+            f"case {case.name!r}: intersection must be non-empty for RRF fusion checks"
+        )
+        returned = set(ids)
+        assert returned & intersection_ids, (
+            f"case {case.name!r}: RRF result must include at least one intersection hit, "
+            f"got {ids[:5]!r}"
+        )
+        if case.where_document is not None:
+            fts_hits = {
+                rec.doc_id
+                for rec in corpus
+                if doc_matches_where_document(rec.document, case.where_document)
+            }
+            assert returned & fts_hits, (
+                f"case {case.name!r}: RRF result must include at least one FTS hit"
+            )
+        return
+
+    raise ValueError(f"unsupported verify mode: {case.verify!r}")
+
+
+def _build_triple_branch_hybrid_search_kwargs(
+    case: HybridTripleBranchCase,
+) -> dict[str, Any]:
+    query: dict[str, Any] | None = None
+    if case.where_document is not None or case.where is not None:
+        query = {"n_results": case.n_results}
+        if case.where_document is not None:
+            query["where_document"] = case.where_document
+        if case.where is not None:
+            query["where"] = case.where
+    return {
+        "query": query,
+        "knn": case.knn,
+        "rank": RRF_RANK if case.use_rrf else None,
+        "n_results": case.n_results,
+        "include": ["documents", "metadatas", "distances"],
+    }
+
+
+def assert_flat_collection_baseline(collection: Any) -> None:
+    """Runtime guard: baseline must be a flat collection (HNSW heap table path)."""
+    if getattr(collection, "use_namespace", None) is not False:
+        raise TypeError(
+            f"collection baseline must have use_namespace=False, "
+            f"got {getattr(collection, 'use_namespace', None)!r} on {collection!r}"
+        )
+    if not hasattr(collection, "hybrid_search"):
+        raise TypeError(f"collection baseline must expose hybrid_search(), got {type(collection)!r}")
+
+
+def execute_hybrid_triple_branch_on_collection(
+    collection: Any,
+    case: HybridTripleBranchCase,
+) -> dict[str, Any]:
+    """
+    Triple-branch hybrid_search on flat collection.
+
+    Path: ``collection.add`` (during setup) → ``collection.hybrid_search``
+    → ``BaseClient._collection_hybrid_search`` → ``DBMS_HYBRID_SEARCH.GET_SQL``.
+    Vector index: HNSW (``flat_hybrid_search_schema``).
+    """
+    assert_flat_collection_baseline(collection)
+    return collection.hybrid_search(**_build_triple_branch_hybrid_search_kwargs(case))
+
+
+def execute_hybrid_triple_branch_on_namespace(
+    namespace: Any,
+    case: HybridTripleBranchCase,
+) -> dict[str, Any]:
+    """
+    Triple-branch hybrid_search on namespace.
+
+    Path: ``namespace.add`` (during setup) → ``namespace.hybrid_search``
+    → ``BaseClient._namespace_hybrid_search`` → ``hybrid_search(TABLE logic_data_table, ...)``.
+    Vector index: IVF spfresh (``ns_schema``).
+    """
+    if not hasattr(namespace, "namespace_id"):
+        raise TypeError(f"expected Namespace, got {type(namespace)!r}")
+    return namespace.hybrid_search(**_build_triple_branch_hybrid_search_kwargs(case))
+
+
+def execute_hybrid_triple_branch_search(
+    target: Any,
+    case: HybridTripleBranchCase,
+) -> dict[str, Any]:
+    """Dispatch to collection or namespace executor based on target type."""
+    if getattr(target, "use_namespace", None) is False:
+        return execute_hybrid_triple_branch_on_collection(target, case)
+    if hasattr(target, "namespace_id"):
+        return execute_hybrid_triple_branch_on_namespace(target, case)
+    raise TypeError(
+        f"unsupported hybrid_search target {target!r}: expected flat Collection "
+        f"(use_namespace=False) or Namespace"
+    )
+
+
+def setup_large_fts_flat_collection(db_client: Any) -> tuple[list[CorpusRecord], Any]:
+    """Create flat collection (HNSW + FTS), load via ``collection.add``."""
+    corpus = build_large_fts_corpus(CORPUS_SIZE)
+    if len(corpus) <= 1000:
+        raise ValueError(f"corpus must exceed 1000 rows, got {len(corpus)}")
+
+    name = f"test_hs_tb_baseline_{int(time.time() * 1000)}"
+    collection = db_client.create_collection(
+        name=name, schema=flat_hybrid_search_schema(), use_namespace=False
+    )
+    assert collection.use_namespace is False
+    insert_corpus_into_collection(collection, corpus)
+    expected = len(corpus)
+    actual = collection.count()
+    assert actual == expected, (
+        f"baseline collection {collection.name!r} expected {expected} rows, got {actual}"
+    )
+    time.sleep(INDEX_SETTLE_SECONDS)
+    return corpus, collection
+
+
+def _try_assert_hybrid_triple_branch_result(
+    corpus: list[CorpusRecord],
+    result: dict[str, Any],
+    case: HybridTripleBranchCase,
+) -> BaseException | None:
+    try:
+        assert_hybrid_triple_branch_result(corpus, result, case)
+        return None
+    except BaseException as exc:
+        return exc
+
+
+def assert_hybrid_triple_branch_vs_collection_baseline(
+    corpus: list[CorpusRecord],
+    case: HybridTripleBranchCase,
+    namespace_result: dict[str, Any],
+    collection_result: dict[str, Any],
+) -> None:
+    """
+    Compare namespace (IVF logic table) vs collection baseline (HNSW heap table).
+
+    Collection baseline uses ``use_namespace=False``: data via ``collection.add``,
+    search via ``collection.hybrid_search`` — the standard collection hybrid path.
+
+    Because HNSW vs IVF may rank differently on KNN/RRF branches, **id list equality
+    is not required** when both sides satisfy corpus ground truth. Comparison focuses
+    on pass/fail attribution:
+
+      - ``[test-case]`` — collection baseline also fails; likely expectation / case design issue
+      - ``[observer/namespace]`` — collection passes ground truth but namespace fails
+      - ``[test-case/baseline]`` — namespace passes but collection baseline fails
+    """
+    coll_err = _try_assert_hybrid_triple_branch_result(corpus, collection_result, case)
+    ns_err = _try_assert_hybrid_triple_branch_result(corpus, namespace_result, case)
+    coll_ids = collection_result["ids"][0]
+    ns_ids = namespace_result["ids"][0]
+
+    if coll_err is None and ns_err is None:
+        # Both paths satisfy ground truth; HNSW vs IVF ranking may differ — success.
+        return
+
+    if coll_err is not None and ns_err is not None:
+        if coll_ids == ns_ids:
+            raise AssertionError(
+                f"[test-case] case {case.name!r}: collection (use_namespace=false, HNSW) and "
+                f"namespace (IVF) fail the same ground-truth checks with identical ids; "
+                f"likely test expectation issue.\n"
+                f"  ids={coll_ids[:10]!r}\n"
+                f"  error={coll_err!r}"
+            ) from coll_err
+        raise AssertionError(
+            f"[mixed] case {case.name!r}: collection and namespace both fail ground truth "
+            f"and ids differ.\n"
+            f"  collection_ids={coll_ids[:10]!r}\n"
+            f"  namespace_ids={ns_ids[:10]!r}\n"
+            f"  collection_error={coll_err!r}\n"
+            f"  namespace_error={ns_err!r}"
+        ) from ns_err
+
+    if coll_err is None and ns_err is not None:
+        raise AssertionError(
+            f"[observer/namespace] case {case.name!r}: collection baseline (HNSW, "
+            f"use_namespace=false) passes but namespace (IVF) fails.\n"
+            f"  collection_ids={coll_ids!r}\n"
+            f"  namespace_ids={ns_ids!r}\n"
+            f"  namespace_error={ns_err!r}"
+        ) from ns_err
+
+    raise AssertionError(
+        f"[test-case/baseline] case {case.name!r}: namespace (IVF) passes but collection "
+        f"baseline (HNSW, use_namespace=false) fails; revisit case assumptions.\n"
+        f"  collection_ids={coll_ids!r}\n"
+        f"  namespace_ids={ns_ids!r}\n"
+        f"  collection_error={coll_err!r}"
+    ) from coll_err
+
+
+def run_hybrid_triple_branch_case(
+    namespace: Any,
+    corpus: list[CorpusRecord],
+    case: HybridTripleBranchCase,
+    *,
+    collection_baseline: Any | None = None,
+) -> dict[str, Any]:
+    if collection_baseline is not None:
+        assert_flat_collection_baseline(collection_baseline)
+        try:
+            collection_result = execute_hybrid_triple_branch_on_collection(
+                collection_baseline, case
+            )
+        except BaseException as coll_exec_err:
+            raise AssertionError(
+                f"[test-case/baseline] case {case.name!r}: collection.hybrid_search "
+                f"(use_namespace=false, HNSW/GET_SQL) raised: {coll_exec_err!r}"
+            ) from coll_exec_err
+        try:
+            namespace_result = execute_hybrid_triple_branch_on_namespace(namespace, case)
+        except BaseException as ns_exec_err:
+            raise AssertionError(
+                f"[observer/namespace] case {case.name!r}: collection.hybrid_search "
+                f"succeeded but namespace.hybrid_search (IVF/logic table) raised: "
+                f"{ns_exec_err!r}"
+            ) from ns_exec_err
+        assert_hybrid_triple_branch_vs_collection_baseline(
+            corpus, case, namespace_result, collection_result
+        )
+        return namespace_result
+
+    result = execute_hybrid_triple_branch_on_namespace(namespace, case)
+    assert_hybrid_triple_branch_result(corpus, result, case)
+    return result
+
+
+TRIPLE_BRANCH_CASES: list[HybridTripleBranchCase] = [
+    # --- Full-text operators (FTS is primary; search index + KNN use broad filters) ---
+    HybridTripleBranchCase(
+        name="fts_contains_zpx",
+        verify="fts",
+        where_document={"$contains": TOKEN_ZPX},
+        where=WHERE_BROAD_METADATA,
+        knn=_default_knn(15),
+        n_results=15,
+    ),
+    HybridTripleBranchCase(
+        name="fts_contains_alp",
+        verify="fts",
+        where_document={"$contains": TOKEN_ALP},
+        where=WHERE_BROAD_METADATA,
+        knn=_default_knn(15),
+        n_results=15,
+    ),
+    HybridTripleBranchCase(
+        name="fts_string_shorthand",
+        verify="fts",
+        where_document=TOKEN_ZPX,
+        where=WHERE_BROAD_METADATA,
+        knn=_default_knn(15),
+        n_results=15,
+    ),
+    HybridTripleBranchCase(
+        name="fts_not_contains",
+        verify="not_contains",
+        where_document={"$not_contains": TOKEN_ZPX},
+        where=WHERE_FILLER_SEQ,
+        knn=_default_knn(20, where=WHERE_FILLER_SEQ),
+        n_results=20,
+        check_fts_ranking=False,
+    ),
+    HybridTripleBranchCase(
+        name="fts_and_zpx_alp",
+        verify="fts",
+        where_document={
+            "$and": [
+                {"$contains": TOKEN_ZPX},
+                {"$contains": TOKEN_ALP},
+            ],
+        },
+        where=WHERE_BROAD_METADATA,
+        knn=_default_knn(10),
+        n_results=10,
+    ),
+    HybridTripleBranchCase(
+        name="fts_or_zpx_alp",
+        verify="fts",
+        where_document={
+            "$or": [
+                {"$contains": TOKEN_ZPX},
+                {"$contains": TOKEN_ALP},
+            ],
+        },
+        where=WHERE_BROAD_METADATA,
+        knn=_default_knn(20),
+        n_results=20,
+    ),
+    HybridTripleBranchCase(
+        name="fts_and_multi_contains",
+        verify="fts",
+        where_document={
+            "$and": [
+                {"$contains": "Primary"},
+                {"$contains": TOKEN_ZPX},
+            ],
+        },
+        where=WHERE_BROAD_METADATA,
+        knn=_default_knn(10),
+        n_results=10,
+    ),
+    HybridTripleBranchCase(
+        name="fts_contains_filter_has_both",
+        verify="fts",
+        where_document={"$contains": TOKEN_ZPX},
+        where=WHERE_BOTH_TOKENS_NUMERIC,
+        knn=_default_knn(5, where=WHERE_BOTH_TOKENS_NUMERIC),
+        n_results=5,
+    ),
+    HybridTripleBranchCase(
+        name="fts_contains_filter_zpx_hint_eq",
+        verify="fts",
+        where_document={"$contains": TOKEN_ZPX},
+        where={"zpx_hint": 50},
+        knn=_default_knn(5, where={"zpx_hint": 50}),
+        n_results=5,
+    ),
+    HybridTripleBranchCase(
+        name="fts_contains_filter_zpx_hint_gte",
+        verify="fts",
+        where_document={"$contains": TOKEN_ZPX},
+        where={"zpx_hint": {"$gte": 40}},
+        knn=_default_knn(10, where={"zpx_hint": {"$gte": 40}}),
+        n_results=10,
+    ),
+    HybridTripleBranchCase(
+        name="fts_and_zpx_alp_filter_has_both",
+        verify="fts",
+        where_document={
+            "$and": [
+                {"$contains": TOKEN_ZPX},
+                {"$contains": TOKEN_ALP},
+            ],
+        },
+        where=WHERE_BOTH_TOKENS_NUMERIC,
+        knn=_default_knn(5, where=WHERE_BOTH_TOKENS_NUMERIC),
+        n_results=5,
+    ),
+    HybridTripleBranchCase(
+        name="fts_contains_filter_zpx_hint_and_alp_zero",
+        verify="fts",
+        where_document={"$contains": TOKEN_ZPX},
+        where={
+            "$and": [
+                {"zpx_hint": {"$gte": 40}},
+                {"alp_hint": 0},
+            ],
+        },
+        knn=_default_knn(
+            10,
+            where={
+                "$and": [
+                    {"zpx_hint": {"$gte": 40}},
+                    {"alp_hint": 0},
+                ],
+            },
+        ),
+        n_results=10,
+    ),
+    # --- Search-index operators (metadata is primary; universal FTS + broad KNN) ---
+    HybridTripleBranchCase(
+        name="si_eq_zpx_hint_direct",
+        verify="search_index",
+        where_document=WHERE_DOCUMENT_UNIVERSAL,
+        where={"zpx_hint": 50},
+        knn=_default_knn(5, where={"zpx_hint": 50}),
+        n_results=5,
+        exact_match_count=1,
+    ),
+    HybridTripleBranchCase(
+        name="si_eq_zpx_hint_operator",
+        verify="search_index",
+        where_document=WHERE_DOCUMENT_UNIVERSAL,
+        where={"zpx_hint": {"$eq": 50}},
+        knn=_default_knn(5, where={"zpx_hint": {"$eq": 50}}),
+        n_results=5,
+        exact_match_count=1,
+    ),
+    HybridTripleBranchCase(
+        name="si_ne_zpx_hint_zero",
+        verify="search_index",
+        where_document=WHERE_DOCUMENT_UNIVERSAL,
+        where={"zpx_hint": {"$ne": 0}},
+        knn=_default_knn(20, where={"zpx_hint": {"$ne": 0}}),
+        n_results=20,
+        min_hits=1,
+    ),
+    HybridTripleBranchCase(
+        name="si_gte_zpx_hint_40",
+        verify="search_index",
+        where_document=WHERE_DOCUMENT_UNIVERSAL,
+        where={"zpx_hint": {"$gte": 40}},
+        knn=_default_knn(15, where={"zpx_hint": {"$gte": 40}}),
+        n_results=15,
+        min_hits=2,
+    ),
+    HybridTripleBranchCase(
+        name="si_lt_zpx_hint_10",
+        verify="search_index",
+        where_document=WHERE_DOCUMENT_UNIVERSAL,
+        where={"zpx_hint": {"$lt": 10}},
+        knn=_default_knn(20, where={"zpx_hint": {"$lt": 10}}),
+        n_results=20,
+        min_hits=1,
+    ),
+    HybridTripleBranchCase(
+        name="si_lte_alp_hint_8",
+        verify="search_index",
+        where_document=WHERE_DOCUMENT_UNIVERSAL,
+        where={"alp_hint": {"$lte": 8}},
+        knn=_default_knn(15, where={"alp_hint": {"$lte": 8}}),
+        n_results=15,
+        min_hits=1,
+    ),
+    HybridTripleBranchCase(
+        name="si_gt_rel_hint_zero",
+        verify="search_index",
+        where_document=WHERE_DOCUMENT_UNIVERSAL,
+        where={"rel_hint": {"$gt": 0}},
+        knn=_default_knn(25, where={"rel_hint": {"$gt": 0}}),
+        n_results=25,
+        min_hits=5,
+    ),
+    HybridTripleBranchCase(
+        name="si_in_alp_hint_values",
+        verify="search_index",
+        where_document=WHERE_DOCUMENT_UNIVERSAL,
+        where={"alp_hint": {"$in": [32, 24, 16, 8]}},
+        knn=_default_knn(10, where={"alp_hint": {"$in": [32, 24, 16, 8]}}),
+        n_results=10,
+        min_hits=4,
+    ),
+    HybridTripleBranchCase(
+        name="si_nin_alp_hint_high",
+        verify="search_index",
+        where_document=WHERE_DOCUMENT_UNIVERSAL,
+        where={"alp_hint": {"$nin": [32, 24, 16, 8]}},
+        knn=_default_knn(15, where={"alp_hint": {"$nin": [32, 24, 16, 8]}}),
+        n_results=15,
+        min_hits=1,
+    ),
+    HybridTripleBranchCase(
+        name="si_and_has_both_zpx_gte",
+        verify="search_index",
+        where_document=WHERE_DOCUMENT_UNIVERSAL,
+        where={
+            "$and": [
+                {"zpx_hint": {"$gte": 5}},
+                {"alp_hint": 5},
+            ],
+        },
+        knn=_default_knn(
+            5,
+            where={
+                "$and": [
+                    {"zpx_hint": {"$gte": 5}},
+                    {"alp_hint": 5},
+                ],
+            },
+        ),
+        n_results=5,
+        exact_match_count=1,
+    ),
+    HybridTripleBranchCase(
+        name="si_or_zpx_alp_hint_high",
+        verify="search_index",
+        where_document=WHERE_DOCUMENT_UNIVERSAL,
+        where={
+            "$or": [
+                {"zpx_hint": {"$gte": 50}},
+                {"alp_hint": {"$gte": 32}},
+            ],
+        },
+        knn=_default_knn(
+            10,
+            where={
+                "$or": [
+                    {"zpx_hint": {"$gte": 50}},
+                    {"alp_hint": {"$gte": 32}},
+                ],
+            },
+        ),
+        n_results=10,
+        min_hits=2,
+    ),
+    HybridTripleBranchCase(
+        name="si_not_has_both",
+        verify="search_index",
+        where_document=WHERE_DOCUMENT_UNIVERSAL,
+        where=WHERE_NOT_BOTH_TOKENS_NUMERIC,
+        knn=_default_knn(20, where=WHERE_NOT_BOTH_TOKENS_NUMERIC),
+        n_results=20,
+        min_hits=1,
+    ),
+    HybridTripleBranchCase(
+        name="si_id_eq_both_tokens",
+        verify="search_index",
+        where_document=WHERE_DOCUMENT_UNIVERSAL,
+        where={"#id": "both_tokens"},
+        knn=_default_knn(5, where={"#id": "both_tokens"}),
+        n_results=5,
+        exact_match_count=1,
+    ),
+    HybridTripleBranchCase(
+        name="si_id_in_zpx_tops",
+        verify="search_index",
+        where_document=WHERE_DOCUMENT_UNIVERSAL,
+        where={"#id": {"$in": ["zpx_top_5", "zpx_top_4", "zpx_top_3"]}},
+        knn=_default_knn(
+            5,
+            where={"#id": {"$in": ["zpx_top_5", "zpx_top_4", "zpx_top_3"]}},
+        ),
+        n_results=5,
+        exact_match_count=3,
+    ),
+    # --- Vector / KNN operators (KNN primary; universal FTS + broad metadata) ---
+    HybridTripleBranchCase(
+        name="knn_global_top5",
+        verify="knn",
+        where_document=WHERE_DOCUMENT_UNIVERSAL,
+        where=WHERE_BROAD_METADATA,
+        knn=_default_knn(5, knn_n_results=10),
+        n_results=5,
+    ),
+    HybridTripleBranchCase(
+        name="knn_filter_has_both",
+        verify="knn",
+        where_document=WHERE_DOCUMENT_UNIVERSAL,
+        where=WHERE_BOTH_TOKENS_NUMERIC,
+        knn=_default_knn(3, where=WHERE_BOTH_TOKENS_NUMERIC, knn_n_results=10),
+        n_results=3,
+    ),
+    HybridTripleBranchCase(
+        name="knn_filter_zpx_hint_gte_40",
+        verify="knn",
+        where_document=WHERE_DOCUMENT_UNIVERSAL,
+        where={"zpx_hint": {"$gte": 40}},
+        knn=_default_knn(5, where={"zpx_hint": {"$gte": 40}}, knn_n_results=15),
+        n_results=5,
+    ),
+    # --- Aligned intersection (all three branches share the same filter intent) ---
+    HybridTripleBranchCase(
+        name="intersection_zpx_gte40",
+        verify="intersection",
+        where_document={"$contains": TOKEN_ZPX},
+        where={"zpx_hint": {"$gte": 40}},
+        knn=_default_knn(10, where={"zpx_hint": {"$gte": 40}}),
+        n_results=10,
+        min_hits=2,
+    ),
+    HybridTripleBranchCase(
+        name="intersection_both_tokens",
+        verify="intersection",
+        where_document={
+            "$and": [
+                {"$contains": TOKEN_ZPX},
+                {"$contains": TOKEN_ALP},
+            ],
+        },
+        where=WHERE_BOTH_TOKENS_NUMERIC,
+        knn=_default_knn(5, where=WHERE_BOTH_TOKENS_NUMERIC),
+        n_results=5,
+        exact_match_count=1,
+    ),
+    HybridTripleBranchCase(
+        name="intersection_id_zpx_top5",
+        verify="intersection",
+        where_document={"$contains": TOKEN_ZPX},
+        where={"#id": "zpx_top_5"},
+        knn=_default_knn(5, where={"#id": "zpx_top_5"}),
+        n_results=5,
+        exact_match_count=1,
+    ),
+    # --- RRF fusion across three branches ---
+    HybridTripleBranchCase(
+        name="rrf_fts_or_knn_si_gte",
+        verify="rrf_fusion",
+        where_document={
+            "$or": [
+                {"$contains": TOKEN_ZPX},
+                {"$contains": TOKEN_ALP},
+            ],
+        },
+        where={"rel_hint": {"$gte": 4}},
+        knn=_default_knn(10, where={"rel_hint": {"$gte": 4}}, knn_n_results=15),
+        n_results=10,
+        use_rrf=True,
+        min_hits=3,
+    ),
+    HybridTripleBranchCase(
+        name="rrf_all_branches_zpx_gte40",
+        verify="rrf_fusion",
+        where_document={"$contains": TOKEN_ZPX},
+        where={"zpx_hint": {"$gte": 40}},
+        knn=_default_knn(8, where={"zpx_hint": {"$gte": 40}}, knn_n_results=15),
+        n_results=8,
+        use_rrf=True,
+        min_hits=2,
+    ),
+]
+
+
+def get_triple_branch_case(name: str) -> HybridTripleBranchCase:
+    for case in TRIPLE_BRANCH_CASES:
+        if case.name == name:
+            return case
+    raise KeyError(f"unknown triple-branch case: {name!r}")
+
+
+def run_triple_branch_case_on_quadrants(
+    ctx: dict[str, Any],
+    case: HybridTripleBranchCase | str,
+    quadrant_keys: tuple[str, ...] = MULTI_COLL_MULTI_NS_FTS_LOADED_QUADRANTS,
+    *,
+    collection_baseline: Any | None = None,
+) -> None:
+    tb_case = case if isinstance(case, HybridTripleBranchCase) else get_triple_branch_case(case)
+    for key in quadrant_keys:
+        corpus, namespace = ctx[key]
+        run_hybrid_triple_branch_case(
+            namespace, corpus, tb_case, collection_baseline=collection_baseline
+        )
+
+
 def run_search_index_case_on_quadrants(
     ctx: dict[str, Any],
     case: SearchIndexQueryCase | str,
@@ -560,11 +1440,7 @@ def run_knn_case_on_quadrants(
     ctx: dict[str, Any],
     case: VectorKnnCase | str,
     quadrant_keys: tuple[str, ...] = MULTI_COLL_MULTI_NS_FTS_LOADED_QUADRANTS,
-    *,
-    request: Any = None,
 ) -> None:
-    if request is not None:
-        skip_oceanbase_knn(request)
     knn_case = case if isinstance(case, VectorKnnCase) else get_vector_knn_case(case)
     for key in quadrant_keys:
         corpus, namespace = ctx[key]
@@ -588,6 +1464,31 @@ def assert_hybrid_search_index_no_hits(
     )
 
 
+def assert_hybrid_triple_branch_no_hits(
+    namespace: Any,
+    case: HybridTripleBranchCase,
+) -> None:
+    """Assert triple-branch hybrid_search returns no rows (namespace isolation)."""
+    query: dict[str, Any] | None = None
+    if case.where_document is not None or case.where is not None:
+        query = {"n_results": case.n_results}
+        if case.where_document is not None:
+            query["where_document"] = case.where_document
+        if case.where is not None:
+            query["where"] = case.where
+    result = namespace.hybrid_search(
+        query=query,
+        knn=case.knn,
+        rank=RRF_RANK if case.use_rrf else None,
+        n_results=case.n_results,
+        include=["documents"],
+    )
+    ids = result.get("ids", [[]])[0] if result.get("ids") else []
+    assert len(ids) == 0, (
+        f"expected no triple-branch hits in namespace {namespace.name!r}, got {ids[:5]!r}"
+    )
+
+
 __all__ = [
     "BATCH_SIZE",
     "CORPUS_SIZE",
@@ -600,28 +1501,43 @@ __all__ = [
     "SEARCH_INDEX_CASES",
     "TOKEN_ALP",
     "TOKEN_ZPX",
+    "TRIPLE_BRANCH_CASES",
     "VECTOR_KNN_CASES",
+    "WHERE_BROAD_METADATA",
+    "WHERE_DOCUMENT_UNIVERSAL",
+    "WHERE_FILLER_SEQ",
     "HybridCombinedCase",
+    "HybridTripleBranchCase",
     "SearchIndexQueryCase",
     "VectorKnnCase",
+    "assert_flat_collection_baseline",
     "assert_hybrid_search_index_no_hits",
+    "assert_hybrid_triple_branch_no_hits",
+    "assert_hybrid_triple_branch_result",
+    "assert_hybrid_triple_branch_vs_collection_baseline",
     "assert_not_contains_no_token_leak",
     "build_large_fts_corpus",
+    "execute_hybrid_triple_branch_on_collection",
+    "execute_hybrid_triple_branch_on_namespace",
+    "execute_hybrid_triple_branch_search",
     "get_fts_case",
     "get_hybrid_combined_case",
     "get_search_index_case",
+    "get_triple_branch_case",
     "get_vector_knn_case",
     "run_hybrid_combined_case",
     "run_hybrid_knn_case",
     "run_hybrid_search_index_case",
     "run_hybrid_search_fts_case",
+    "run_hybrid_triple_branch_case",
     "run_knn_case_on_quadrants",
     "run_search_index_case_on_quadrants",
+    "run_triple_branch_case_on_quadrants",
     "setup_fts_namespace_with_corpus",
     "setup_large_fts_collection",
+    "setup_large_fts_flat_collection",
     "setup_multi_coll_multi_ns_fts",
     "setup_multi_coll_multi_ns_fts_single_loaded",
-    "skip_oceanbase_knn",
     "teardown_large_fts_collection",
     "teardown_multi_coll_multi_ns_fts",
 ]

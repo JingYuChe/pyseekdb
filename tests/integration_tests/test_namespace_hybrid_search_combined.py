@@ -21,7 +21,6 @@ from namespace_hybrid_search_helpers import (
     run_hybrid_combined_case,
     setup_fts_namespace_with_corpus,
     setup_large_fts_collection,
-    skip_oceanbase_knn,
     teardown_large_fts_collection,
 )
 
@@ -57,10 +56,8 @@ class TestNamespaceHybridSearchCombined:
         )
 
     @pytest.mark.parametrize("case_name", [c.name for c in HYBRID_COMBINED_CASES])
-    def test_hybrid_search_combined(self, db_client, request, case_name: str):
+    def test_hybrid_search_combined(self, db_client, case_name: str):
         case = get_hybrid_combined_case(case_name)
-        if case.knn is not None:
-            skip_oceanbase_knn(request)
         namespace = self._new_namespace(case_name)
         run_hybrid_combined_case(namespace, self._corpus, case)
 

@@ -18,7 +18,6 @@ from namespace_hybrid_search_helpers import (
     run_hybrid_knn_case,
     setup_fts_namespace_with_corpus,
     setup_large_fts_collection,
-    skip_oceanbase_knn,
     teardown_large_fts_collection,
 )
 
@@ -56,18 +55,16 @@ class TestNamespaceHybridSearchVector:
             namespace_name=ns_name,
         )
 
-    def _run_knn_case(self, request: pytest.FixtureRequest, case_name: str) -> None:
-        skip_oceanbase_knn(request)
+    def _run_knn_case(self, case_name: str) -> None:
         namespace = self._new_namespace(case_name)
         run_hybrid_knn_case(namespace, self._corpus, get_vector_knn_case(case_name))
 
     @pytest.mark.parametrize("case_name", [c.name for c in VECTOR_KNN_CASES])
-    def test_hybrid_search_vector_knn_cases(self, db_client, request, case_name: str):
-        self._run_knn_case(request, case_name)
+    def test_hybrid_search_vector_knn_cases(self, db_client, case_name: str):
+        self._run_knn_case(case_name)
 
-    def test_hybrid_search_vector_top1_nearest(self, db_client, request):
+    def test_hybrid_search_vector_top1_nearest(self, db_client):
         """Top-1 must be the global nearest neighbor for a fixed query vector."""
-        skip_oceanbase_knn(request)
         namespace = self._new_namespace("top1_nearest")
         from namespace_hybrid_search_helpers import expected_knn_ids
 

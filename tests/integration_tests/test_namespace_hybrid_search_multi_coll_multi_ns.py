@@ -26,7 +26,6 @@ from namespace_hybrid_search_helpers import (
     run_search_index_case_on_quadrants,
     setup_multi_coll_multi_ns_fts,
     setup_multi_coll_multi_ns_fts_single_loaded,
-    skip_oceanbase_knn,
     teardown_multi_coll_multi_ns_fts,
 )
 
@@ -102,12 +101,10 @@ class TestNamespaceHybridSearchMultiCollMultiNs:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)
 
     @pytest.mark.parametrize("case_name", ["knn_global_top5", "knn_filter_has_both"])
-    def test_hybrid_search_vector_all_loaded_quadrants(
-        self, db_client, request, case_name: str
-    ):
+    def test_hybrid_search_vector_all_loaded_quadrants(self, db_client, case_name: str):
         ctx = setup_multi_coll_multi_ns_fts(db_client)
         try:
-            run_knn_case_on_quadrants(ctx, case_name, request=request)
+            run_knn_case_on_quadrants(ctx, case_name)
         finally:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)
 
@@ -122,8 +119,7 @@ class TestNamespaceHybridSearchMultiCollMultiNs:
         finally:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)
 
-    def test_hybrid_search_combined_rrf_multi_coll(self, db_client, request):
-        skip_oceanbase_knn(request)
+    def test_hybrid_search_combined_rrf_multi_coll(self, db_client):
         ctx = setup_multi_coll_multi_ns_fts(db_client)
         try:
             case = get_hybrid_combined_case("fts_zpx_filter_gte_knn")
@@ -133,8 +129,7 @@ class TestNamespaceHybridSearchMultiCollMultiNs:
         finally:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)
 
-    def test_hybrid_search_vector_plus_search_index_multi_coll(self, db_client, request):
-        skip_oceanbase_knn(request)
+    def test_hybrid_search_vector_plus_search_index_multi_coll(self, db_client):
         ctx = setup_multi_coll_multi_ns_fts(db_client)
         try:
             knn_case = get_vector_knn_case("knn_filter_has_both")
