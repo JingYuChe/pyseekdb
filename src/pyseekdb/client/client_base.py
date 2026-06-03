@@ -231,8 +231,8 @@ def _get_ivf_vector_index_sql(ivf_config: "IVFConfiguration") -> str:
                 property_parts.append(f"{k}='{v}'")
             else:
                 property_parts.append(f"{k}={v}")
-    if ivf_config.use_spfresh is not None:
-        property_parts.append(f"use_spfresh={str(ivf_config.use_spfresh).lower()}")
+    if ivf_config.fresh_mode:
+        property_parts.append(f"fresh_mode={ivf_config.fresh_mode}")
     property_str = ", ".join(property_parts)
     properties_str = f", {property_str}" if property_str else ""
     return f"WITH (DISTANCE={ivf_config.distance}, TYPE={ivf_config.type.upper()}, LIB={ivf_config.lib.upper()}{properties_str})"
@@ -941,8 +941,8 @@ class BaseClient(BaseConnection, AdminAPI):
         if ivf_config is not None:
             dimension = ivf_config.dimension
             distance = ivf_config.distance
-            if ivf_config.use_spfresh is not None and not ivf_config.use_spfresh:
-                raise ValueError("use_namespace=True requires use_spfresh=True")
+            if ivf_config.fresh_mode is not None and ivf_config.fresh_mode != "spfresh":
+                raise ValueError("use_namespace=True requires fresh_mode='spfresh'")
         else:
             if dense_embedding_function is not None:
                 dimension = self._get_embedding_function_dimension(dense_embedding_function)
@@ -950,7 +950,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 dimension = DEFAULT_VECTOR_DIMENSION
             distance = DEFAULT_DISTANCE_METRIC
             from .configuration import IVFConfiguration
-            ivf_config = IVFConfiguration(dimension=dimension, distance=distance, use_spfresh=True)
+            ivf_config = IVFConfiguration(dimension=dimension, distance=distance, fresh_mode="spfresh")
 
         if dimension < 1 or dimension > 4096:
             raise ValueError(f"Dimension must be between 1 and 4096, got {dimension}")
@@ -960,7 +960,7 @@ class BaseClient(BaseConnection, AdminAPI):
             "version": 2,
             "use_namespace": True,
             "dense_index_type": "ivf",
-            "use_spfresh": True,
+            "fresh_mode": "spfresh",
             "storage_mode": "ss" if is_ss else "sn",
             "dimension": dimension,
             "distance": distance,
@@ -1095,7 +1095,7 @@ class BaseClient(BaseConnection, AdminAPI):
     # ==================== Namespace Catalog Methods ====================
 
     def _ensure_namespace_catalogs(self) -> None:
-        ns_namespaces_sql = f"""CREATE TABLE IF NOT EXISTS `{NamespaceCollectionNames.sdk_ns_namespaces_table()}` (
+        ns_namespaces_sql = f"""CREATE TABLE IF NOT EXISTS `{NamespaceCollectionNames.sdk_namespaces_table()}` (
             namespace_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             collection_id CHAR(32) NOT NULL,
             namespace_name VARCHAR(256) NOT NULL,
@@ -1106,7 +1106,7 @@ class BaseClient(BaseConnection, AdminAPI):
             UNIQUE KEY uk_sdk_ns_coll_name (collection_id, namespace_name),
             KEY idx_sdk_ns_by_collection (collection_id)
         ) COMMENT='Namespace catalog';"""
-        ns_ltables_sql = f"""CREATE TABLE IF NOT EXISTS `{NamespaceCollectionNames.sdk_ns_ltables_table()}` (
+        ns_ltables_sql = f"""CREATE TABLE IF NOT EXISTS `{NamespaceCollectionNames.sdk_ltables_table()}` (
             ltable_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             collection_id CHAR(32) NOT NULL,
             namespace_id BIGINT UNSIGNED NOT NULL,
@@ -1203,12 +1203,12 @@ class BaseClient(BaseConnection, AdminAPI):
         )
         with contextlib.suppress(Exception):
             self._execute(
-                f"DELETE FROM `{NamespaceCollectionNames.sdk_ns_ltables_table()}` "
+                f"DELETE FROM `{NamespaceCollectionNames.sdk_ltables_table()}` "
                 f"WHERE collection_id = '{collection_id_escaped}'"
             )
         with contextlib.suppress(Exception):
             self._execute(
-                f"DELETE FROM `{NamespaceCollectionNames.sdk_ns_namespaces_table()}` "
+                f"DELETE FROM `{NamespaceCollectionNames.sdk_namespaces_table()}` "
                 f"WHERE collection_id = '{collection_id_escaped}'"
             )
         with contextlib.suppress(Exception):
@@ -1238,6 +1238,19 @@ class BaseClient(BaseConnection, AdminAPI):
         try:
             self._execute(f"CREATE TABLEGROUP `{tg_name}` SHARDING='ADAPTIVE'")
 
+            index_clauses = [
+                f"FULLTEXT INDEX idx_fts(document) {fulltext_clause}",
+                "SEARCH INDEX idx_json(data_content)",
+            ]
+            # Vector indexes are rejected in shared-storage mode on this kernel branch
+            # (both inline `VECTOR INDEX` in CREATE TABLE and standalone `CREATE VECTOR
+            # INDEX` fail with OB-1235 "vector index in shared storage mode is not
+            # supported"). Keep the embedding column but skip the vector index in SS;
+            # full-text and metadata SEARCH INDEX hybrid_search still work.
+            if not is_shared_storage:
+                index_clauses.append(f"VECTOR INDEX idx_vec(embedding) {vector_index_sql}")
+            index_sql = ",\n                ".join(index_clauses)
+
             data_sql = f"""CREATE TABLE `{data_table}` (
                 namespace_id BIGINT UNSIGNED NOT NULL,
                 ltable_id BIGINT UNSIGNED NOT NULL,
@@ -1246,22 +1259,11 @@ class BaseClient(BaseConnection, AdminAPI):
                 data_content JSON NOT NULL,
                 created_by VARCHAR(64) DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FULLTEXT INDEX idx_fts(document) {fulltext_clause},
-                SEARCH INDEX idx_json(data_content),
-                VECTOR INDEX idx_vec(embedding) {vector_index_sql}
+                {index_sql}
             ) TABLEGROUP=`{tg_name}` COMMENT='逻辑表主数据' DEFAULT CHARSET=utf8mb4 ORGANIZATION HEAP IS_LOGIC_TABLE = TRUE
             {partition_clause}"""
 
             self._execute(data_sql)
-
-            # Vector indexes are rejected in shared-storage mode on this kernel branch
-            # (both inline `VECTOR INDEX` in CREATE TABLE and standalone `CREATE VECTOR
-            # INDEX` fail with OB-1235 "vector index in shared storage mode is not
-            # supported"). Keep the embedding column but skip the vector index in SS;
-            # full-text and metadata SEARCH INDEX hybrid_search still work.
-            # if not is_shared_storage:
-            #     ivf_index_sql = f"CREATE VECTOR INDEX idx_vec ON `{data_table}` (embedding) {vector_index_sql}"
-            #     self._execute(ivf_index_sql)
 
             if is_shared_storage:
                 hot_table = NamespaceCollectionNames.hot_table_name(collection_id)
@@ -1313,7 +1315,7 @@ class BaseClient(BaseConnection, AdminAPI):
         self, collection_id: str, namespace_id: int
     ) -> int:
         """Resolve the default ltable_id for (collection_id, namespace_id) from
-        sdk_ns_ltables. Cached per (collection_id, namespace_id) on the client
+        sdk_ltables. Cached per (collection_id, namespace_id) on the client
         instance to avoid the extra round-trip on every DML/DQL call.
 
         The cache is also seeded by `_create_ns_namespace_meta` and
@@ -1329,14 +1331,14 @@ class BaseClient(BaseConnection, AdminAPI):
             return cached
         coll_id_escaped = escape_string(str(collection_id))
         rows = self._execute(
-            f"SELECT ltable_id FROM `{NamespaceCollectionNames.sdk_ns_ltables_table()}` "
+            f"SELECT ltable_id FROM `{NamespaceCollectionNames.sdk_ltables_table()}` "
             f"WHERE collection_id = '{coll_id_escaped}' AND namespace_id = {int(namespace_id)} "
             f"AND ltable_name = 'default' LIMIT 1"
         )
         if not rows:
             raise ValueError(
                 f"No default ltable found for collection_id={collection_id}, "
-                f"namespace_id={namespace_id} in sdk_ns_ltables"
+                f"namespace_id={namespace_id} in sdk_ltables"
             )
         row = rows[0]
         lt_id = int(row[0] if isinstance(row, (list, tuple)) else row["ltable_id"])
@@ -1370,20 +1372,20 @@ class BaseClient(BaseConnection, AdminAPI):
         namespace_name_escaped = escape_string(namespace_name)
         collection_id_escaped = escape_string(collection_id)
         self._execute(
-            f"INSERT INTO `{NamespaceCollectionNames.sdk_ns_namespaces_table()}` "
+            f"INSERT INTO `{NamespaceCollectionNames.sdk_namespaces_table()}` "
             f"(collection_id, namespace_name) VALUES ('{collection_id_escaped}', '{namespace_name_escaped}')"
         )
         rows = self._execute(
-            f"SELECT namespace_id FROM `{NamespaceCollectionNames.sdk_ns_namespaces_table()}` "
+            f"SELECT namespace_id FROM `{NamespaceCollectionNames.sdk_namespaces_table()}` "
             f"WHERE collection_id = '{collection_id_escaped}' AND namespace_name = '{namespace_name_escaped}'"
         )
         ns_id = int(rows[0][0] if isinstance(rows[0], (list, tuple)) else rows[0]["namespace_id"])
         self._execute(
-            f"INSERT INTO `{NamespaceCollectionNames.sdk_ns_ltables_table()}` "
+            f"INSERT INTO `{NamespaceCollectionNames.sdk_ltables_table()}` "
             f"(collection_id, namespace_id, ltable_name) VALUES ('{collection_id_escaped}', {ns_id}, 'default')"
         )
         lt_rows = self._execute(
-            f"SELECT ltable_id FROM `{NamespaceCollectionNames.sdk_ns_ltables_table()}` "
+            f"SELECT ltable_id FROM `{NamespaceCollectionNames.sdk_ltables_table()}` "
             f"WHERE collection_id = '{collection_id_escaped}' AND namespace_id = {ns_id} AND ltable_name = 'default'"
         )
         lt_id = int(lt_rows[0][0] if isinstance(lt_rows[0], (list, tuple)) else lt_rows[0]["ltable_id"])
@@ -1401,8 +1403,8 @@ class BaseClient(BaseConnection, AdminAPI):
     def _get_ns_namespace_meta(self, collection_id: str, namespace_name: str) -> dict | None:
         namespace_name_escaped = escape_string(namespace_name)
         collection_id_escaped = escape_string(collection_id)
-        ns_table = NamespaceCollectionNames.sdk_ns_namespaces_table()
-        lt_table = NamespaceCollectionNames.sdk_ns_ltables_table()
+        ns_table = NamespaceCollectionNames.sdk_namespaces_table()
+        lt_table = NamespaceCollectionNames.sdk_ltables_table()
         rows = self._execute(
             f"SELECT n.namespace_id AS namespace_id, n.namespace_name AS namespace_name, "
             f"l.ltable_id AS ltable_id "
@@ -1457,7 +1459,7 @@ class BaseClient(BaseConnection, AdminAPI):
     def _list_ns_namespaces(self, collection_id: str) -> list[dict]:
         collection_id_escaped = escape_string(collection_id)
         rows = self._execute(
-            f"SELECT namespace_id, namespace_name FROM `{NamespaceCollectionNames.sdk_ns_namespaces_table()}` "
+            f"SELECT namespace_id, namespace_name FROM `{NamespaceCollectionNames.sdk_namespaces_table()}` "
             f"WHERE collection_id = '{collection_id_escaped}' ORDER BY namespace_id"
         )
         results = []
@@ -3942,6 +3944,19 @@ class BaseClient(BaseConnection, AdminAPI):
 
         return search_parm
 
+    @staticmethod
+    def _pure_must_not_clauses(expr: dict[str, Any] | None) -> list[dict[str, Any]] | None:
+        """Return inner must_not clauses when *expr* is ``{"bool": {"must_not": [...]}}`` only."""
+        if not isinstance(expr, dict) or set(expr.keys()) != {"bool"}:
+            return None
+        bool_node = expr.get("bool")
+        if not isinstance(bool_node, dict) or set(bool_node.keys()) != {"must_not"}:
+            return None
+        clauses = bool_node.get("must_not")
+        if not isinstance(clauses, list):
+            return None
+        return clauses
+
     def _build_query_expression(self, query: dict[str, Any]) -> dict[str, Any] | None:
         """
         Build query expression from query dict
@@ -3994,13 +4009,19 @@ class BaseClient(BaseConnection, AdminAPI):
             if doc_query:
                 # Build filter from where condition
                 filter_conditions = self._build_metadata_filter_for_search_parm(where)
+                negated = self._pure_must_not_clauses(doc_query)
 
                 if filter_conditions:
-                    # Full-text search with metadata filtering
+                    # $not_contains becomes a pure must_not bool; nesting that under
+                    # must triggers `bool query ... should have at least one positive clause`.
+                    if negated is not None:
+                        return {"bool": {"filter": filter_conditions, "must_not": negated}}
                     return {"bool": {"must": [doc_query], "filter": filter_conditions}}
-                else:
-                    # Full-text search only
-                    return doc_query
+                if negated is not None:
+                    # No metadata filter yet; match_all satisfies the positive-clause rule
+                    # until namespace filters are injected (collection stays standalone).
+                    return {"bool": {"filter": [{"match_all": {}}], "must_not": negated}}
+                return doc_query
 
         return None
 
@@ -4052,13 +4073,14 @@ class BaseClient(BaseConnection, AdminAPI):
 
         # Handle $not_contains - wrap query_string in must_not bool
         if "$not_contains" in where_document:
+            escaped_query = escape_string(where_document["$not_contains"])
             return _with_boost({
                 "bool": {
                     "must_not": [
                         {
                             "query_string": {
                                 "fields": ["document"],
-                                "query": where_document["$not_contains"],
+                                "query": escaped_query,
                             }
                         }
                     ]
