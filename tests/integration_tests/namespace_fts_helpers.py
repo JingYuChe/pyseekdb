@@ -52,7 +52,19 @@ class FtsQueryCase:
 def ns_schema() -> Schema:
     return Schema(
         vector_index=VectorIndexConfig(
-            ivf=IVFConfiguration(dimension=3, distance="l2"),
+            ivf=IVFConfiguration(dimension=3, distance="l2", use_spfresh=True),
+            embedding_function=None,
+        ),
+    )
+
+
+def flat_hybrid_search_schema() -> Schema:
+    """Schema for flat collection baseline (``use_namespace=False``, HNSW + FTS)."""
+    from pyseekdb import HNSWConfiguration
+
+    return Schema(
+        vector_index=VectorIndexConfig(
+            hnsw=HNSWConfiguration(dimension=3, distance="l2"),
             embedding_function=None,
         ),
     )
@@ -274,15 +286,31 @@ def expected_best_id(
     return matched[0][0]
 
 
-def insert_corpus_in_batches(namespace: Any, corpus: list[CorpusRecord], batch_size: int = BATCH_SIZE) -> None:
+def insert_corpus_in_batches(target: Any, corpus: list[CorpusRecord], batch_size: int = BATCH_SIZE) -> None:
+    """Bulk ``add`` on a namespace or flat collection target."""
     for start in range(0, len(corpus), batch_size):
         chunk = corpus[start : start + batch_size]
-        namespace.add(
+        target.add(
             ids=[r.doc_id for r in chunk],
             embeddings=[r.embedding for r in chunk],
             documents=[r.document for r in chunk],
             metadatas=[r.metadata for r in chunk],
         )
+
+
+def insert_corpus_into_collection(collection: Any, corpus: list[CorpusRecord]) -> None:
+    """``collection.add(...)`` on a flat collection (``use_namespace=False``)."""
+    if getattr(collection, "use_namespace", None) is not False:
+        raise ValueError(
+            f"insert_corpus_into_collection requires use_namespace=False, "
+            f"got {getattr(collection, 'use_namespace', None)!r} on {collection!r}"
+        )
+    insert_corpus_in_batches(collection, corpus)
+
+
+def insert_corpus_into_namespace(namespace: Any, corpus: list[CorpusRecord]) -> None:
+    """``namespace.add(...)`` under a namespace-enabled collection."""
+    insert_corpus_in_batches(namespace, corpus)
 
 
 def assert_score_order_non_increasing(distances: list[float]) -> None:
@@ -489,7 +517,7 @@ def setup_fts_namespace_with_corpus(
 ) -> Any:
     """Create a namespace under an existing collection and bulk-load the corpus."""
     namespace = collection.create_namespace(namespace_name)
-    insert_corpus_in_batches(namespace, corpus)
+    insert_corpus_into_namespace(namespace, corpus)
     expected = len(corpus)
     actual = namespace.count()
     assert actual == expected, (
@@ -512,7 +540,8 @@ def setup_large_fts_namespace(db_client: Any, *, namespace_name: str = "ns_hs_ft
 
 
 def teardown_large_fts_collection(db_client: Any, collection: Any) -> None:
-    db_client.delete_collection(name=collection.name)
+    with contextlib.suppress(Exception):
+        db_client.delete_collection(name=collection.name)
 
 
 def teardown_large_fts_namespace(db_client: Any, collection: Any) -> None:

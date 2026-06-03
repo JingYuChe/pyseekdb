@@ -1,45 +1,45 @@
 """
 Namespace DML integration tests.
-Tests namespace.add, update, upsert, delete, get, count, peek operations.
+
+Small-scale: add / update / upsert / delete / get.
+Large-scale (>=1000 rows): count / peek boundaries and multi-namespace orthogonality.
 """
 
-import time
+from __future__ import annotations
 
 import pytest
 
-from pyseekdb import IVFConfiguration
-from pyseekdb.client.configuration import VectorIndexConfig
-from pyseekdb.client.schema import Schema
-
-from namespace_dml_helpers import assert_get_absent, assert_get_present, cleanup, create_ns_collection
+from namespace_dml_helpers import (
+    LARGE_DML_CORPUS_SIZE,
+    assert_get_absent,
+    assert_get_present,
+    assert_peek_result,
+    build_large_dml_corpus,
+    cleanup,
+    corpus_id_set,
+    create_ns_collection,
+    insert_dml_corpus_in_batches,
+    load_dml_corpus,
+)
 
 
 class TestNamespaceDML:
-
-    def _setup(self, client):
-        name = f"test_ns_dml_{int(time.time() * 1000)}"
-        schema = Schema(
-            vector_index=VectorIndexConfig(
-                ivf=IVFConfiguration(dimension=3, distance="l2"),
-                embedding_function=None,
-            ),
-        )
-        collection = client.create_collection(name=name, schema=schema, use_namespace=True)
-        namespace = collection.create_namespace("dml_ns")
-        return collection, namespace
+    """Small-scale DML smoke tests."""
 
     def test_add_single(self, db_client):
-        collection, ns = self._setup(db_client)
+        collection = create_ns_collection(db_client, suffix="_add1")
+        ns = collection.create_namespace("dml_ns")
         try:
             ns.add(ids="d1", embeddings=[1.0, 2.0, 3.0], documents="Hello", metadatas={"tag": "a"})
             result = ns.get(ids="d1")
             assert len(result["ids"]) == 1
             assert result["ids"][0] == "d1"
         finally:
-            db_client.delete_collection(name=collection.name)
+            cleanup(db_client, collection)
 
     def test_add_batch(self, db_client):
-        collection, ns = self._setup(db_client)
+        collection = create_ns_collection(db_client, suffix="_addb")
+        ns = collection.create_namespace("dml_ns")
         try:
             ns.add(
                 ids=["d1", "d2", "d3"],
@@ -50,10 +50,11 @@ class TestNamespaceDML:
             result = ns.get(ids=["d1", "d2", "d3"])
             assert len(result["ids"]) == 3
         finally:
-            db_client.delete_collection(name=collection.name)
+            cleanup(db_client, collection)
 
     def test_get_by_id(self, db_client):
-        collection, ns = self._setup(db_client)
+        collection = create_ns_collection(db_client, suffix="_getid")
+        ns = collection.create_namespace("dml_ns")
         try:
             ns.add(
                 ids=["g1", "g2"],
@@ -66,10 +67,11 @@ class TestNamespaceDML:
             assert result["documents"][0] == "First"
             assert result["metadatas"][0]["k"] == 1
         finally:
-            db_client.delete_collection(name=collection.name)
+            cleanup(db_client, collection)
 
     def test_get_with_limit(self, db_client):
-        collection, ns = self._setup(db_client)
+        collection = create_ns_collection(db_client, suffix="_getlim")
+        ns = collection.create_namespace("dml_ns")
         try:
             ns.add(
                 ids=["l1", "l2", "l3"],
@@ -78,94 +80,255 @@ class TestNamespaceDML:
             result = ns.get(limit=2)
             assert len(result["ids"]) == 2
         finally:
-            db_client.delete_collection(name=collection.name)
+            cleanup(db_client, collection)
 
     def test_update_metadata(self, db_client):
-        collection, ns = self._setup(db_client)
+        collection = create_ns_collection(db_client, suffix="_upd")
+        ns = collection.create_namespace("dml_ns")
         try:
             ns.add(ids="u1", embeddings=[1.0, 2.0, 3.0], metadatas={"score": 10})
             ns.update(ids="u1", metadatas={"score": 99})
             result = ns.get(ids="u1", include=["metadatas"])
             assert result["metadatas"][0]["score"] == 99
         finally:
-            db_client.delete_collection(name=collection.name)
+            cleanup(db_client, collection)
 
     def test_update_document_and_embedding(self, db_client):
-        collection, ns = self._setup(db_client)
+        collection = create_ns_collection(db_client, suffix="_upddoc")
+        ns = collection.create_namespace("dml_ns")
         try:
             ns.add(ids="u2", embeddings=[1.0, 2.0, 3.0], documents="Original")
             ns.update(ids="u2", embeddings=[9.0, 8.0, 7.0], documents="Updated")
             result = ns.get(ids="u2", include=["documents", "embeddings"])
             assert result["documents"][0] == "Updated"
         finally:
-            db_client.delete_collection(name=collection.name)
+            cleanup(db_client, collection)
 
     def test_upsert_existing(self, db_client):
-        collection, ns = self._setup(db_client)
+        collection = create_ns_collection(db_client, suffix="_upsex")
+        ns = collection.create_namespace("dml_ns")
         try:
             ns.add(ids="up1", embeddings=[1.0, 2.0, 3.0], metadatas={"v": 1})
             ns.upsert(ids="up1", embeddings=[4.0, 5.0, 6.0], metadatas={"v": 2})
             result = ns.get(ids="up1", include=["metadatas"])
             assert result["metadatas"][0]["v"] == 2
         finally:
-            db_client.delete_collection(name=collection.name)
+            cleanup(db_client, collection)
 
     def test_upsert_new(self, db_client):
-        collection, ns = self._setup(db_client)
+        collection = create_ns_collection(db_client, suffix="_upsnew")
+        ns = collection.create_namespace("dml_ns")
         try:
             ns.upsert(ids="up_new", embeddings=[1.0, 1.0, 1.0], metadatas={"fresh": True})
             result = ns.get(ids="up_new", include=["metadatas"])
             assert len(result["ids"]) == 1
             assert result["metadatas"][0]["fresh"] is True
         finally:
-            db_client.delete_collection(name=collection.name)
+            cleanup(db_client, collection)
 
     def test_delete_by_ids(self, db_client):
-        collection, ns = self._setup(db_client)
+        collection = create_ns_collection(db_client, suffix="_del")
+        ns = collection.create_namespace("dml_ns")
         try:
             ns.add(
                 ids=["del1", "del2"],
                 embeddings=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
             )
             ns.delete(ids="del1")
-            result = ns.get(ids="del1")
-            assert len(result["ids"]) == 0
-
-            result = ns.get(ids="del2")
-            assert len(result["ids"]) == 1
+            assert len(ns.get(ids="del1")["ids"]) == 0
+            assert len(ns.get(ids="del2")["ids"]) == 1
         finally:
-            db_client.delete_collection(name=collection.name)
+            cleanup(db_client, collection)
 
-    def test_count(self, db_client):
-        collection, ns = self._setup(db_client)
+
+class TestNamespaceDMLCountPeekAtScale:
+    """count / peek with >=1000 rows in a single namespace."""
+
+    @pytest.fixture
+    def large_ns(self, db_client):
+        collection = create_ns_collection(db_client, suffix="_large_cp")
+        ns = collection.create_namespace("large_ns")
+        corpus = build_large_dml_corpus(LARGE_DML_CORPUS_SIZE, id_prefix="large")
+        load_dml_corpus(ns, corpus)
+        yield collection, ns, corpus
+        cleanup(db_client, collection)
+
+    def test_count_empty_namespace(self, db_client):
+        collection = create_ns_collection(db_client, suffix="_cnt_empty")
+        ns = collection.create_namespace("empty_ns")
         try:
             assert ns.count() == 0
-            ns.add(
-                ids=["c1", "c2", "c3"],
-                embeddings=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-            )
-            assert ns.count() == 3
         finally:
-            db_client.delete_collection(name=collection.name)
+            cleanup(db_client, collection)
 
-    def test_peek(self, db_client):
-        collection, ns = self._setup(db_client)
+    def test_count_after_bulk_load_1000(self, large_ns):
+        _, ns, corpus = large_ns
+        assert ns.count() == len(corpus) == LARGE_DML_CORPUS_SIZE
+
+    def test_count_after_partial_delete(self, large_ns):
+        _, ns, corpus = large_ns
+        to_delete = [corpus[i].doc_id for i in range(100)]
+        ns.delete(ids=to_delete)
+        assert ns.count() == LARGE_DML_CORPUS_SIZE - 100
+        assert len(ns.get(ids=to_delete)["ids"]) == 0
+        assert len(ns.get(ids=corpus[500].doc_id)["ids"]) == 1
+
+    def test_peek_empty_namespace(self, db_client):
+        collection = create_ns_collection(db_client, suffix="_peek_empty")
+        ns = collection.create_namespace("peek_empty")
         try:
-            ns.add(
-                ids=["p1", "p2"],
-                embeddings=[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
-                documents=["Peek A", "Peek B"],
-                metadatas=[{"x": 1}, {"x": 2}],
-            )
             result = ns.peek(limit=10)
-            assert len(result["ids"]) == 2
-            assert "documents" in result
-            assert "metadatas" in result
+            assert_peek_result(result, expected_len=0)
         finally:
-            db_client.delete_collection(name=collection.name)
+            cleanup(db_client, collection)
+
+    @pytest.mark.parametrize(
+        ("limit", "expected_len"),
+        [
+            (0, 0),
+            (1, 1),
+            (10, 10),
+            (100, 100),
+            (999, 999),
+            (1000, 1000),
+            (1001, 1000),
+            (5000, 1000),
+        ],
+        ids=[
+            "limit_0",
+            "limit_1",
+            "limit_10",
+            "limit_100",
+            "limit_999",
+            "limit_1000",
+            "limit_over_total",
+            "limit_far_over_total",
+        ],
+    )
+    def test_peek_limit_boundaries(self, large_ns, limit, expected_len):
+        _, ns, corpus = large_ns
+        allowed = corpus_id_set(corpus)
+        result = ns.peek(limit=limit)
+        assert_peek_result(result, expected_len=expected_len, allowed_ids=allowed)
+
+    def test_peek_default_limit_is_10(self, large_ns):
+        _, ns, corpus = large_ns
+        result = ns.peek()
+        assert_peek_result(
+            result,
+            expected_len=10,
+            allowed_ids=corpus_id_set(corpus),
+        )
+
+
+class TestNamespaceDMLCountPeekMultiNs:
+    """count / peek orthogonality: same collection, different namespaces at scale."""
+
+    NS_A_SIZE = 1000
+    NS_B_SIZE = 800
+
+    @pytest.fixture
+    def dual_ns_ctx(self, db_client):
+        collection = create_ns_collection(db_client, suffix="_dual_cp")
+        ns_a = collection.create_namespace("ns_alpha")
+        ns_b = collection.create_namespace("ns_beta")
+        corpus_a = build_large_dml_corpus(
+            self.NS_A_SIZE, id_prefix="alpha", ns_tag="alpha"
+        )
+        corpus_b = build_large_dml_corpus(
+            self.NS_B_SIZE, id_prefix="beta", ns_tag="beta"
+        )
+        load_dml_corpus(ns_a, corpus_a)
+        load_dml_corpus(ns_b, corpus_b)
+        ctx = {
+            "collection": collection,
+            "ns_a": ns_a,
+            "ns_b": ns_b,
+            "corpus_a": corpus_a,
+            "corpus_b": corpus_b,
+            "ids_a": corpus_id_set(corpus_a),
+            "ids_b": corpus_id_set(corpus_b),
+        }
+        yield ctx
+        cleanup(db_client, collection)
+
+    def test_count_isolated_per_namespace(self, dual_ns_ctx):
+        assert dual_ns_ctx["ns_a"].count() == self.NS_A_SIZE
+        assert dual_ns_ctx["ns_b"].count() == self.NS_B_SIZE
+
+    @pytest.mark.parametrize(
+        ("limit", "expected_len"),
+        [(1, 1), (10, 10), (100, 100), (800, 800), (1000, 1000), (1500, 1000)],
+        ids=["lim_1", "lim_10", "lim_100", "lim_800", "lim_1000", "lim_over_alpha"],
+    )
+    def test_peek_alpha_boundaries(self, dual_ns_ctx, limit, expected_len):
+        result = dual_ns_ctx["ns_a"].peek(limit=limit)
+        assert_peek_result(
+            result,
+            expected_len=expected_len,
+            allowed_ids=dual_ns_ctx["ids_a"],
+            ns_tag="alpha",
+        )
+
+    @pytest.mark.parametrize(
+        ("limit", "expected_len"),
+        [(1, 1), (10, 10), (500, 500), (800, 800), (1000, 800), (2000, 800)],
+        ids=["lim_1", "lim_10", "lim_500", "lim_800", "lim_over_beta", "lim_far_over"],
+    )
+    def test_peek_beta_boundaries(self, dual_ns_ctx, limit, expected_len):
+        result = dual_ns_ctx["ns_b"].peek(limit=limit)
+        assert_peek_result(
+            result,
+            expected_len=expected_len,
+            allowed_ids=dual_ns_ctx["ids_b"],
+            ns_tag="beta",
+        )
+
+    def test_peek_does_not_leak_across_namespaces(self, dual_ns_ctx):
+        peek_a = dual_ns_ctx["ns_a"].peek(limit=50)
+        peek_b = dual_ns_ctx["ns_b"].peek(limit=50)
+        assert_peek_result(
+            peek_a,
+            expected_len=50,
+            allowed_ids=dual_ns_ctx["ids_a"],
+            ns_tag="alpha",
+        )
+        assert_peek_result(
+            peek_b,
+            expected_len=50,
+            allowed_ids=dual_ns_ctx["ids_b"],
+            ns_tag="beta",
+        )
+        assert set(peek_a["ids"]).isdisjoint(dual_ns_ctx["ids_b"])
+        assert set(peek_b["ids"]).isdisjoint(dual_ns_ctx["ids_a"])
+
+    def test_delete_in_one_namespace_only_affects_its_count(self, dual_ns_ctx):
+        ns_a = dual_ns_ctx["ns_a"]
+        ns_b = dual_ns_ctx["ns_b"]
+        corpus_a = dual_ns_ctx["corpus_a"]
+        delete_ids = [corpus_a[i].doc_id for i in range(150)]
+        ns_a.delete(ids=delete_ids)
+
+        assert ns_a.count() == self.NS_A_SIZE - 150
+        assert ns_b.count() == self.NS_B_SIZE
+
+        peek_a = ns_a.peek(limit=20)
+        assert_peek_result(
+            peek_a,
+            expected_len=20,
+            allowed_ids=dual_ns_ctx["ids_a"] - set(delete_ids),
+            ns_tag="alpha",
+        )
+        assert_peek_result(
+            ns_b.peek(limit=20),
+            expected_len=20,
+            allowed_ids=dual_ns_ctx["ids_b"],
+            ns_tag="beta",
+        )
 
 
 class TestNamespaceDMLFullCycle:
+    """End-to-end DML cycle (small scale, verified by get)."""
 
     def test_full_dml_cycle_verified_by_get(self, db_client):
         collection = create_ns_collection(db_client, suffix="_cycle")
@@ -216,6 +379,7 @@ class TestNamespaceDMLFullCycle:
 
             ns.delete(ids=doc_id)
             assert_get_absent(ns, doc_id)
+            assert ns.count() == 0
         finally:
             cleanup(db_client, collection)
 

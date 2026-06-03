@@ -20,7 +20,7 @@ class TestNamespaceLifecycle:
         name = f"test_ns_lc_{int(time.time() * 1000)}{suffix}"
         schema = Schema(
             vector_index=VectorIndexConfig(
-                ivf=IVFConfiguration(dimension=3, distance="cosine"),
+                ivf=IVFConfiguration(dimension=3, distance="cosine", use_spfresh=True),
                 embedding_function=None,
             ),
         )
@@ -172,7 +172,7 @@ class TestNamespaceLifecycle:
             name = f"test_ns_ss_{int(time.time() * 1000)}"
             schema = Schema(
                 vector_index=VectorIndexConfig(
-                    ivf=IVFConfiguration(dimension=3, distance="cosine"),
+                    ivf=IVFConfiguration(dimension=3, distance="cosine", use_spfresh=True),
                     embedding_function=None,
                 ),
             )
