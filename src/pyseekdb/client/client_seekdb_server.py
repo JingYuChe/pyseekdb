@@ -3,6 +3,7 @@ Remote server mode client - based on pymysql
 Supports both seekdb Server and OceanBase Server
 """
 
+import contextlib
 import logging
 from collections.abc import Sequence
 
@@ -79,6 +80,8 @@ class RemoteServerClient(BaseClient):
                 **self.kwargs,
             )
             logger.info(f"✅ Connected to remote server: {self.host}:{self.port}/{self.database}")
+            with contextlib.suppress(Exception):
+                self._use_catalog_database()
 
         return self._connection
 
