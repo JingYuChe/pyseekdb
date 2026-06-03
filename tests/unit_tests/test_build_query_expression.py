@@ -43,7 +43,8 @@ class TestBuildQueryExpressionNotContains:
         }
         assert "must" not in expr["bool"]
 
-    def test_not_contains_only_uses_exists_positive_filter(self, client):
+    def test_not_contains_only_hoists_must_not_without_synthetic_filter(self, client):
+        """Namespace path injects ns/lt filters later; no exists/match_all leaf here."""
         with patch.object(client, "_build_metadata_filter_for_search_parm", return_value=[]):
             expr = client._build_query_expression({
                 "where_document": {"$not_contains": "TOKENZPX"},
@@ -51,7 +52,6 @@ class TestBuildQueryExpressionNotContains:
 
         assert expr == {
             "bool": {
-                "filter": [{"exists": {"field": "document"}}],
                 "must_not": [
                     {
                         "query_string": {
@@ -62,6 +62,7 @@ class TestBuildQueryExpressionNotContains:
                 ],
             }
         }
+        assert "filter" not in expr["bool"]
 
     def test_contains_with_metadata_filter_still_uses_must(self, client):
         with patch.object(
