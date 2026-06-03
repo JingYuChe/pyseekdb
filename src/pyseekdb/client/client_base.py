@@ -3944,6 +3944,19 @@ class BaseClient(BaseConnection, AdminAPI):
 
         return search_parm
 
+    @staticmethod
+    def _pure_must_not_clauses(expr: dict[str, Any] | None) -> list[dict[str, Any]] | None:
+        """Return inner must_not clauses when *expr* is ``{"bool": {"must_not": [...]}}`` only."""
+        if not isinstance(expr, dict) or set(expr.keys()) != {"bool"}:
+            return None
+        bool_node = expr.get("bool")
+        if not isinstance(bool_node, dict) or set(bool_node.keys()) != {"must_not"}:
+            return None
+        clauses = bool_node.get("must_not")
+        if not isinstance(clauses, list):
+            return None
+        return clauses
+
     def _build_query_expression(self, query: dict[str, Any]) -> dict[str, Any] | None:
         """
         Build query expression from query dict
@@ -3996,13 +4009,19 @@ class BaseClient(BaseConnection, AdminAPI):
             if doc_query:
                 # Build filter from where condition
                 filter_conditions = self._build_metadata_filter_for_search_parm(where)
+                negated = self._pure_must_not_clauses(doc_query)
 
                 if filter_conditions:
-                    # Full-text search with metadata filtering
+                    # $not_contains becomes a pure must_not bool; nesting that under
+                    # must triggers `bool query ... should have at least one positive clause`.
+                    if negated is not None:
+                        return {"bool": {"filter": filter_conditions, "must_not": negated}}
                     return {"bool": {"must": [doc_query], "filter": filter_conditions}}
-                else:
-                    # Full-text search only
-                    return doc_query
+                if negated is not None:
+                    # No metadata filter yet; match_all satisfies the positive-clause rule
+                    # until namespace filters are injected (collection stays standalone).
+                    return {"bool": {"filter": [{"match_all": {}}], "must_not": negated}}
+                return doc_query
 
         return None
 
@@ -4054,13 +4073,14 @@ class BaseClient(BaseConnection, AdminAPI):
 
         # Handle $not_contains - wrap query_string in must_not bool
         if "$not_contains" in where_document:
+            escaped_query = escape_string(where_document["$not_contains"])
             return _with_boost({
                 "bool": {
                     "must_not": [
                         {
                             "query_string": {
                                 "fields": ["document"],
-                                "query": where_document["$not_contains"],
+                                "query": escaped_query,
                             }
                         }
                     ]
