@@ -3957,6 +3957,42 @@ class BaseClient(BaseConnection, AdminAPI):
             return None
         return clauses
 
+    @staticmethod
+    def _positive_clause_for_must_not(must_not_clauses: list[dict[str, Any]]) -> dict[str, Any]:
+        """Build a permissive positive filter leaf for must_not-only bools (OB rejects match_all)."""
+        for clause in must_not_clauses:
+            if not isinstance(clause, dict):
+                continue
+            term_body = clause.get("term")
+            if isinstance(term_body, dict) and term_body:
+                field = next(iter(term_body))
+                return {"range": {field: {"gte": -9223372036854775808}}}
+            terms_body = clause.get("terms")
+            if isinstance(terms_body, dict) and terms_body:
+                field = next(iter(terms_body))
+                return {"range": {field: {"gte": -9223372036854775808}}}
+            qs_body = clause.get("query_string")
+            if isinstance(qs_body, dict):
+                fields = qs_body.get("fields") or ["document"]
+                field = fields[0] if fields else "document"
+                return {"exists": {"field": field}}
+        return {"exists": {"field": "document"}}
+
+    @staticmethod
+    def _hoist_must_not_from_filters(
+        filter_conditions: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Split a filter clause list into positive filters and hoisted must_not leaves."""
+        positive: list[dict[str, Any]] = []
+        negative: list[dict[str, Any]] = []
+        for cond in filter_conditions:
+            clauses = BaseClient._pure_must_not_clauses(cond)
+            if clauses is not None:
+                negative.extend(clauses)
+            else:
+                positive.append(cond)
+        return positive, negative
+
     def _build_query_expression(self, query: dict[str, Any]) -> dict[str, Any] | None:
         """
         Build query expression from query dict
@@ -3983,18 +4019,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 # should have at least one positive clause`, so hoist their must_not
                 # clauses onto the outer bool (which gains a positive `filter` once the
                 # namespace filter is injected) instead of nesting them standalone.
-                positive: list[dict[str, Any]] = []
-                negative: list[dict[str, Any]] = []
-                for cond in filter_conditions:
-                    if (
-                        isinstance(cond, dict)
-                        and set(cond.keys()) == {"bool"}
-                        and isinstance(cond["bool"], dict)
-                        and set(cond["bool"].keys()) == {"must_not"}
-                    ):
-                        negative.extend(cond["bool"]["must_not"])
-                    else:
-                        positive.append(cond)
+                positive, negative = self._hoist_must_not_from_filters(filter_conditions)
                 bool_q: dict[str, Any] = {}
                 if positive:
                     bool_q["filter"] = positive
@@ -4007,21 +4032,28 @@ class BaseClient(BaseConnection, AdminAPI):
             # Build document query using query_string
             doc_query = self._build_document_query(where_document, boost=boost)
             if doc_query:
-                # Build filter from where condition
                 filter_conditions = self._build_metadata_filter_for_search_parm(where)
-                negated = self._pure_must_not_clauses(doc_query)
+                pos_filters, meta_must_not = self._hoist_must_not_from_filters(filter_conditions)
+                doc_must_not = self._pure_must_not_clauses(doc_query)
+                must_not_all = list(meta_must_not)
+                if doc_must_not is not None:
+                    must_not_all.extend(doc_must_not)
 
-                if filter_conditions:
-                    # $not_contains becomes a pure must_not bool; nesting that under
-                    # must triggers `bool query ... should have at least one positive clause`.
-                    if negated is not None:
-                        return {"bool": {"filter": filter_conditions, "must_not": negated}}
-                    return {"bool": {"must": [doc_query], "filter": filter_conditions}}
-                if negated is not None:
-                    # No metadata filter yet; match_all satisfies the positive-clause rule
-                    # until namespace filters are injected (collection stays standalone).
-                    return {"bool": {"filter": [{"match_all": {}}], "must_not": negated}}
-                return doc_query
+                if not filter_conditions and doc_must_not is None:
+                    return doc_query
+
+                bool_q: dict[str, Any] = {}
+                if doc_must_not is None:
+                    bool_q["must"] = [doc_query]
+                if pos_filters:
+                    bool_q["filter"] = pos_filters
+                if must_not_all:
+                    bool_q["must_not"] = must_not_all
+                # Pure negation ($not_contains, $ne, …) needs a positive clause unless
+                # a scoring `must` is already present.
+                if doc_must_not is not None and not pos_filters and "must" not in bool_q:
+                    bool_q["filter"] = [self._positive_clause_for_must_not(must_not_all)]
+                return {"bool": bool_q}
 
         return None
 
@@ -4187,8 +4219,17 @@ class BaseClient(BaseConnection, AdminAPI):
                 # Scalar conditions must be ANDed via a (non-scoring) `filter`
                 # clause, not `must`: the kernel rejects scalar term/range queries
                 # inside must/should with `scalar ... query in must/should clause
-                # not supported`.
-                result.append({"bool": {"filter": must_conditions}})
+                # not supported`. Hoist must_not-only leaves ($ne/$nin/$not) so they
+                # are not nested as standalone bools inside `filter`.
+                positive, negative = self._hoist_must_not_from_filters(must_conditions)
+                bool_q: dict[str, Any] = {}
+                if positive:
+                    bool_q["filter"] = positive
+                elif negative:
+                    bool_q["filter"] = [self._positive_clause_for_must_not(negative)]
+                if negative:
+                    bool_q["must_not"] = negative
+                result.append({"bool": bool_q})
             return result
 
         if "$or" in condition:
@@ -4335,14 +4376,23 @@ class BaseClient(BaseConnection, AdminAPI):
         # Build knn expressions (one per vector)
         knn_exprs: list[dict[str, Any]] = []
         filter_conditions = self._build_metadata_filter_for_search_parm(where)
+        pos_filters, must_not_clauses = self._hoist_must_not_from_filters(filter_conditions)
+        knn_filter: list[dict[str, Any]] | None = None
+        if must_not_clauses:
+            bool_filter: dict[str, Any] = {
+                "must_not": must_not_clauses,
+                "filter": pos_filters or [self._positive_clause_for_must_not(must_not_clauses)],
+            }
+            knn_filter = [{"bool": bool_filter}]
+        elif pos_filters:
+            knn_filter = pos_filters
         for vector in vectors:
             expr = {"field": "embedding", "k": n_results, "query_vector": vector}
             if boost is not None:
                 expr["boost"] = boost
 
-            # Add filter using JSON_EXTRACT format
-            if filter_conditions:
-                expr["filter"] = filter_conditions
+            if knn_filter is not None:
+                expr["filter"] = knn_filter
 
             knn_exprs.append(expr)
 
