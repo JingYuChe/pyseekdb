@@ -12,6 +12,10 @@ from pyseekdb.client.schema import Schema
 
 RECYCLEBIN_PREFIX = "__recyclebin_"
 
+# LTABLE_BG scans every 30s; poll slightly beyond two intervals.
+BG_POLL_TIMEOUT_SEC = 65.0
+BG_POLL_INTERVAL_SEC = 1.0
+
 
 # --------------------------------------------------------------------------- #
 # helpers                                                                     #
@@ -35,6 +39,12 @@ def _execute(client, sql: str):
     return client._server._execute(sql)
 
 
+def _catalog_table(client, table: str) -> str:
+    """Qualified catalog table in the client's configured database (default: test)."""
+    db = client._server.database
+    return f"`{db}`.`{table}`"
+
+
 def _is_ss_mode(client) -> bool:
     """Best-effort detect whether the connected OB cluster is in SS mode."""
     try:
@@ -52,9 +62,10 @@ def _is_ss_mode(client) -> bool:
 
 
 def _fetch_namespace_name(client, collection_id: str, namespace_id: int):
+    ns_table = _catalog_table(client, "sdk_namespaces")
     rows = _execute(
         client,
-        f"SELECT namespace_name FROM sdk_namespaces "
+        f"SELECT namespace_name FROM {ns_table} "
         f"WHERE collection_id = '{collection_id}' AND namespace_id = {namespace_id}",
     )
     if not rows:
@@ -63,9 +74,10 @@ def _fetch_namespace_name(client, collection_id: str, namespace_id: int):
 
 
 def _count_ltables(client, collection_id: str, namespace_id: int) -> int:
+    lt_table = _catalog_table(client, "sdk_ltables")
     rows = _execute(
         client,
-        f"SELECT COUNT(*) AS c FROM sdk_ltables "
+        f"SELECT COUNT(*) AS c FROM {lt_table} "
         f"WHERE collection_id = '{collection_id}' AND namespace_id = {namespace_id}",
     )
     return int(rows[0]["c"] if "c" in rows[0] else rows[0]["C"])
@@ -73,19 +85,21 @@ def _count_ltables(client, collection_id: str, namespace_id: int) -> int:
 
 def _count_logic_schema_rows(client, collection_id: str, namespace_id: int) -> int:
     tbl = NamespaceCollectionNames.logic_schema_table_name(collection_id)
+    db = client._server.database
     rows = _execute(
         client,
-        f"SELECT COUNT(*) AS c FROM `{tbl}` WHERE namespace_id = {namespace_id}",
+        f"SELECT COUNT(*) AS c FROM `{db}`.`{tbl}` WHERE namespace_id = {namespace_id}",
     )
     return int(rows[0]["c"] if "c" in rows[0] else rows[0]["C"])
 
 
 def _count_hot_table_rows(client, collection_id: str, namespace_id: int) -> int:
     tbl = NamespaceCollectionNames.hot_table_name(collection_id)
+    db = client._server.database
     try:
         rows = _execute(
             client,
-            f"SELECT COUNT(*) AS c FROM `{tbl}` WHERE namespace_id = {namespace_id}",
+            f"SELECT COUNT(*) AS c FROM `{db}`.`{tbl}` WHERE namespace_id = {namespace_id}",
         )
     except Exception:
         return -1  # table missing
@@ -94,31 +108,66 @@ def _count_hot_table_rows(client, collection_id: str, namespace_id: int) -> int:
 
 def _count_logic_data_rows(client, collection_id: str, namespace_id: int, ltable_id: int | None = None) -> int:
     tbl = NamespaceCollectionNames.data_table_name(collection_id)
+    db = client._server.database
     if ltable_id is not None:
         where = f"namespace_id = {namespace_id} AND ltable_id = {ltable_id}"
     else:
         where = f"namespace_id = {namespace_id}"
     rows = _execute(
         client,
-        f"SELECT COUNT(*) AS c FROM `{tbl}` WHERE {where}",
+        f"SELECT COUNT(*) AS c FROM `{db}`.`{tbl}` WHERE {where}",
     )
     return int(rows[0]["c"] if "c" in rows[0] else rows[0]["C"])
 
 
 def _count_kv_data_rows(client, collection_id: str, namespace_id: int) -> int:
     tbl = NamespaceCollectionNames.kv_data_table_name(collection_id)
+    db = client._server.database
     try:
         rows = _execute(
             client,
-            f"SELECT COUNT(*) AS c FROM `{tbl}` WHERE namespace_id = {namespace_id}",
+            f"SELECT COUNT(*) AS c FROM `{db}`.`{tbl}` WHERE namespace_id = {namespace_id}",
         )
     except Exception:
         return -1
     return int(rows[0]["c"] if "c" in rows[0] else rows[0]["C"])
 
 
+def _wait_until(predicate, timeout_sec: float = BG_POLL_TIMEOUT_SEC,
+                interval_sec: float = BG_POLL_INTERVAL_SEC, desc: str = ""):
+    deadline = time.time() + timeout_sec
+    last_exc = None
+    while time.time() < deadline:
+        try:
+            if predicate():
+                return
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+        time.sleep(interval_sec)
+    msg = f"timeout after {timeout_sec}s waiting for {desc!r}"
+    if last_exc is not None:
+        raise AssertionError(msg) from last_exc
+    raise AssertionError(msg)
+
+
+def _seed_kv_data(client, collection_id: str, namespace_id: int, count: int = 5):
+    """Seed rows in <collection>_kv_data_table (primary target of LTABLE_BG ns delete)."""
+    tbl = NamespaceCollectionNames.kv_data_table_name(collection_id)
+    db = client._server.database
+    values = []
+    for i in range(count):
+        key_hex = f"{i + 1:064x}"
+        values.append(f"({namespace_id}, X'{key_hex}', X'00')")
+    _execute(
+        client,
+        f"INSERT INTO `{db}`.`{tbl}` (namespace_id, kv_key, kv_value) "
+        f"VALUES {', '.join(values)}",
+    )
+
+
 def _seed_logic_data(client, collection_id: str, namespace_id: int, ltable_id: int, count: int = 3):
     tbl = NamespaceCollectionNames.data_table_name(collection_id)
+    db = client._server.database
     values = []
     for i in range(count):
         values.append(
@@ -126,13 +175,18 @@ def _seed_logic_data(client, collection_id: str, namespace_id: int, ltable_id: i
             f"X'0000803f0000000000000000', "
             f"'{{\"id\": \"id_{i}\", \"metadata\": {{\"k\": \"v\"}}}}')"
         )
-    _execute(client, f"INSERT INTO `{tbl}` (namespace_id, ltable_id, document, embedding, data_content) VALUES {', '.join(values)}")
+    _execute(
+        client,
+        f"INSERT INTO `{db}`.`{tbl}` (namespace_id, ltable_id, document, embedding, data_content) "
+        f"VALUES {', '.join(values)}",
+    )
 
 
 def _fetch_ltable_id(client, collection_id: str, namespace_id: int) -> int | None:
+    lt_table = _catalog_table(client, "sdk_ltables")
     rows = _execute(
         client,
-        f"SELECT ltable_id FROM sdk_ltables "
+        f"SELECT ltable_id FROM {lt_table} "
         f"WHERE collection_id = '{collection_id}' AND namespace_id = {namespace_id} "
         f"ORDER BY ltable_id LIMIT 1",
     )
@@ -141,19 +195,116 @@ def _fetch_ltable_id(client, collection_id: str, namespace_id: int) -> int | Non
     return int(rows[0]["ltable_id"] if "ltable_id" in rows[0] else rows[0]["LTABLE_ID"])
 
 
-def _seed_hot_table(client, collection_id: str, namespace_id: int):
-    """In SS mode insert a synthetic hot_table row so the DELETE has something
-    to remove and we can verify the cleanup."""
+def _hot_table_exists(client, collection_id: str) -> bool:
     tbl = NamespaceCollectionNames.hot_table_name(collection_id)
+    db = client._server.database
+    try:
+        rows = _execute(
+            client,
+            "SELECT 1 AS ok FROM information_schema.tables "
+            f"WHERE table_schema = '{db}' AND table_name = '{tbl}'",
+        )
+        return bool(rows)
+    except Exception:
+        return False
+
+
+def _ensure_hot_table(client, collection_id: str) -> str | None:
+    """SDK only creates hot_table in SS mode; on SN create it for BG cleanup tests.
+
+    Returns None on success, or an error message string.
+    """
+    if _hot_table_exists(client, collection_id):
+        return None
+    tbl = NamespaceCollectionNames.hot_table_name(collection_id)
+    db = client._server.database
+    tg = NamespaceCollectionNames.tablegroup_name(collection_id)
+    ddl_with_tg = (
+        f"CREATE TABLE IF NOT EXISTS `{db}`.`{tbl}` ("
+        f"  namespace_id BIGINT UNSIGNED NOT NULL,"
+        f"  last_access_time TIMESTAMP(6) NOT NULL,"
+        f"  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
+        f"  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,"
+        f"  PRIMARY KEY(namespace_id)"
+        f") TABLEGROUP=`{tg}` COMMENT='热点/TTL附属表' DEFAULT CHARSET=utf8mb4 "
+        f"PARTITION BY KEY(namespace_id) PARTITIONS 1000"
+    )
+    ddl_plain = (
+        f"CREATE TABLE IF NOT EXISTS `{db}`.`{tbl}` ("
+        f"  namespace_id BIGINT UNSIGNED NOT NULL,"
+        f"  last_access_time TIMESTAMP(6) NOT NULL,"
+        f"  PRIMARY KEY(namespace_id)"
+        f") COMMENT='热点/TTL附属表' DEFAULT CHARSET=utf8mb4 "
+        f"PARTITION BY KEY(namespace_id) PARTITIONS 1000"
+    )
+    last_err = ""
+    for ddl in (ddl_with_tg, ddl_plain):
+        try:
+            _execute(client, ddl)
+            if _hot_table_exists(client, collection_id):
+                return None
+        except Exception as exc:  # noqa: BLE001
+            last_err = str(exc)
+    return last_err or "hot_table not visible after CREATE"
+
+
+def _seed_hot_table(client, collection_id: str, namespace_id: int):
+    """Insert a hot_table row (table must exist — use _ensure_hot_table on SN first)."""
+    if _ensure_hot_table(client, collection_id) is not None:
+        return False
+    tbl = NamespaceCollectionNames.hot_table_name(collection_id)
+    db = client._server.database
     try:
         _execute(
             client,
-            f"INSERT INTO `{tbl}` (namespace_id, last_access_time) "
+            f"INSERT INTO `{db}`.`{tbl}` (namespace_id, last_access_time) "
             f"VALUES ({namespace_id}, NOW(6))",
         )
         return True
     except Exception:
         return False
+
+
+def _count_active_ltables(client, collection_id: str, namespace_id: int) -> int:
+    """sdk_ltables rows whose name is not a recyclebin entry (BG skip guard)."""
+    lt_table = _catalog_table(client, "sdk_ltables")
+    rows = _execute(
+        client,
+        f"SELECT COUNT(*) AS c FROM {lt_table} "
+        f"WHERE collection_id = '{collection_id}' AND namespace_id = {namespace_id} "
+        f"AND ltable_name NOT LIKE '{RECYCLEBIN_PREFIX}%'",
+    )
+    return int(rows[0]["c"] if "c" in rows[0] else rows[0]["C"])
+
+
+def _insert_active_ltable_row(
+    client,
+    collection_id: str,
+    namespace_id: int,
+    ltable_name: str,
+    ltable_id: int,
+):
+    lt_table = _catalog_table(client, "sdk_ltables")
+    _execute(
+        client,
+        f"INSERT INTO {lt_table} "
+        f"(ltable_id, collection_id, namespace_id, ltable_name) "
+        f"VALUES ({ltable_id}, '{collection_id}', {namespace_id}, '{ltable_name}')",
+    )
+
+
+def _fetch_namespace_drop_history(client, collection_id: str, namespace_id: int):
+    try:
+        return _execute(
+            client,
+            "SELECT operation_type, operation_status, total_deleted_rows "
+            "FROM oceanbase.__all_virtual_agent_drop_history "
+            f"WHERE collection_id = '{collection_id}' "
+            f"  AND namespace_id = {namespace_id} AND ltable_id = 0 "
+            "ORDER BY finish_time DESC LIMIT 5",
+        )
+    except Exception:
+        return None
 
 
 def _drop_namespace_via_pl(client, collection_id: str, namespace_id: int):
@@ -188,7 +339,7 @@ def _second_oceanbase_client():
 
 
 class TestDropNamespaceCatalogValidation:
-    """Validate everything the DROP_NAMESPACE synchronous transaction must do."""
+    """DROP_NAMESPACE sync transaction + LTABLE_BG async namespace deletion."""
 
     # ------------------------------------------------------------- #
     # 1. Happy path: rename + cleanup all relevant rows              #
@@ -216,8 +367,8 @@ class TestDropNamespaceCatalogValidation:
                 assert _seed_hot_table(client, coll_id, ns_id) is True
                 assert _count_hot_table_rows(client, coll_id, ns_id) == 1
 
-            # Seed some logic_data rows so we can verify they survive the sync
-            # drop phase (async background task cleans them up later).
+            # Seed logic_data rows — sync DROP must not touch them; LTABLE_BG ns DAG
+            # deletes kv_data (see async tests), not logic_data_table.
             lt_id = _fetch_ltable_id(client, coll_id, ns_id)
             assert lt_id is not None, "should have a default ltable"
             _seed_logic_data(client, coll_id, ns_id, lt_id, count=3)
@@ -257,9 +408,7 @@ class TestDropNamespaceCatalogValidation:
     # 1b. Async cleanup: wait 32s, verify physical data is gone      #
     # ------------------------------------------------------------- #
     def test_drop_namespace_async_cleanup(self, oceanbase_client):
-        """After DROP_NAMESPACE renames the namespace, a background task (30s
-        interval) picks up __recyclebin_ entries and removes physical data.
-        Wait 32s and verify the renamed namespace and its data are gone."""
+        """LTABLE_BG NAMESPACE_DELETE: batch-delete kv_data, remove sdk_namespaces row."""
         client = oceanbase_client
         collection = _make_collection(client)
         coll_id = collection.id
@@ -269,38 +418,150 @@ class TestDropNamespaceCatalogValidation:
             lt_id = _fetch_ltable_id(client, coll_id, ns_id)
             assert lt_id is not None
 
-            # Seed data
+            kv_before = max(_count_kv_data_rows(client, coll_id, ns_id), 0)
+            _seed_kv_data(client, coll_id, ns_id, count=5)
             _seed_logic_data(client, coll_id, ns_id, lt_id, count=3)
+            kv_after_seed = _count_kv_data_rows(client, coll_id, ns_id)
+            assert kv_after_seed > kv_before, (
+                f"kv_data should have rows for BG to delete, before={kv_before} after={kv_after_seed}"
+            )
             assert _count_logic_data_rows(client, coll_id, ns_id, lt_id) == 3
 
-            # Drop — sync phase renames namespace, removes catalog entries
             _drop_namespace_via_pl(client, coll_id, ns_id)
 
             recycled_name = _fetch_namespace_name(client, coll_id, ns_id)
             assert recycled_name is not None
             assert recycled_name.startswith(RECYCLEBIN_PREFIX)
-            assert "ns_async" in recycled_name
+            assert _count_kv_data_rows(client, coll_id, ns_id) == kv_after_seed
+            assert _count_ltables(client, coll_id, ns_id) == 0
 
-            # Data still present immediately after drop
-            assert _count_logic_data_rows(client, coll_id, ns_id, lt_id) == 3
+            def _bg_done():
+                return (
+                    _fetch_namespace_name(client, coll_id, ns_id) is None
+                    and _count_kv_data_rows(client, coll_id, ns_id) == 0
+                )
 
-            # Wait for async background task (scans every 30s, 32s should suffice)
-            time.sleep(32)
+            _wait_until(_bg_done, desc="namespace mapping and kv_data removed by LTABLE_BG")
 
-            # After background task: renamed namespace entry should be gone
-            final_name = _fetch_namespace_name(client, coll_id, ns_id)
-            assert final_name is None, (
-                f"async task should have removed the __recyclebin_ namespace row, "
-                f"got {final_name!r}"
+        finally:
+            client.delete_collection(name=collection.name)
+
+    def test_async_skipped_while_active_ltable_remains(self, oceanbase_client):
+        """BG must not delete sdk_namespaces while a non-recyclebin sdk_ltables row exists."""
+        client = oceanbase_client
+        collection = _make_collection(client)
+        coll_id = collection.id
+        blocker_lt_id = 9_000_001
+        try:
+            ns = collection.create_namespace("ns_block")
+            ns_id = int(ns.namespace_id)
+            _drop_namespace_via_pl(client, coll_id, ns_id)
+            assert _fetch_namespace_name(client, coll_id, ns_id).startswith(RECYCLEBIN_PREFIX)
+            assert _count_ltables(client, coll_id, ns_id) == 0
+
+            # Simulate a stuck active ltable row (sync phase normally clears these).
+            _insert_active_ltable_row(
+                client, coll_id, ns_id, "active_ltable_blocker", blocker_lt_id,
+            )
+            assert _count_active_ltables(client, coll_id, ns_id) == 1
+
+            # Wait one BG scan period; scheduler must skip while active ltable exists.
+            time.sleep(35)
+            assert _fetch_namespace_name(client, coll_id, ns_id) is not None, (
+                "recyclebin namespace row must remain while active ltable exists"
             )
 
-            # Logic data should also be gone
-            data_rows = _count_logic_data_rows(client, coll_id, ns_id, lt_id)
-            assert data_rows == 0, (
-                f"async task should have cleaned up logic_data rows, "
-                f"found {data_rows}"
+            _execute(
+                client,
+                f"DELETE FROM {_catalog_table(client, 'sdk_ltables')} "
+                f"WHERE ltable_id = {blocker_lt_id}",
+            )
+            assert _count_active_ltables(client, coll_id, ns_id) == 0
+
+            _wait_until(
+                lambda: _fetch_namespace_name(client, coll_id, ns_id) is None,
+                desc="namespace row removed after blocker ltable deleted",
+            )
+        finally:
+            client.delete_collection(name=collection.name)
+
+    def test_async_no_kv_data_fast_cleanup(self, oceanbase_client):
+        """Recyclebin namespace with zero kv rows should still be removed by BG."""
+        client = oceanbase_client
+        collection = _make_collection(client)
+        coll_id = collection.id
+        try:
+            ns = collection.create_namespace("ns_empty_kv")
+            ns_id = int(ns.namespace_id)
+            assert _count_kv_data_rows(client, coll_id, ns_id) == 0
+
+            _drop_namespace_via_pl(client, coll_id, ns_id)
+            assert _fetch_namespace_name(client, coll_id, ns_id).startswith(RECYCLEBIN_PREFIX)
+
+            _wait_until(
+                lambda: _fetch_namespace_name(client, coll_id, ns_id) is None,
+                desc="empty-kv recyclebin namespace removed",
+            )
+        finally:
+            client.delete_collection(name=collection.name)
+
+    def test_async_hot_table_cleaned_on_non_ss(self, oceanbase_client):
+        """When hot_table exists, sync DROP (SN) leaves it; LTABLE_BG deletes it."""
+        client = oceanbase_client
+        if _is_ss_mode(client):
+            pytest.skip("SS mode deletes hot_table in synchronous DROP_NAMESPACE")
+        collection = _make_collection(client)
+        coll_id = collection.id
+        hot_err = _ensure_hot_table(client, coll_id)
+        if hot_err is not None:
+            pytest.fail(f"hot_table setup failed: {hot_err}")
+        try:
+            ns = collection.create_namespace("ns_hot_async")
+            ns_id = int(ns.namespace_id)
+            assert _seed_hot_table(client, coll_id, ns_id) is True
+            assert _count_hot_table_rows(client, coll_id, ns_id) == 1
+
+            _drop_namespace_via_pl(client, coll_id, ns_id)
+            assert _fetch_namespace_name(client, coll_id, ns_id).startswith(RECYCLEBIN_PREFIX)
+            assert _count_hot_table_rows(client, coll_id, ns_id) == 1, (
+                "sync DROP must not remove hot_table on non-SS"
             )
 
+            def _hot_and_ns_gone():
+                return (
+                    _count_hot_table_rows(client, coll_id, ns_id) == 0
+                    and _fetch_namespace_name(client, coll_id, ns_id) is None
+                )
+
+            _wait_until(_hot_and_ns_gone, desc="hot_table and namespace removed by BG")
+        finally:
+            client.delete_collection(name=collection.name)
+
+    def test_async_drop_history_recorded(self, oceanbase_client):
+        """After successful BG delete, audit row appears in agent drop history."""
+        client = oceanbase_client
+        collection = _make_collection(client)
+        coll_id = collection.id
+        try:
+            ns = collection.create_namespace("ns_history")
+            ns_id = int(ns.namespace_id)
+            _seed_kv_data(client, coll_id, ns_id, count=2)
+            _drop_namespace_via_pl(client, coll_id, ns_id)
+
+            def _bg_done():
+                return _fetch_namespace_name(client, coll_id, ns_id) is None
+
+            _wait_until(_bg_done, desc="namespace removed for history check")
+
+            history = _fetch_namespace_drop_history(client, coll_id, ns_id)
+            if history is None:
+                pytest.skip("__all_virtual_agent_drop_history not available")
+            assert len(history) >= 1, "expected at least one history row"
+            row = history[0]
+            op = row.get("operation_type") or row.get("OPERATION_TYPE")
+            status = row.get("operation_status") or row.get("OPERATION_STATUS")
+            assert op == "NAMESPACE_DELETE", f"unexpected operation_type: {op!r}"
+            assert status == "COMPLETED", f"unexpected operation_status: {status!r}"
         finally:
             client.delete_collection(name=collection.name)
 
@@ -334,9 +595,10 @@ class TestDropNamespaceCatalogValidation:
             ns = collection.create_namespace("ns_multi")
             ns_id = int(ns.namespace_id)
             # Insert two extra ltable rows directly so we can verify bulk delete.
+            lt_table = _catalog_table(client, "sdk_ltables")
             _execute(
                 client,
-                f"INSERT INTO sdk_ltables (collection_id, namespace_id, ltable_name) "
+                f"INSERT INTO {lt_table} (collection_id, namespace_id, ltable_name) "
                 f"VALUES ('{collection.id}', {ns_id}, 'extra_lt_a'),"
                 f"       ('{collection.id}', {ns_id}, 'extra_lt_b')",
             )
@@ -360,6 +622,7 @@ class TestDropNamespaceCatalogValidation:
         collection = _make_collection(client)
         coll_id = collection.id
         schema_tbl = NamespaceCollectionNames.logic_schema_table_name(coll_id)
+        schema_tbl_q = f"`{client._server.database}`.`{schema_tbl}`"
         try:
             ns = collection.create_namespace("ns_rollback")
             ns_id = int(ns.namespace_id)
@@ -370,7 +633,7 @@ class TestDropNamespaceCatalogValidation:
 
             # Sabotage: drop the logic_schema_table so step 6 inside the
             # DROP_NAMESPACE transaction will fail with OB_TABLE_NOT_EXIST.
-            _execute(client, f"DROP TABLE `{schema_tbl}`")
+            _execute(client, f"DROP TABLE {schema_tbl_q}")
 
             with pytest.raises(Exception):
                 _drop_namespace_via_pl(client, coll_id, ns_id)
@@ -389,7 +652,7 @@ class TestDropNamespaceCatalogValidation:
             try:
                 _execute(
                     client,
-                    f"CREATE TABLE IF NOT EXISTS `{schema_tbl}` ("
+                    f"CREATE TABLE IF NOT EXISTS {schema_tbl_q} ("
                     f"  namespace_id BIGINT UNSIGNED NOT NULL,"
                     f"  ltable_id BIGINT UNSIGNED NOT NULL,"
                     f"  schema_content JSON NOT NULL,"
