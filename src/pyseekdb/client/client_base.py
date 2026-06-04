@@ -1341,7 +1341,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 kv_key VARBINARY(1024) NOT NULL,
                 kv_value LONGBLOB NOT NULL,
                 PRIMARY KEY(namespace_id, kv_key)
-            ) TABLEGROUP=`{tg_name}` COMMENT='索引与映射KV表' DEFAULT CHARSET=utf8mb4 LOB_INROW_THRESHOLD = 786432
+            ) TABLEGROUP=`{tg_name}` COMMENT='索引与映射KV表' DEFAULT CHARSET=utf8mb4 LOB_INROW_THRESHOLD=786432
             {partition_clause}""")
 
             self._execute(f"""CREATE TABLE `{schema_table}` (
