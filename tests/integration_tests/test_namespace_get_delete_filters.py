@@ -5,6 +5,7 @@ Covers:
   - delete(where=...) / delete(where_document=...)
   - get(where=...) / get(where_document=...)
   - multi-namespace isolation for metadata filter delete
+  - cross-namespace get(where=...) on a shared connection (regression)
 """
 
 from __future__ import annotations
@@ -84,8 +85,7 @@ class TestNamespaceDeleteWhere:
             )
             assert_get_where_count(ns, {"tag": "keep"}, gt["keep"], limit=50)
         finally:
-            # cleanup(db_client, collection)
-            pass
+            cleanup(db_client, collection)
 
 
 class TestNamespaceGetWhere:
@@ -183,7 +183,7 @@ class TestNamespaceFilterMultiNs:
             assert_get_where_count(
                 ns_b,
                 {"tag": "purge"},
-                gt["purge"],
+                10,
                 limit=10,
                 check_meta={"tag": "purge", "ns_tag": "beta"},
             )
@@ -196,6 +196,54 @@ class TestNamespaceFilterMultiNs:
             )
         finally:
             cleanup(db_client, collection)
+
+
+class TestNamespaceCrossNsGetWhere:
+    """Regression: get(where=...) after switching namespace on one connection.
+
+    Client sets @collection_id, @namespace_id, and @ltable_id before each DQL call;
+    OB logic-table kernel must honor the session context when metadata filters are used.
+    """
+
+    def test_get_where_alternates_namespaces_after_delete(self, db_client):
+        collection = create_ns_collection(db_client, suffix="_cross_ns_get")
+        ns_a = collection.create_namespace("cross_alpha")
+        ns_b = collection.create_namespace("cross_beta")
+        corpus_a, gt = build_filter_corpus(
+            keep_count=50,
+            purge_count=50,
+            id_prefix="alpha",
+            ns_tag="alpha",
+        )
+        corpus_b, _ = build_filter_corpus(
+            keep_count=50,
+            purge_count=50,
+            id_prefix="beta",
+            ns_tag="beta",
+        )
+        try:
+            load_dml_corpus(ns_a, corpus_a)
+            load_dml_corpus(ns_b, corpus_b)
+            ns_a.delete(where={"tag": "purge"})
+
+            assert_get_where_count(ns_a, {"tag": "purge"}, 0)
+            assert_get_where_count(
+                ns_b,
+                {"tag": "purge"},
+                10,
+                limit=10,
+                check_meta={"tag": "purge", "ns_tag": "beta"},
+            )
+            assert_get_where_count(
+                ns_a,
+                {"tag": "keep"},
+                min(20, gt["keep"]),
+                limit=20,
+                check_meta={"tag": "keep", "ns_tag": "alpha"},
+            )
+        finally:
+            # cleanup(db_client, collection)
+            pass
 
 
 if __name__ == "__main__":

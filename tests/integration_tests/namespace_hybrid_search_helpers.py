@@ -18,6 +18,8 @@ from namespace_fts_helpers import (
     INDEX_SETTLE_SECONDS,
     TOKEN_ALP,
     TOKEN_ZPX,
+    VECTOR_DISTANCE_METRICS,
+    VectorDistanceMetric,
     CorpusRecord,
     assert_hybrid_fulltext_result,
     assert_not_contains_no_token_leak,
@@ -133,19 +135,111 @@ def l2_squared(a: list[float], b: list[float]) -> float:
     return sum((x - y) ** 2 for x, y in zip(a, b))
 
 
+def _vector_l2_norm(vec: list[float]) -> float:
+    return math.sqrt(sum(x * x for x in vec))
+
+
+def knn_compare_distance(
+    a: list[float],
+    b: list[float],
+    metric: VectorDistanceMetric = "l2",
+) -> float:
+    """Distance value used for KNN ground-truth ordering (smaller = nearer)."""
+    if metric == "l2":
+        return l2_squared(a, b)
+    if metric == "cosine":
+        norm_a = _vector_l2_norm(a)
+        norm_b = _vector_l2_norm(b)
+        if norm_a == 0.0 or norm_b == 0.0:
+            return 2.0
+        cos_sim = sum(x * y for x, y in zip(a, b)) / (norm_a * norm_b)
+        return 1.0 - cos_sim
+    raise ValueError(f"unsupported vector distance metric: {metric!r}")
+
+
+def ensure_shared_hybrid_search_collection(
+    shared_cache: dict[str, dict[str, Any]],
+    db_client: Any,
+    request: Any,
+    vector_distance: VectorDistanceMetric,
+) -> dict[str, Any]:
+    """Return or create a shared (db mode, distance metric) corpus + collection entry."""
+    mode = (
+        request.node.callspec.params["db_client"]
+        if request.node.callspec
+        else "default"
+    )
+    cache_key = f"{mode}:{vector_distance}"
+    if cache_key not in shared_cache:
+        corpus, collection = setup_large_fts_collection(
+            db_client, distance=vector_distance
+        )
+        shared_cache[cache_key] = {
+            "db_client": db_client,
+            "corpus": corpus,
+            "collection": collection,
+            "vector_distance": vector_distance,
+        }
+    return shared_cache[cache_key]
+
+
+def _knn_scored_rows(
+    corpus: list[CorpusRecord],
+    query_vector: list[float],
+    where: dict[str, Any] | None = None,
+    *,
+    distance_metric: VectorDistanceMetric = "l2",
+) -> list[tuple[str, float, int]]:
+    """(doc_id, compare_distance, metadata seq) for rows matching *where*."""
+    rows: list[tuple[str, float, int]] = []
+    for rec in corpus:
+        if where is not None and not corpus_matches_where(rec, where):
+            continue
+        seq = rec.metadata.get("seq", 0)
+        if not isinstance(seq, int):
+            seq = 0
+        rows.append(
+            (
+                rec.doc_id,
+                knn_compare_distance(rec.embedding, query_vector, distance_metric),
+                seq,
+            )
+        )
+    return rows
+
+
+def nearest_knn_doc_ids(
+    corpus: list[CorpusRecord],
+    query_vector: list[float],
+    where: dict[str, Any] | None = None,
+    *,
+    distance_metric: VectorDistanceMetric = "l2",
+    tol: float = 1e-9,
+) -> set[str]:
+    """Doc ids at minimum compare distance (ties allowed)."""
+    scored = _knn_scored_rows(
+        corpus, query_vector, where, distance_metric=distance_metric
+    )
+    if not scored:
+        return set()
+    min_d = min(d for _, d, _ in scored)
+    return {doc_id for doc_id, d, _ in scored if math.isclose(d, min_d, abs_tol=tol)}
+
+
 def expected_knn_ids(
     corpus: list[CorpusRecord],
     query_vector: list[float],
     n_results: int,
     where: dict[str, Any] | None = None,
+    *,
+    distance_metric: VectorDistanceMetric = "l2",
 ) -> list[str]:
-    scored: list[tuple[str, float]] = []
-    for rec in corpus:
-        if where is not None and not corpus_matches_where(rec, where):
-            continue
-        scored.append((rec.doc_id, l2_squared(rec.embedding, query_vector)))
-    scored.sort(key=lambda item: (item[1], item[0]))
-    return [doc_id for doc_id, _ in scored[:n_results]]
+    scored = _knn_scored_rows(
+        corpus, query_vector, where, distance_metric=distance_metric
+    )
+    # Tie-break: distance, then seq (matches OB hybrid_search), then doc_id.
+    scored.sort(key=lambda item: (item[1], item[2], item[0]))
+    return [doc_id for doc_id, _, _ in scored[:n_results]]
 
 
 def assert_hybrid_search_index_result(
@@ -194,12 +288,20 @@ def assert_hybrid_knn_result(
     n_results: int,
     where: dict[str, Any] | None = None,
     *,
+    distance_metric: VectorDistanceMetric = "l2",
     check_top1: bool = True,
+    check_score_order: bool = True,
 ) -> None:
+    """Assert hybrid_search KNN branch results against corpus ground truth.
+
+    ``result["distances"]`` comes from OB ``__score`` via the client (higher = nearer),
+    not raw vector distance — only score monotonicity is checked here. Id order uses
+    corpus ``distance_metric`` ground truth.
+    """
     assert result is not None
     assert "ids" in result and result["ids"]
     ids = result["ids"][0]
-    distances = result.get("distances", [[]])[0] if result.get("distances") else []
+    scores = result.get("distances", [[]])[0] if result.get("distances") else []
     assert len(ids) <= n_results
     assert len(ids) > 0, "expected at least one KNN hit"
 
@@ -211,30 +313,49 @@ def assert_hybrid_knn_result(
                 f"id={doc_id!r} metadata does not satisfy knn.where={where!r}"
             )
 
-    if distances:
-        assert len(distances) == len(ids)
-        for dist in distances:
-            assert dist >= 0
-        for i in range(len(distances) - 1):
-            assert distances[i] <= distances[i + 1] or math.isclose(
-                distances[i], distances[i + 1]
-            ), f"KNN distances should be non-decreasing (L2): {distances!r}"
+    if scores:
+        assert len(scores) == len(ids)
+        if check_score_order:
+            for i in range(len(scores) - 1):
+                assert scores[i] >= scores[i + 1] or math.isclose(
+                    scores[i], scores[i + 1]
+                ), (
+                    f"KNN scores should be non-increasing (higher = nearer, "
+                    f"{distance_metric} index): {scores!r}"
+                )
 
-    expected = expected_knn_ids(corpus, query_vector, n_results, where)
-    if check_top1 and expected:
-        assert ids[0] == expected[0], (
-            f"top-1 KNN must be nearest neighbor, got {ids[0]!r} expected {expected[0]!r}"
+    expected = expected_knn_ids(
+        corpus, query_vector, n_results, where, distance_metric=distance_metric
+    )
+    if len(ids) == len(expected):
+        assert ids == expected, (
+            f"KNN id order mismatch ({distance_metric} ground truth): "
+            f"got {ids!r} expected {expected!r}"
+        )
+    elif check_top1 and expected:
+        nearest = nearest_knn_doc_ids(
+            corpus, query_vector, where, distance_metric=distance_metric
+        )
+        assert ids[0] in nearest, (
+            f"top-1 KNN must be among nearest neighbors ({distance_metric} tie set), "
+            f"got {ids[0]!r} expected one of {sorted(nearest)[:8]!r}"
+            f"{'…' if len(nearest) > 8 else ''}"
         )
 
     if len(ids) == n_results:
-        worst = distances[-1] if distances else float("inf")
-        for rec in corpus:
-            if where is not None and not corpus_matches_where(rec, where):
-                continue
-            d = l2_squared(rec.embedding, query_vector)
-            if rec.doc_id not in ids and (not distances or d < worst - 1e-9):
+        scored = _knn_scored_rows(
+            corpus, query_vector, where, distance_metric=distance_metric
+        )
+        if scored:
+            worst_d = max(
+                d for doc_id, d, _ in scored if doc_id in ids
+            )
+        else:
+            worst_d = float("inf")
+        for doc_id, d, _ in scored:
+            if doc_id not in ids and d < worst_d - 1e-9:
                 raise AssertionError(
-                    f"closer match {rec.doc_id!r} (l2²={d}) missing from top-{n_results}"
+                    f"closer match {doc_id!r} ({distance_metric}={d}) missing from top-{n_results}"
                 )
 
 
@@ -263,6 +384,8 @@ def run_hybrid_knn_case(
     namespace: Any,
     corpus: list[CorpusRecord],
     case: VectorKnnCase,
+    *,
+    distance_metric: VectorDistanceMetric = "l2",
 ) -> dict[str, Any]:
     knn: dict[str, Any] = {
         "query_embeddings": case.query_vector,
@@ -281,6 +404,7 @@ def run_hybrid_knn_case(
         case.query_vector,
         case.n_results,
         case.where,
+        distance_metric=distance_metric,
         check_top1=case.check_top1,
     )
     return result
@@ -290,6 +414,8 @@ def run_hybrid_combined_case(
     namespace: Any,
     corpus: list[CorpusRecord],
     case: HybridCombinedCase,
+    *,
+    distance_metric: VectorDistanceMetric = "l2",
 ) -> dict[str, Any]:
     query: dict[str, Any] | None = None
     if case.where_document is not None or case.where is not None:
@@ -326,6 +452,7 @@ def run_hybrid_combined_case(
             vec,
             case.n_results,
             case.knn.get("where"),
+            distance_metric=distance_metric,
             check_top1=True,
         )
         return result
@@ -641,6 +768,8 @@ def assert_hybrid_triple_branch_result(
     corpus: list[CorpusRecord],
     result: dict[str, Any],
     case: HybridTripleBranchCase,
+    *,
+    distance_metric: VectorDistanceMetric = "l2",
 ) -> None:
     assert result is not None
     assert "ids" in result and result["ids"]
@@ -757,7 +886,9 @@ def assert_hybrid_triple_branch_result(
             case.knn["query_embeddings"],
             min(len(knn_ids), case.n_results),
             knn_where,
+            distance_metric=distance_metric,
             check_top1=True,
+            check_score_order=False,
         )
         return
 
@@ -895,15 +1026,19 @@ def execute_hybrid_triple_branch_search(
     )
 
 
-def setup_large_fts_flat_collection(db_client: Any) -> tuple[list[CorpusRecord], Any]:
+def setup_large_fts_flat_collection(
+    db_client: Any,
+    *,
+    distance: VectorDistanceMetric = "l2",
+) -> tuple[list[CorpusRecord], Any]:
     """Create flat collection (HNSW + FTS), load via ``collection.add``."""
     corpus = build_large_fts_corpus(CORPUS_SIZE)
     if len(corpus) <= 1000:
         raise ValueError(f"corpus must exceed 1000 rows, got {len(corpus)}")
 
-    name = f"test_hs_tb_baseline_{int(time.time() * 1000)}"
+    name = f"test_hs_tb_baseline_{distance}_{int(time.time() * 1000)}"
     collection = db_client.create_collection(
-        name=name, schema=flat_hybrid_search_schema(), use_namespace=False
+        name=name, schema=flat_hybrid_search_schema(distance), use_namespace=False
     )
     assert collection.use_namespace is False
     insert_corpus_into_collection(collection, corpus)
@@ -920,9 +1055,13 @@ def _try_assert_hybrid_triple_branch_result(
     corpus: list[CorpusRecord],
     result: dict[str, Any],
     case: HybridTripleBranchCase,
+    *,
+    distance_metric: VectorDistanceMetric = "l2",
 ) -> BaseException | None:
     try:
-        assert_hybrid_triple_branch_result(corpus, result, case)
+        assert_hybrid_triple_branch_result(
+            corpus, result, case, distance_metric=distance_metric
+        )
         return None
     except BaseException as exc:
         return exc
@@ -933,6 +1072,8 @@ def assert_hybrid_triple_branch_vs_collection_baseline(
     case: HybridTripleBranchCase,
     namespace_result: dict[str, Any],
     collection_result: dict[str, Any],
+    *,
+    distance_metric: VectorDistanceMetric = "l2",
 ) -> None:
     """
     Compare namespace (IVF logic table) vs collection baseline (HNSW heap table).
@@ -948,8 +1089,12 @@ def assert_hybrid_triple_branch_vs_collection_baseline(
       - ``[observer/namespace]`` — collection passes ground truth but namespace fails
       - ``[test-case/baseline]`` — namespace passes but collection baseline fails
     """
-    coll_err = _try_assert_hybrid_triple_branch_result(corpus, collection_result, case)
-    ns_err = _try_assert_hybrid_triple_branch_result(corpus, namespace_result, case)
+    coll_err = _try_assert_hybrid_triple_branch_result(
+        corpus, collection_result, case, distance_metric=distance_metric
+    )
+    ns_err = _try_assert_hybrid_triple_branch_result(
+        corpus, namespace_result, case, distance_metric=distance_metric
+    )
     coll_ids = collection_result["ids"][0]
     ns_ids = namespace_result["ids"][0]
 
@@ -999,6 +1144,7 @@ def run_hybrid_triple_branch_case(
     case: HybridTripleBranchCase,
     *,
     collection_baseline: Any | None = None,
+    distance_metric: VectorDistanceMetric = "l2",
 ) -> dict[str, Any]:
     if collection_baseline is not None:
         assert_flat_collection_baseline(collection_baseline)
@@ -1020,12 +1166,15 @@ def run_hybrid_triple_branch_case(
                 f"{ns_exec_err!r}"
             ) from ns_exec_err
         assert_hybrid_triple_branch_vs_collection_baseline(
-            corpus, case, namespace_result, collection_result
+            corpus, case, namespace_result, collection_result,
+            distance_metric=distance_metric,
         )
         return namespace_result
 
     result = execute_hybrid_triple_branch_on_namespace(namespace, case)
-    assert_hybrid_triple_branch_result(corpus, result, case)
+    assert_hybrid_triple_branch_result(
+        corpus, result, case, distance_metric=distance_metric
+    )
     return result
 
 
@@ -1416,12 +1565,17 @@ def run_triple_branch_case_on_quadrants(
     quadrant_keys: tuple[str, ...] = MULTI_COLL_MULTI_NS_FTS_LOADED_QUADRANTS,
     *,
     collection_baseline: Any | None = None,
+    distance_metric: VectorDistanceMetric = "l2",
 ) -> None:
     tb_case = case if isinstance(case, HybridTripleBranchCase) else get_triple_branch_case(case)
     for key in quadrant_keys:
         corpus, namespace = ctx[key]
         run_hybrid_triple_branch_case(
-            namespace, corpus, tb_case, collection_baseline=collection_baseline
+            namespace,
+            corpus,
+            tb_case,
+            collection_baseline=collection_baseline,
+            distance_metric=distance_metric,
         )
 
 
@@ -1440,11 +1594,15 @@ def run_knn_case_on_quadrants(
     ctx: dict[str, Any],
     case: VectorKnnCase | str,
     quadrant_keys: tuple[str, ...] = MULTI_COLL_MULTI_NS_FTS_LOADED_QUADRANTS,
+    *,
+    distance_metric: VectorDistanceMetric = "l2",
 ) -> None:
     knn_case = case if isinstance(case, VectorKnnCase) else get_vector_knn_case(case)
     for key in quadrant_keys:
         corpus, namespace = ctx[key]
-        run_hybrid_knn_case(namespace, corpus, knn_case)
+        run_hybrid_knn_case(
+            namespace, corpus, knn_case, distance_metric=distance_metric
+        )
 
 
 def assert_hybrid_search_index_no_hits(
@@ -1502,7 +1660,11 @@ __all__ = [
     "TOKEN_ALP",
     "TOKEN_ZPX",
     "TRIPLE_BRANCH_CASES",
+    "VECTOR_DISTANCE_METRICS",
     "VECTOR_KNN_CASES",
+    "VectorDistanceMetric",
+    "ensure_shared_hybrid_search_collection",
+    "knn_compare_distance",
     "WHERE_BROAD_METADATA",
     "WHERE_DOCUMENT_UNIVERSAL",
     "WHERE_FILLER_SEQ",

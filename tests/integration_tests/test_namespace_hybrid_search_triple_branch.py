@@ -11,10 +11,12 @@ the other two stay active with broad or aligned filters. For ``verify="fts"``, h
 filters are checked; fused FTS+KNN ``__score`` order is not asserted (see
 ``check_fts_ranking`` on ``HybridTripleBranchCase``).
 
+Vector index distance: L2 and cosine (IVF spfresh).
+
 Run one case::
 
     pytest tests/integration_tests/test_namespace_hybrid_search_triple_branch.py \\
-        -k "fts_contains_zpx and oceanbase" -v -s
+        -k "fts_contains_zpx and oceanbase and l2" -v -s
 """
 
 from __future__ import annotations
@@ -27,32 +29,34 @@ import pytest
 from namespace_hybrid_search_helpers import (
     TRIPLE_BRANCH_CASES,
     TOKEN_ZPX,
+    VectorDistanceMetric,
+    ensure_shared_hybrid_search_collection,
     get_triple_branch_case,
     run_hybrid_triple_branch_case,
     setup_fts_namespace_with_corpus,
-    setup_large_fts_collection,
     teardown_large_fts_collection,
 )
 
 
+@pytest.mark.parametrize("vector_distance", ["l2", "cosine"])
 class TestNamespaceHybridSearchTripleBranch:
     """Large-scale namespace vector + full-text + search-index hybrid_search tests."""
 
     _shared_by_mode: ClassVar[dict[str, dict[str, Any]]] = {}
 
     @pytest.fixture(autouse=True)
-    def _bind_shared_collection(self, db_client: Any, request: pytest.FixtureRequest) -> None:
-        mode = request.node.callspec.params["db_client"] if request.node.callspec else "default"
-        if mode not in self._shared_by_mode:
-            corpus, collection = setup_large_fts_collection(db_client)
-            self._shared_by_mode[mode] = {
-                "db_client": db_client,
-                "corpus": corpus,
-                "collection": collection,
-            }
-        entry = self._shared_by_mode[mode]
+    def _bind_shared_collection(
+        self,
+        db_client: Any,
+        vector_distance: VectorDistanceMetric,
+        request: pytest.FixtureRequest,
+    ) -> None:
+        entry = ensure_shared_hybrid_search_collection(
+            self._shared_by_mode, db_client, request, vector_distance
+        )
         self._corpus = entry["corpus"]
         self._collection = entry["collection"]
+        self._vector_distance = vector_distance
 
     @classmethod
     def teardown_class(cls) -> None:
@@ -71,7 +75,12 @@ class TestNamespaceHybridSearchTripleBranch:
     def test_hybrid_search_triple_branch(self, db_client, case_name: str):
         case = get_triple_branch_case(case_name)
         namespace = self._new_namespace(case_name)
-        run_hybrid_triple_branch_case(namespace, self._corpus, case)
+        run_hybrid_triple_branch_case(
+            namespace,
+            self._corpus,
+            case,
+            distance_metric=self._vector_distance,
+        )
 
     def test_hybrid_search_triple_branch_fts_hits_with_knn_active(self, db_client):
         """FTS+KNN hybrid returns TOKEN_ZPX hits; fused order is not asserted."""
