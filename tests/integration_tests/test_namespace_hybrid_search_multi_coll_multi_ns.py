@@ -10,6 +10,7 @@ import pytest
 
 from namespace_fts_helpers import (
     MULTI_COLL_MULTI_NS_QUADRANT_KEYS,
+    VectorDistanceMetric,
     assert_hybrid_search_no_hits,
     get_fts_case,
     run_hybrid_search_fts_case,
@@ -100,11 +101,14 @@ class TestNamespaceHybridSearchMultiCollMultiNs:
         finally:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)
 
+    @pytest.mark.parametrize("vector_distance", ["l2", "cosine"])
     @pytest.mark.parametrize("case_name", ["knn_global_top5", "knn_filter_has_both"])
-    def test_hybrid_search_vector_all_loaded_quadrants(self, db_client, case_name: str):
-        ctx = setup_multi_coll_multi_ns_fts(db_client)
+    def test_hybrid_search_vector_all_loaded_quadrants(
+        self, db_client, vector_distance: VectorDistanceMetric, case_name: str
+    ):
+        ctx = setup_multi_coll_multi_ns_fts(db_client, distance=vector_distance)
         try:
-            run_knn_case_on_quadrants(ctx, case_name)
+            run_knn_case_on_quadrants(ctx, case_name, distance_metric=vector_distance)
         finally:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)
 
@@ -119,23 +123,33 @@ class TestNamespaceHybridSearchMultiCollMultiNs:
         finally:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)
 
-    def test_hybrid_search_combined_rrf_multi_coll(self, db_client):
-        ctx = setup_multi_coll_multi_ns_fts(db_client)
+    @pytest.mark.parametrize("vector_distance", ["l2", "cosine"])
+    def test_hybrid_search_combined_rrf_multi_coll(
+        self, db_client, vector_distance: VectorDistanceMetric
+    ):
+        ctx = setup_multi_coll_multi_ns_fts(db_client, distance=vector_distance)
         try:
             case = get_hybrid_combined_case("fts_zpx_filter_gte_knn")
             for key in ("c1_x", "c2_y"):
                 corpus, namespace = ctx[key]
-                run_hybrid_combined_case(namespace, corpus, case)
+                run_hybrid_combined_case(
+                    namespace, corpus, case, distance_metric=vector_distance
+                )
         finally:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)
 
-    def test_hybrid_search_vector_plus_search_index_multi_coll(self, db_client):
-        ctx = setup_multi_coll_multi_ns_fts(db_client)
+    @pytest.mark.parametrize("vector_distance", ["l2", "cosine"])
+    def test_hybrid_search_vector_plus_search_index_multi_coll(
+        self, db_client, vector_distance: VectorDistanceMetric
+    ):
+        ctx = setup_multi_coll_multi_ns_fts(db_client, distance=vector_distance)
         try:
             knn_case = get_vector_knn_case("knn_filter_has_both")
             for key in ("c1_x", "c2_y"):
                 corpus, namespace = ctx[key]
-                run_hybrid_knn_case(namespace, corpus, knn_case)
+                run_hybrid_knn_case(
+                    namespace, corpus, knn_case, distance_metric=vector_distance
+                )
         finally:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)
 

@@ -12,7 +12,10 @@ import contextlib
 import math
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
+
+VectorDistanceMetric = Literal["l2", "cosine"]
+VECTOR_DISTANCE_METRICS: tuple[VectorDistanceMetric, ...] = ("l2", "cosine")
 
 from pyseekdb import IVFConfiguration
 from pyseekdb.client.configuration import VectorIndexConfig
@@ -49,22 +52,22 @@ class FtsQueryCase:
     where: dict[str, Any] | None = None
 
 
-def ns_schema() -> Schema:
+def ns_schema(distance: VectorDistanceMetric = "l2") -> Schema:
     return Schema(
         vector_index=VectorIndexConfig(
-            ivf=IVFConfiguration(dimension=3, distance="l2", fresh_mode="spfresh"),
+            ivf=IVFConfiguration(dimension=3, distance=distance, fresh_mode="spfresh"),
             embedding_function=None,
         ),
     )
 
 
-def flat_hybrid_search_schema() -> Schema:
+def flat_hybrid_search_schema(distance: VectorDistanceMetric = "l2") -> Schema:
     """Schema for flat collection baseline (``use_namespace=False``, HNSW + FTS)."""
     from pyseekdb import HNSWConfiguration
 
     return Schema(
         vector_index=VectorIndexConfig(
-            hnsw=HNSWConfiguration(dimension=3, distance="l2"),
+            hnsw=HNSWConfiguration(dimension=3, distance=distance),
             embedding_function=None,
         ),
     )
@@ -498,14 +501,20 @@ def get_fts_case(name: str) -> FtsQueryCase:
     raise KeyError(f"unknown FTS case: {name!r}")
 
 
-def setup_large_fts_collection(db_client: Any) -> tuple[list[CorpusRecord], Any]:
+def setup_large_fts_collection(
+    db_client: Any,
+    *,
+    distance: VectorDistanceMetric = "l2",
+) -> tuple[list[CorpusRecord], Any]:
     """Create one namespace-enabled collection with a deterministic large corpus."""
     corpus = build_large_fts_corpus(CORPUS_SIZE)
     if len(corpus) <= 1000:
         raise ValueError(f"corpus must exceed 1000 rows, got {len(corpus)}")
 
-    name = f"test_ns_hs_ft_{int(time.time() * 1000)}"
-    collection = db_client.create_collection(name=name, schema=ns_schema(), use_namespace=True)
+    name = f"test_ns_hs_ft_{distance}_{int(time.time() * 1000)}"
+    collection = db_client.create_collection(
+        name=name, schema=ns_schema(distance), use_namespace=True
+    )
     return corpus, collection
 
 
@@ -555,16 +564,21 @@ MULTI_COLL_MULTI_NS_QUADRANT_KEYS: tuple[str, ...] = ("c1_x", "c1_y", "c2_x", "c
 MULTI_COLL_MULTI_NS_FTS_LOADED_QUADRANTS: tuple[str, ...] = ("c1_x", "c2_y")
 
 
-def _create_multi_coll_multi_ns_layout(db_client: Any, *, name_prefix: str) -> dict[str, Any]:
+def _create_multi_coll_multi_ns_layout(
+    db_client: Any,
+    *,
+    name_prefix: str,
+    distance: VectorDistanceMetric = "l2",
+) -> dict[str, Any]:
     ts = int(time.time() * 1000)
     coll_1 = db_client.create_collection(
-        name=f"{name_prefix}_{ts}_c1",
-        schema=ns_schema(),
+        name=f"{name_prefix}_{distance}_{ts}_c1",
+        schema=ns_schema(distance),
         use_namespace=True,
     )
     coll_2 = db_client.create_collection(
-        name=f"{name_prefix}_{ts}_c2",
-        schema=ns_schema(),
+        name=f"{name_prefix}_{distance}_{ts}_c2",
+        schema=ns_schema(distance),
         use_namespace=True,
     )
     ctx: dict[str, Any] = {"coll_1": coll_1, "coll_2": coll_2}
@@ -574,7 +588,11 @@ def _create_multi_coll_multi_ns_layout(db_client: Any, *, name_prefix: str) -> d
     return ctx
 
 
-def setup_multi_coll_multi_ns_fts(db_client: Any) -> dict[str, Any]:
+def setup_multi_coll_multi_ns_fts(
+    db_client: Any,
+    *,
+    distance: VectorDistanceMetric = "l2",
+) -> dict[str, Any]:
     """
     2 collections x 2 namespaces; load the large FTS corpus into ``c1_x`` and ``c2_y`` only.
 
@@ -582,7 +600,9 @@ def setup_multi_coll_multi_ns_fts(db_client: Any) -> dict[str, Any]:
     only the namespace that received the bulk insert is expected to serve hybrid_search FTS
     (see ``setup_same_collection_both_ns_fts`` for same-collection multi-ns behavior).
     """
-    ctx = _create_multi_coll_multi_ns_layout(db_client, name_prefix="test_ns_hs_ft_mcmn")
+    ctx = _create_multi_coll_multi_ns_layout(
+        db_client, name_prefix="test_ns_hs_ft_mcmn", distance=distance
+    )
     corpus = build_large_fts_corpus(CORPUS_SIZE)
     if len(corpus) <= 1000:
         raise ValueError(f"corpus must exceed 1000 rows, got {len(corpus)}")
@@ -630,12 +650,15 @@ def setup_multi_coll_multi_ns_fts_single_loaded(
     db_client: Any,
     *,
     loaded_quadrant: str = "c1_x",
+    distance: VectorDistanceMetric = "l2",
 ) -> dict[str, Any]:
     """Same layout as :func:`setup_multi_coll_multi_ns_fts` but corpus only in ``loaded_quadrant``."""
     if loaded_quadrant not in MULTI_COLL_MULTI_NS_QUADRANT_KEYS:
         raise ValueError(f"unknown quadrant {loaded_quadrant!r}")
 
-    ctx = _create_multi_coll_multi_ns_layout(db_client, name_prefix="test_ns_hs_ft_mcmn1")
+    ctx = _create_multi_coll_multi_ns_layout(
+        db_client, name_prefix="test_ns_hs_ft_mcmn1", distance=distance
+    )
     corpus = build_large_fts_corpus(CORPUS_SIZE)
     insert_corpus_in_batches(ctx[loaded_quadrant], corpus)
 
