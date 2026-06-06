@@ -83,7 +83,7 @@ class TestNamespaceDeleteWhere:
                 substring="obsolete",
                 context="post-delete",
             )
-            assert_get_where_count(ns, {"tag": "keep"}, gt["keep"], limit=50)
+            assert_get_where_count(ns, {"tag": "keep"}, gt["keep"], limit=gt["keep"])
         finally:
             cleanup(db_client, collection)
 
@@ -242,8 +242,7 @@ class TestNamespaceCrossNsGetWhere:
                 check_meta={"tag": "keep", "ns_tag": "alpha"},
             )
         finally:
-            # cleanup(db_client, collection)
-            pass
+            cleanup(db_client, collection)
 
 
 if __name__ == "__main__":
