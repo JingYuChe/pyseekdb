@@ -565,7 +565,7 @@ class TestNamespaceSQLGeneration:
         assert sql.startswith("DELETE FROM")
         assert f"`{self.TABLE}`" in sql
         assert "namespace_id = 7" in sql
-        assert "JSON_EXTRACT(data_content, '$.id') = " in sql
+        assert "JSON_UNQUOTE(JSON_EXTRACT(data_content, '$.id')) = " in sql
         assert "'d1'" in sql
 
     def test_delete_by_where_sql(self):
@@ -582,7 +582,7 @@ class TestNamespaceSQLGeneration:
 
     # ---- QUERY ----
 
-    def test_query_basic_sql(self):
+    def test_query_basic_dsl(self):
         c = self._client()
         c.query_return_value = []
         c._namespace_query(
@@ -592,16 +592,14 @@ class TestNamespaceSQLGeneration:
             distance="l2",
         )
         sql = c.query_sqls[-1]
-        assert "SELECT" in sql
-        assert "JSON_EXTRACT(data_content, '$.id') AS record_id" in sql
-        assert "l2_distance(embedding," in sql
-        assert "AS distance" in sql
+        assert "hybrid_search(TABLE" in sql
         assert f"`{self.TABLE}`" in sql
-        assert "namespace_id = 7" in sql
-        assert "ORDER BY l2_distance(embedding," in sql
-        assert "APPROXIMATE LIMIT" in sql
+        assert '"knn"' in sql
+        assert '"query_vector"' in sql
+        assert "l2_distance(embedding," not in sql
+        assert "APPROXIMATE LIMIT" not in sql
 
-    def test_query_with_where_sql(self):
+    def test_query_with_where_dsl(self):
         c = self._client()
         c.query_return_value = []
         c._namespace_query(
@@ -612,8 +610,9 @@ class TestNamespaceSQLGeneration:
             distance="cosine",
         )
         sql = c.query_sqls[-1]
-        assert "cosine_distance(embedding," in sql
-        assert "metadata.category" in sql
+        assert "hybrid_search(TABLE" in sql
+        assert "data_content.metadata.category" in sql
+        assert "cosine_distance(embedding," not in sql
 
     # ---- GET ----
 
@@ -628,7 +627,7 @@ class TestNamespaceSQLGeneration:
         assert "SELECT" in sql
         assert f"`{self.TABLE}`" in sql
         assert "namespace_id = 7" in sql
-        assert """JSON_EXTRACT(data_content, '$.id') = 'g1'""" in sql
+        assert """JSON_UNQUOTE(JSON_EXTRACT(data_content, '$.id')) = 'g1'""" in sql
 
     def test_get_with_limit_sql(self):
         c = self._client()
@@ -697,6 +696,47 @@ class TestNamespaceSQLGeneration:
         config = IVFConfiguration(dimension=3, distance="cosine")
         sql = _get_ivf_vector_index_sql(config)
         assert "LIB=OB" in sql
+
+    def test_create_namespace_physical_tables_sn_post_create_vector_index(self):
+        """SN logic_data_table: FTS + SEARCH in CREATE TABLE, vector index post-create."""
+        c = self._client()
+        ivf_config = IVFConfiguration(dimension=3, distance="l2", fresh_mode="spfresh")
+        c._create_namespace_physical_tables(
+            collection_id=self.COLLECTION_ID,
+            dimension=3,
+            ivf_config=ivf_config,
+            is_shared_storage=False,
+        )
+        data_create = next(
+            s for s in c.executed_sqls if "CREATE TABLE" in s and self.TABLE in s
+        )
+        assert "VECTOR INDEX" not in data_create
+        assert "FULLTEXT INDEX idx_fts(document) WITH PARSER ik" in data_create
+        assert "SEARCH INDEX idx_json(data_content)" in data_create
+        vec_create = next(s for s in c.executed_sqls if s.startswith("CREATE VECTOR INDEX"))
+        assert f"`{self.TABLE}`" in vec_create
+        assert "fresh_mode=spfresh" in vec_create
+
+    def test_create_namespace_physical_tables_ss_inline_vector_index(self):
+        """SS logic_data_table: inline VECTOR INDEX (post-create fails on logic tables)."""
+        c = self._client()
+        ivf_config = IVFConfiguration(dimension=3, distance="l2", fresh_mode="spfresh")
+        c._create_namespace_physical_tables(
+            collection_id=self.COLLECTION_ID,
+            dimension=3,
+            ivf_config=ivf_config,
+            is_shared_storage=True,
+        )
+        data_create = next(
+            s for s in c.executed_sqls if "CREATE TABLE" in s and self.TABLE in s
+        )
+        assert "VECTOR INDEX idx_vec(embedding)" in data_create
+        assert "fresh_mode=spfresh" in data_create
+        assert not any(s.startswith("CREATE VECTOR INDEX") for s in c.executed_sqls)
+        hot_create = next(
+            s for s in c.executed_sqls if "CREATE TABLE" in s and "_hot_table" in s
+        )
+        assert hot_create
 
 
 # ==================== Namespace Name Validation Tests ====================
