@@ -7,7 +7,6 @@ Uses ``query.where`` without ``where_document``. Ground-truth checks mirror
 
 from __future__ import annotations
 
-import time
 from typing import Any, ClassVar
 
 import pytest
@@ -32,14 +31,21 @@ class TestNamespaceHybridSearchSearchIndex:
         mode = request.node.callspec.params["db_client"] if request.node.callspec else "default"
         if mode not in self._shared_by_mode:
             corpus, collection = setup_large_fts_collection(db_client)
+            namespace = setup_fts_namespace_with_corpus(
+                collection,
+                corpus,
+                namespace_name=f"ns_si_shared_{mode}",
+            )
             self._shared_by_mode[mode] = {
                 "db_client": db_client,
                 "corpus": corpus,
                 "collection": collection,
+                "namespace": namespace,
             }
         entry = self._shared_by_mode[mode]
         self._corpus = entry["corpus"]
         self._collection = entry["collection"]
+        self._namespace = entry["namespace"]
 
     @classmethod
     def teardown_class(cls) -> None:
@@ -47,17 +53,10 @@ class TestNamespaceHybridSearchSearchIndex:
             teardown_large_fts_collection(entry["db_client"], entry["collection"])
         cls._shared_by_mode.clear()
 
-    def _new_namespace(self, case_name: str) -> Any:
-        ns_name = f"ns_si_{case_name}_{int(time.time() * 1000)}"
-        return setup_fts_namespace_with_corpus(
-            self._collection,
-            self._corpus,
-            namespace_name=ns_name,
-        )
-
     def _run_case(self, case_name: str) -> None:
-        namespace = self._new_namespace(case_name)
-        run_hybrid_search_index_case(namespace, self._corpus, get_search_index_case(case_name))
+        run_hybrid_search_index_case(
+            self._namespace, self._corpus, get_search_index_case(case_name)
+        )
 
     @pytest.mark.parametrize("case_name", [c.name for c in SEARCH_INDEX_CASES])
     def test_hybrid_search_search_index_operators(self, db_client, case_name: str):

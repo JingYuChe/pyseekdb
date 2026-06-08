@@ -100,7 +100,6 @@ class TestNamespaceHybridSearchFulltextMultiCollMultiNs:
                 run_hybrid_search_fts_case(namespace, corpus, case)
         finally:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)
-            # pass
 
     def test_cross_quadrant_fts_isolation(self, db_client):
         """Loaded namespaces must see only their own rows; empty namespaces return no hits."""
