@@ -4510,6 +4510,24 @@ class BaseClient(BaseConnection, AdminAPI):
 
         return source
 
+    def _hybrid_row_score(self, row: dict[str, Any]) -> float:
+        """Extract relevance score from a hybrid_search SQL row (OB uses ``__score``)."""
+        for key in (
+            "_distance",
+            "distance",
+            "_score",
+            "score",
+            "__score",
+            "DISTANCE",
+            "_DISTANCE",
+            "SCORE",
+            "__SCORE",
+        ):
+            val = row.get(key)
+            if val is not None:
+                return float(val)
+        return 0.0
+
     def _transform_sql_result(  # noqa: C901
         self, result_rows: list[dict[str, Any]], include: list[str] | None
     ) -> dict[str, Any]:
@@ -4554,18 +4572,7 @@ class BaseClient(BaseConnection, AdminAPI):
             row_id = self._convert_id_from_bytes(row_id)
             ids.append(row_id)
 
-            # Extract distance/score (may be in different column names)
-            distance = (
-                row.get("_distance")
-                or row.get("distance")
-                or row.get("_score")
-                or row.get("score")
-                or row.get("DISTANCE")
-                or row.get("_DISTANCE")
-                or row.get("SCORE")
-                or 0.0
-            )
-            distances.append(distance)
+            distances.append(self._hybrid_row_score(row))
 
             # Extract metadata
             if include is None or "metadatas" in include or "metadata" in include:
@@ -5511,7 +5518,6 @@ class BaseClient(BaseConnection, AdminAPI):
             f"SELECT {hint_sql + ' ' if hint_sql else ''}* "
             f"FROM hybrid_search(TABLE `{table_name}`, '{escaped_params}')"
         )
-
         result_rows = self._execute_query_with_cursor(conn, hybrid_sql, [], use_context_manager)
         if not result_rows:
             return {
@@ -5553,11 +5559,7 @@ class BaseClient(BaseConnection, AdminAPI):
             row_id = self._convert_id_from_bytes(row_id)
             ids.append(row_id)
 
-            distance = (
-                row.get("_distance") or row.get("distance")
-                or row.get("_score") or row.get("score") or 0.0
-            )
-            distances.append(distance)
+            distances.append(self._hybrid_row_score(row))
 
             if include is None or "metadatas" in include or "metadata" in include:
                 meta = dc.get("metadata")
