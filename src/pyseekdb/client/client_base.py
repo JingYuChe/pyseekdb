@@ -1301,19 +1301,12 @@ class BaseClient(BaseConnection, AdminAPI):
         try:
             self._execute(f"CREATE TABLEGROUP `{tg_name}` SHARDING='ADAPTIVE'")
 
-            # SN: post-create ``CREATE VECTOR INDEX`` on logic tables (documented path).
-            # SS: logic tables reject post-create vector indexes (OB-5703); inline only.
-            if is_shared_storage:
-                index_sql = (
-                    f"FULLTEXT INDEX idx_fts(document) {fulltext_clause},\n"
-                    f"                SEARCH INDEX idx_json(data_content),\n"
-                    f"                VECTOR INDEX idx_vec(embedding) {vector_index_sql}"
-                )
-            else:
-                index_sql = (
-                    f"FULLTEXT INDEX idx_fts(document) {fulltext_clause},\n"
-                    f"                SEARCH INDEX idx_json(data_content)"
-                )
+            # Inline VECTOR INDEX in CREATE TABLE for both SN and SS logic tables.
+            index_sql = (
+                f"FULLTEXT INDEX idx_fts(document) {fulltext_clause},\n"
+                f"                SEARCH INDEX idx_json(data_content),\n"
+                f"                VECTOR INDEX idx_vec(embedding) {vector_index_sql}"
+            )
 
             data_sql = f"""CREATE TABLE `{data_table}` (
                 namespace_id BIGINT UNSIGNED NOT NULL,
@@ -1328,12 +1321,6 @@ class BaseClient(BaseConnection, AdminAPI):
             {partition_clause}"""
 
             self._execute(data_sql)
-
-            if not is_shared_storage:
-                ivf_index_sql = (
-                    f"CREATE VECTOR INDEX idx_vec ON `{data_table}` (embedding) {vector_index_sql}"
-                )
-                self._execute(ivf_index_sql)
 
             if is_shared_storage:
                 hot_table = NamespaceCollectionNames.hot_table_name(collection_id)
