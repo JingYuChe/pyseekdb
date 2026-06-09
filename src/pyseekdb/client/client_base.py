@@ -124,7 +124,10 @@ def _validate_collection_name(name: str) -> None:
 
 from .validators import _MAX_NAMESPACE_BATCH_SIZE, _validate_namespace_name, _validate_record_ids  # noqa: F401
 
-_NS_PARTITION_COUNT = 4
+_NS_PARTITION_COUNT = 1000
+# Unquoted id for WHERE/CASE; plain JSON_EXTRACT returns a quoted JSON string and
+# can route through SEARCH INDEX on SS logic tables, breaking cross-namespace id lookups.
+_NS_DATA_CONTENT_ID_EXPR = "JSON_UNQUOTE(JSON_EXTRACT(data_content, '$.id'))"
 
 
 def set_namespace_partition_count(n: int) -> None:
@@ -1298,18 +1301,19 @@ class BaseClient(BaseConnection, AdminAPI):
         try:
             self._execute(f"CREATE TABLEGROUP `{tg_name}` SHARDING='ADAPTIVE'")
 
-            index_clauses = [
-                f"FULLTEXT INDEX idx_fts(document) {fulltext_clause}",
-                "SEARCH INDEX idx_json(data_content)",
-            ]
-            # Vector indexes are rejected in shared-storage mode on this kernel branch
-            # (both inline `VECTOR INDEX` in CREATE TABLE and standalone `CREATE VECTOR
-            # INDEX` fail with OB-1235 "vector index in shared storage mode is not
-            # supported"). Keep the embedding column but skip the vector index in SS;
-            # full-text and metadata SEARCH INDEX hybrid_search still work.
-            if not is_shared_storage:
-                index_clauses.append(f"VECTOR INDEX idx_vec(embedding) {vector_index_sql}")
-            index_sql = ",\n                ".join(index_clauses)
+            # SN: post-create ``CREATE VECTOR INDEX`` on logic tables (documented path).
+            # SS: logic tables reject post-create vector indexes (OB-5703); inline only.
+            if is_shared_storage:
+                index_sql = (
+                    f"FULLTEXT INDEX idx_fts(document) {fulltext_clause},\n"
+                    f"                SEARCH INDEX idx_json(data_content),\n"
+                    f"                VECTOR INDEX idx_vec(embedding) {vector_index_sql}"
+                )
+            else:
+                index_sql = (
+                    f"FULLTEXT INDEX idx_fts(document) {fulltext_clause},\n"
+                    f"                SEARCH INDEX idx_json(data_content)"
+                )
 
             data_sql = f"""CREATE TABLE `{data_table}` (
                 namespace_id BIGINT UNSIGNED NOT NULL,
@@ -1324,6 +1328,12 @@ class BaseClient(BaseConnection, AdminAPI):
             {partition_clause}"""
 
             self._execute(data_sql)
+
+            if not is_shared_storage:
+                ivf_index_sql = (
+                    f"CREATE VECTOR INDEX idx_vec ON `{data_table}` (embedding) {vector_index_sql}"
+                )
+                self._execute(ivf_index_sql)
 
             if is_shared_storage:
                 hot_table = NamespaceCollectionNames.hot_table_name(collection_id)
@@ -4851,7 +4861,7 @@ class BaseClient(BaseConnection, AdminAPI):
         table_name = NamespaceCollectionNames.data_table_name(collection_id)
         ns_id = int(namespace_id)
 
-        id_expr = "JSON_EXTRACT(data_content, '$.id')"
+        id_expr = _NS_DATA_CONTENT_ID_EXPR
         active_ids = []
         for i, record_id in enumerate(ids):
             has_update = (
@@ -4982,10 +4992,10 @@ class BaseClient(BaseConnection, AdminAPI):
         ns_id = int(namespace_id)
 
         existing_ids = set()
-        id_expr = "JSON_EXTRACT(data_content, '$.id')"
+        id_expr = _NS_DATA_CONTENT_ID_EXPR
         id_placeholders = ", ".join(["%s"] * len(ids))
         check_sql = (
-            f"SELECT {id_expr} AS rid FROM `{table_name}` "
+            f"SELECT JSON_EXTRACT(data_content, '$.id') AS rid FROM `{table_name}` "
             f"WHERE namespace_id = {ns_id} AND ltable_id = {ltable_id} "
             f"AND {id_expr} IN ({id_placeholders})"
         )
@@ -5058,7 +5068,7 @@ class BaseClient(BaseConnection, AdminAPI):
             if isinstance(ids, str):
                 ids = [ids]
             _validate_record_ids(ids)
-            id_placeholders = " OR ".join(["JSON_EXTRACT(data_content, '$.id') = %s"] * len(ids))
+            id_placeholders = " OR ".join([f"{_NS_DATA_CONTENT_ID_EXPR} = %s"] * len(ids))
             conditions.append(f"({id_placeholders})")
             params.extend(ids)
 
@@ -5127,123 +5137,63 @@ class BaseClient(BaseConnection, AdminAPI):
         query_embeddings = self._normalize_query_embeddings(query_embeddings)
         include_fields = self._normalize_include_fields(include)
 
-        table_name = NamespaceCollectionNames.data_table_name(collection_id)
-        ns_id = int(namespace_id)
+        # Logical-table vector search must use hybrid_search DSL; direct SQL vector
+        # index scans on namespace partitions are not supported on OceanBase.
+        all_ids: list[list[Any]] = []
+        all_documents: list[list[Any]] = []
+        all_metadatas: list[list[Any]] = []
+        all_embeddings: list[list[Any]] = []
+        all_distances: list[list[float]] = []
 
-        select_parts = ["JSON_EXTRACT(data_content, '$.id') AS record_id"]
-        if include_fields.get("documents") or include_fields.get("document") or include is None:
-            select_parts.append("document")
-        if include_fields.get("metadatas") or include_fields.get("metadata") or include is None:
-            select_parts.append("JSON_EXTRACT(data_content, '$.metadata') AS metadata")
-        if include_fields.get("embeddings") or include_fields.get("embedding"):
-            select_parts.append("embedding")
-
-        user_conditions = []
-        filter_params = []
-
-        if where is not None:
-            rewritten = self._rewrite_where_for_ns(where)
-            meta_clause, meta_params = FilterBuilder.build_metadata_filter(rewritten, "data_content")
-            if meta_clause:
-                user_conditions.append(meta_clause)
-                filter_params.extend(meta_params)
-
-        if where_document is not None:
-            doc_clause, doc_params = FilterBuilder.build_document_filter(where_document, "document")
-            if doc_clause:
-                user_conditions.append(doc_clause)
-                filter_params.extend(doc_params)
-
-        user_where = f"WHERE {' AND '.join(user_conditions)}" if user_conditions else ""
-        where_clause, filter_params = self._append_namespace_filter(user_where, filter_params, ns_id, ltable_id)
-
-        distance_function_map = {
-            "l2": "l2_distance",
-            "cosine": "cosine_distance",
-            "inner_product": "inner_product",
+        hybrid_kwargs = {
+            k: v for k, v in kwargs.items()
+            if k not in ("embedding_function", "distance", "dimension")
         }
-        distance_func = distance_function_map.get(distance, "l2_distance")
-
-        conn = self._ensure_connection()
-        use_context_manager = self._use_context_manager_for_cursor()
-
-        all_ids = []
-        all_documents = []
-        all_metadatas = []
-        all_embeddings = []
-        all_distances = []
 
         for query_vector in query_embeddings:
-            vector_str = _embedding_to_hexstring(query_vector)
-            select_clause = ", ".join(select_parts)
-            sql = (
-                f"SELECT {select_clause}, "
-                f"{distance_func}(embedding, {vector_str}) AS distance "
-                f"FROM `{table_name}` "
-                f"{where_clause} "
-                f"ORDER BY {distance_func}(embedding, {vector_str}) "
-                f"APPROXIMATE LIMIT %s"
+            knn_cfg: dict[str, Any] = {
+                "query_embeddings": query_vector,
+                "n_results": n_results,
+            }
+            if where is not None:
+                knn_cfg["where"] = where
+
+            query_cfg: dict[str, Any] | None = None
+            if where_document is not None:
+                query_cfg = {"where_document": where_document, "n_results": n_results}
+                if where is not None:
+                    query_cfg["where"] = where
+
+            batch = self._namespace_hybrid_search(
+                collection_id=collection_id,
+                collection_name=collection_name,
+                namespace_id=namespace_id,
+                namespace_name=namespace_name,
+                query=query_cfg,
+                knn=knn_cfg,
+                n_results=n_results,
+                include=include,
+                embedding_function=embedding_function,
+                distance=distance,
+                dimension=kwargs.get("dimension"),
+                **hybrid_kwargs,
             )
-            query_params = [*filter_params, n_results]
-            rows = self._execute_query_with_cursor(conn, sql, query_params, use_context_manager)
 
-            q_ids = []
-            q_documents = []
-            q_metadatas = []
-            q_embeddings = []
-            q_distances = []
+            batch_ids = batch.get("ids") or [[]]
+            all_ids.append(batch_ids[0] if batch_ids else [])
+            all_distances.append((batch.get("distances") or [[]])[0])
 
-            for row in rows:
-                if isinstance(row, dict):
-                    rid_raw = row.get("record_id")
-                    rid = json.loads(rid_raw) if isinstance(rid_raw, str) else rid_raw
-                    q_ids.append(rid)
-                    if "documents" in include_fields or "document" in include_fields or include is None:
-                        q_documents.append(row.get("document"))
-                    if "metadatas" in include_fields or "metadata" in include_fields or include is None:
-                        meta_raw = row.get("metadata")
-                        if isinstance(meta_raw, str):
-                            meta_raw = json.loads(meta_raw)
-                        q_metadatas.append(meta_raw or {})
-                    if "embeddings" in include_fields or "embedding" in include_fields:
-                        emb = row.get("embedding")
-                        if isinstance(emb, bytes):
-                            emb = self._parse_embedding_from_bytes(emb)
-                        elif isinstance(emb, str):
-                            emb = json.loads(emb)
-                        q_embeddings.append(emb)
-                    q_distances.append(row.get("distance"))
-                elif isinstance(row, (list, tuple)):
-                    idx = 0
-                    rid_raw = row[idx]; idx += 1
-                    rid = json.loads(rid_raw) if isinstance(rid_raw, str) else rid_raw
-                    q_ids.append(rid)
-                    if "documents" in include_fields or "document" in include_fields or include is None:
-                        q_documents.append(row[idx]); idx += 1
-                    if "metadatas" in include_fields or "metadata" in include_fields or include is None:
-                        meta_raw = row[idx]; idx += 1
-                        if isinstance(meta_raw, str):
-                            meta_raw = json.loads(meta_raw)
-                        q_metadatas.append(meta_raw or {})
-                    if "embeddings" in include_fields or "embedding" in include_fields:
-                        emb = row[idx]; idx += 1
-                        if isinstance(emb, bytes):
-                            emb = self._parse_embedding_from_bytes(emb)
-                        elif isinstance(emb, str):
-                            emb = json.loads(emb)
-                        q_embeddings.append(emb)
-                    q_distances.append(row[idx])
-
-            all_ids.append(q_ids)
             if "documents" in include_fields or "document" in include_fields or include is None:
-                all_documents.append(q_documents)
+                batch_docs = batch.get("documents") or [[]]
+                all_documents.append(batch_docs[0] if batch_docs else [])
             if "metadatas" in include_fields or "metadata" in include_fields or include is None:
-                all_metadatas.append(q_metadatas)
+                batch_meta = batch.get("metadatas") or [[]]
+                all_metadatas.append(batch_meta[0] if batch_meta else [])
             if "embeddings" in include_fields or "embedding" in include_fields:
-                all_embeddings.append(q_embeddings)
-            all_distances.append(q_distances)
+                batch_emb = batch.get("embeddings") or [[]]
+                all_embeddings.append(batch_emb[0] if batch_emb else [])
 
-        result = {"ids": all_ids, "distances": all_distances}
+        result: dict[str, Any] = {"ids": all_ids, "distances": all_distances}
         if "documents" in include_fields or "document" in include_fields or include is None:
             result["documents"] = all_documents
         if "metadatas" in include_fields or "metadata" in include_fields or include is None:
@@ -5291,7 +5241,7 @@ class BaseClient(BaseConnection, AdminAPI):
             id_conds = []
             for rid in ids:
                 id_escaped = escape_string(rid)
-                id_conds.append(f"JSON_EXTRACT(data_content, '$.id') = '{id_escaped}'")
+                id_conds.append(f"{_NS_DATA_CONTENT_ID_EXPR} = '{id_escaped}'")
             user_conditions.append(f"({' OR '.join(id_conds)})")
 
         if where is not None:
@@ -5547,6 +5497,16 @@ class BaseClient(BaseConnection, AdminAPI):
         search_parm = self._adapt_search_parm_for_ns(search_parm, ns_id, ltable_id)
 
         search_parm.pop("_source", None)
+
+        if "knn" in search_parm:
+            if query_hint is None:
+                query_hint = QueryHint(vector_index=True)
+            elif query_hint.vector_index is None:
+                query_hint = QueryHint(
+                    parallel=query_hint.parallel,
+                    query_timeout=query_hint.query_timeout,
+                    vector_index=True,
+                )
 
         search_parm_json = json.dumps(search_parm, ensure_ascii=False)
         use_context_manager = self._use_context_manager_for_cursor()
