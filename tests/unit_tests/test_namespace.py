@@ -709,8 +709,8 @@ class TestNamespaceSQLGeneration:
         sql = _get_ivf_vector_index_sql(config)
         assert "LIB=OB" in sql
 
-    def test_create_namespace_physical_tables_sn_post_create_vector_index(self):
-        """SN logic_data_table: FTS + SEARCH in CREATE TABLE, vector index post-create."""
+    def test_create_namespace_physical_tables_sn_inline_vector_index(self):
+        """SN logic_data_table: inline VECTOR INDEX in CREATE TABLE (same as SS)."""
         c = self._client()
         ivf_config = IVFConfiguration(dimension=3, distance="l2", fresh_mode="spfresh")
         c._create_namespace_physical_tables(
@@ -722,15 +722,15 @@ class TestNamespaceSQLGeneration:
         data_create = next(
             s for s in c.executed_sqls if "CREATE TABLE" in s and self.TABLE in s
         )
-        assert "VECTOR INDEX" not in data_create
+        assert "VECTOR INDEX idx_vec(embedding)" in data_create
         assert "FULLTEXT INDEX idx_fts(document) WITH PARSER ik" in data_create
         assert "SEARCH INDEX idx_json(data_content)" in data_create
-        vec_create = next(s for s in c.executed_sqls if s.startswith("CREATE VECTOR INDEX"))
-        assert f"`{self.TABLE}`" in vec_create
-        assert "fresh_mode=spfresh" in vec_create
+        assert "fresh_mode=spfresh" in data_create
+        assert not any(s.startswith("CREATE VECTOR INDEX") for s in c.executed_sqls)
+        assert not any("_hot_table" in s for s in c.executed_sqls if s.startswith("CREATE TABLE"))
 
     def test_create_namespace_physical_tables_ss_inline_vector_index(self):
-        """SS logic_data_table: inline VECTOR INDEX (post-create fails on logic tables)."""
+        """SS logic_data_table: inline VECTOR INDEX in CREATE TABLE."""
         c = self._client()
         ivf_config = IVFConfiguration(dimension=3, distance="l2", fresh_mode="spfresh")
         c._create_namespace_physical_tables(
