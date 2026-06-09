@@ -18,7 +18,7 @@ class TestNamespaceQuery:
         name = f"test_ns_q_{int(time.time() * 1000)}{suffix}"
         schema = Schema(
             vector_index=VectorIndexConfig(
-                ivf=IVFConfiguration(dimension=3, distance="l2"),
+                ivf=IVFConfiguration(dimension=3, distance="l2", fresh_mode="spfresh"),
                 embedding_function=None,
             ),
         )
@@ -316,15 +316,8 @@ class TestNamespaceQuery:
         finally:
             db_client.delete_collection(name=collection.name)
 
-    def test_hybrid_search_with_data_content_filter_knn_branch(self, db_client, request):
-        """
-        KNN + metadata / id filters on ``data_content`` (same field mapping as full-text branch).
-
-        OceanBase ``hybrid_search`` KNN currently requires an HNSW vector index; namespace
-        logical tables are created with IVF only, so this branch is skipped for ``[oceanbase]``.
-        """
-        if "oceanbase" in request.node.nodeid:
-            pytest.skip("OceanBase hybrid_search KNN requires HNSW; namespace collections use IVF only.")
+    def test_hybrid_search_with_data_content_filter_knn_branch(self, db_client):
+        """KNN + metadata / id filters on ``data_content`` (same field mapping as full-text branch)."""
         collection = self._setup(db_client)
         ns = collection.create_namespace("qns_hs_dc_knn")
         try:

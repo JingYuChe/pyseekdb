@@ -28,7 +28,7 @@ def _make_collection(client, suffix: str = ""):
     name = f"test_ns_drop_{int(time.time() * 1000)}{suffix}"
     schema = Schema(
         vector_index=VectorIndexConfig(
-            ivf=IVFConfiguration(dimension=3, distance="cosine"),
+            ivf=IVFConfiguration(dimension=3, distance="cosine", fresh_mode="spfresh"),
             embedding_function=None,
         ),
     )

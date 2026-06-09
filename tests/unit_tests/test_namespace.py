@@ -580,6 +580,18 @@ class TestNamespaceSQLGeneration:
         assert "JSON_EXTRACT" in sql or "JSON_OVERLAPS" in sql
         assert "metadata.category" in sql
 
+    def test_delete_by_where_document_sql(self):
+        c = self._client()
+        c._namespace_delete(
+            **self._common_kwargs(),
+            where_document={"$contains": "obsolete"},
+        )
+        sql = c.executed_sqls[-1]
+        assert "DELETE FROM" in sql
+        assert "namespace_id = 7" in sql
+        assert "document LIKE" in sql
+        assert "MATCH(document)" not in sql
+
     # ---- QUERY ----
 
     def test_query_basic_dsl(self):
