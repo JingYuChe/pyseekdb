@@ -155,17 +155,37 @@ def _is_ss_mode(client, collection_id):
     return bool(rows)
 
 
-def _grep_lob_prewarm_log(lob_meta_tablet_ids):
-    """Tier 3: confirm the new code path logged a lob prewarm for one of the tablets."""
+def _observer_log_files():
+    """The configured observer.log plus any rotated siblings in the same dir.
+
+    OB rotates observer.log aggressively (observer.log.<ts>), so a marker emitted
+    during the test may already have moved to a rotated file by the time we grep.
+    """
     log_path = os.environ.get("OB_OBSERVER_LOG")
     if not log_path or not os.path.exists(log_path):
         return None
+    directory = os.path.dirname(log_path) or "."
+    base = os.path.basename(log_path)
+    files = []
+    for fn in os.listdir(directory):
+        # observer.log and observer.log.<ts>, but not observer.log.wf*
+        if (fn == base or fn.startswith(base + ".")) and ".wf" not in fn:
+            files.append(os.path.join(directory, fn))
+    return files
+
+
+def _grep_lob_prewarm_log(lob_meta_tablet_ids):
+    """Tier 3: confirm the new code path logged a lob prewarm for one of the tablets."""
+    files = _observer_log_files()
+    if files is None:
+        return None
     wanted = {str(t) for t in lob_meta_tablet_ids}
     hits = []
-    with open(log_path, errors="ignore") as fh:
-        for line in fh:
-            if "prewarm_logic_table lob meta done" in line and any(t in line for t in wanted):
-                hits.append(line.strip())
+    for path in files:
+        with open(path, errors="ignore") as fh:
+            for line in fh:
+                if "prewarm_logic_table lob meta done" in line and any(t in line for t in wanted):
+                    hits.append(line.strip())
     return hits
 
 
