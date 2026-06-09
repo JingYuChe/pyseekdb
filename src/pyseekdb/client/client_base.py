@@ -124,7 +124,7 @@ def _validate_collection_name(name: str) -> None:
 
 from .validators import _MAX_NAMESPACE_BATCH_SIZE, _validate_namespace_name, _validate_record_ids  # noqa: F401
 
-_NS_PARTITION_COUNT = 8
+_NS_PARTITION_COUNT = 4
 
 
 def set_namespace_partition_count(n: int) -> None:
@@ -5558,7 +5558,6 @@ class BaseClient(BaseConnection, AdminAPI):
             f"SELECT {hint_sql + ' ' if hint_sql else ''}* "
             f"FROM hybrid_search(TABLE `{table_name}`, '{escaped_params}')"
         )
-        print(f"hybrid_sql: {hybrid_sql}")
         result_rows = self._execute_query_with_cursor(conn, hybrid_sql, [], use_context_manager)
         if not result_rows:
             return {
