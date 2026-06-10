@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pyseekdb import IVFConfiguration
-from pyseekdb.client.configuration import VectorIndexConfig
+from pyseekdb.client.configuration import FulltextIndexConfig, VectorIndexConfig
 from pyseekdb.client.schema import Schema
 
 LARGE_DML_CORPUS_SIZE = 1000
@@ -40,6 +40,7 @@ def ns_schema() -> Schema:
             ivf=IVFConfiguration(dimension=3, distance="l2", fresh_mode="spfresh"),
             embedding_function=None,
         ),
+        fulltext_index=FulltextIndexConfig(analyzer="ik"),
     )
 
 

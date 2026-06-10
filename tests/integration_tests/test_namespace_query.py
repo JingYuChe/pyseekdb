@@ -8,7 +8,7 @@ import time
 import pytest
 
 from pyseekdb import IVFConfiguration
-from pyseekdb.client.configuration import VectorIndexConfig
+from pyseekdb.client.configuration import FulltextIndexConfig, VectorIndexConfig
 from pyseekdb.client.schema import Schema
 
 
@@ -21,6 +21,7 @@ class TestNamespaceQuery:
                 ivf=IVFConfiguration(dimension=3, distance="l2", fresh_mode="spfresh"),
                 embedding_function=None,
             ),
+            fulltext_index=FulltextIndexConfig(analyzer="ik"),
         )
         collection = client.create_collection(name=name, schema=schema, use_namespace=True)
         return collection
