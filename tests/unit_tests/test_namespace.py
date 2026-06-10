@@ -355,6 +355,7 @@ class FakeClient(BaseClient):
     """Concrete BaseClient subclass that captures SQL without executing."""
 
     def __init__(self):
+        self.database = "test"
         self.executed_sqls = []
         self.query_sqls = []
         self.query_return_value = []
@@ -589,8 +590,8 @@ class TestNamespaceSQLGeneration:
         sql = c.executed_sqls[-1]
         assert "DELETE FROM" in sql
         assert "namespace_id = 7" in sql
-        assert "document LIKE" in sql
-        assert "MATCH(document)" not in sql
+        assert "MATCH(document) AGAINST" in sql
+        assert "obsolete" in sql
 
     # ---- QUERY ----
 
@@ -711,12 +712,15 @@ class TestNamespaceSQLGeneration:
 
     def test_create_namespace_physical_tables_sn_inline_vector_index(self):
         """SN logic_data_table: inline VECTOR INDEX in CREATE TABLE (same as SS)."""
+        from pyseekdb.client.configuration import FulltextIndexConfig
+
         c = self._client()
         ivf_config = IVFConfiguration(dimension=3, distance="l2", fresh_mode="spfresh")
         c._create_namespace_physical_tables(
             collection_id=self.COLLECTION_ID,
             dimension=3,
             ivf_config=ivf_config,
+            fulltext_config=FulltextIndexConfig(analyzer="ik"),
             is_shared_storage=False,
         )
         data_create = next(
@@ -743,12 +747,45 @@ class TestNamespaceSQLGeneration:
             s for s in c.executed_sqls if "CREATE TABLE" in s and self.TABLE in s
         )
         assert "VECTOR INDEX idx_vec(embedding)" in data_create
+        assert "FULLTEXT INDEX" not in data_create
+        assert "SEARCH INDEX idx_json(data_content)" in data_create
         assert "fresh_mode=spfresh" in data_create
         assert not any(s.startswith("CREATE VECTOR INDEX") for s in c.executed_sqls)
         hot_create = next(
             s for s in c.executed_sqls if "CREATE TABLE" in s and "_hot_table" in s
         )
         assert hot_create
+
+    def test_create_namespace_physical_tables_search_index_only(self):
+        """Without ivf/fulltext config, only SEARCH INDEX is created."""
+        c = self._client()
+        c._create_namespace_physical_tables(
+            collection_id=self.COLLECTION_ID,
+            dimension=3,
+            is_shared_storage=False,
+        )
+        data_create = next(
+            s for s in c.executed_sqls if "CREATE TABLE" in s and self.TABLE in s
+        )
+        assert "SEARCH INDEX idx_json(data_content)" in data_create
+        assert "VECTOR INDEX" not in data_create
+        assert "FULLTEXT INDEX" not in data_create
+
+    def test_create_namespace_physical_tables_ivf_without_fresh_mode(self):
+        """IVF without fresh_mode omits fresh_mode from VECTOR INDEX DDL."""
+        c = self._client()
+        ivf_config = IVFConfiguration(dimension=3, distance="l2")
+        c._create_namespace_physical_tables(
+            collection_id=self.COLLECTION_ID,
+            dimension=3,
+            ivf_config=ivf_config,
+            is_shared_storage=False,
+        )
+        data_create = next(
+            s for s in c.executed_sqls if "CREATE TABLE" in s and self.TABLE in s
+        )
+        assert "VECTOR INDEX idx_vec(embedding)" in data_create
+        assert "fresh_mode" not in data_create
 
 
 # ==================== Namespace Name Validation Tests ====================
@@ -981,15 +1018,15 @@ class TestNamespaceCatalogs:
         c._ensure_namespace_catalogs()
 
         sql = "\n".join(c.executed_sqls)
-        assert "CREATE TABLE IF NOT EXISTS `sdk_namespaces`" in sql
+        assert "CREATE TABLE IF NOT EXISTS `test`.`sdk_namespaces`" in sql
         assert "PRIMARY KEY (namespace_id)" in sql
         assert "UNIQUE KEY uk_sdk_ns_coll_name (collection_id, namespace_name)" in sql
 
-        assert "CREATE TABLE IF NOT EXISTS `sdk_ltables`" in sql
+        assert "CREATE TABLE IF NOT EXISTS `test`.`sdk_ltables`" in sql
         assert "PRIMARY KEY (ltable_id)" in sql
         assert "UNIQUE KEY uk_sdk_lt_coll_ns_name (collection_id, namespace_id, ltable_name)" in sql
 
-        assert "CREATE TABLE IF NOT EXISTS `sdk_namespaces_stats`" in sql
+        assert "CREATE TABLE IF NOT EXISTS `test`.`sdk_namespaces_stats`" in sql
         assert "collection_id CHAR(32) NOT NULL" in sql
         assert "namespace_id BIGINT UNSIGNED NOT NULL" in sql
         assert "ltable_id BIGINT UNSIGNED NOT NULL" in sql
@@ -1001,10 +1038,11 @@ class TestNamespaceCatalogs:
         c = FakeClient()
         c._ensure_namespace_catalogs()
 
-        assert len(c.executed_sqls) == 3
-        assert "`sdk_namespaces`" in c.executed_sqls[0]
-        assert "`sdk_ltables`" in c.executed_sqls[1]
-        assert "`sdk_namespaces_stats`" in c.executed_sqls[2]
+        assert len(c.executed_sqls) == 5
+        assert c.executed_sqls[0] == "USE `test`"
+        assert "`test`.`sdk_namespaces`" in c.executed_sqls[2]
+        assert "`test`.`sdk_ltables`" in c.executed_sqls[3]
+        assert "`test`.`sdk_namespaces_stats`" in c.executed_sqls[4]
 
     def test_delete_ns_collection_meta_cleans_namespaces_stats_table(self):
         c = FakeClient()
@@ -1042,14 +1080,50 @@ class TestUseNamespaceValidation:
         with pytest.raises(ValueError, match="only supported on OceanBase"):
             c._create_namespace_collection("test", schema)
 
-    def test_fresh_mode_false_raises(self):
+    def test_create_namespace_collection_without_ivf_skips_vector_index(self):
         c = FakeClient()
         c.detect_db_type_and_version = MagicMock(return_value=("oceanbase", "4.3"))
+        c._is_shared_storage_mode = MagicMock(return_value=False)
+        c._create_ns_collection_meta = MagicMock(return_value={"collection_id": "abc123"})
+        c._ensure_namespace_catalogs = MagicMock()
         from pyseekdb.client.schema import Schema
         from pyseekdb.client.configuration import VectorIndexConfig
-        schema = Schema(vector_index=VectorIndexConfig(ivf=IVFConfiguration(dimension=3, fresh_mode="none"), embedding_function=None))
-        with pytest.raises(ValueError, match="requires fresh_mode='spfresh'"):
-            c._create_namespace_collection("test", schema)
+
+        schema = Schema(vector_index=VectorIndexConfig(embedding_function=None))
+        c._create_namespace_collection("test", schema)
+        data_create = next(
+            s for s in c.executed_sqls if "CREATE TABLE" in s and "logic_data_table" in s
+        )
+        assert "VECTOR INDEX" not in data_create
+        assert "SEARCH INDEX idx_json(data_content)" in data_create
+        settings = c._create_ns_collection_meta.call_args[0][1]
+        assert "dense_index_type" not in settings
+        assert "fresh_mode" not in settings
+
+    def test_create_namespace_collection_ivf_without_fresh_mode(self):
+        c = FakeClient()
+        c.detect_db_type_and_version = MagicMock(return_value=("oceanbase", "4.3"))
+        c._is_shared_storage_mode = MagicMock(return_value=False)
+        c._create_ns_collection_meta = MagicMock(return_value={"collection_id": "abc123"})
+        c._ensure_namespace_catalogs = MagicMock()
+        from pyseekdb.client.schema import Schema
+        from pyseekdb.client.configuration import VectorIndexConfig
+
+        schema = Schema(
+            vector_index=VectorIndexConfig(
+                ivf=IVFConfiguration(dimension=3, distance="l2"),
+                embedding_function=None,
+            )
+        )
+        c._create_namespace_collection("test", schema)
+        data_create = next(
+            s for s in c.executed_sqls if "CREATE TABLE" in s and "logic_data_table" in s
+        )
+        assert "VECTOR INDEX idx_vec(embedding)" in data_create
+        assert "fresh_mode" not in data_create
+        settings = c._create_ns_collection_meta.call_args[0][1]
+        assert settings["dense_index_type"] == "ivf"
+        assert "fresh_mode" not in settings
 
 
 # ==================== Delete Namespace Uses Kernel ====================
@@ -1061,8 +1135,9 @@ class TestDeleteNamespaceUsesKernel:
         c = FakeClient()
         c._execute = MagicMock(side_effect=[
             [{"namespace_id": 10, "namespace_name": "ns1", "ltable_id": 7}],
-            None,  # _get_ns_namespace_meta -> _set_session_ns_context SET @namespace_id
-            None,  # _get_ns_namespace_meta -> _set_session_ns_context SET @ltable_id
+            None,  # _get_ns_namespace_meta -> SET @namespace_id
+            None,  # _get_ns_namespace_meta -> SET @ltable_id
+            None,  # _delete_ns_namespace_meta -> USE catalog database
             None,  # _delete_ns_namespace_meta -> SET @collection_id
             None,  # _delete_ns_namespace_meta -> SET @namespace_id
             None,  # _delete_ns_namespace_meta -> SET @ltable_id
