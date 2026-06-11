@@ -130,14 +130,14 @@ _NS_PARTITION_COUNT = 1000
 _NS_DATA_CONTENT_ID_EXPR = "JSON_UNQUOTE(JSON_EXTRACT(data_content, '$.id'))"
 
 
-def set_namespace_partition_count(n: int) -> None:
+def set_collection_partition_count(n: int) -> None:
     global _NS_PARTITION_COUNT
     if n < 1:
-        raise ValueError("namespace partition count must be >= 1")
+        raise ValueError("collection partition count must be >= 1")
     _NS_PARTITION_COUNT = n
 
 
-def get_namespace_partition_count() -> int:
+def get_collection_partition_count() -> int:
     return _NS_PARTITION_COUNT
 
 
