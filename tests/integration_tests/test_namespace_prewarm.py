@@ -20,11 +20,11 @@ class TestNamespacePrewarm:
     @pytest.fixture(autouse=True)
     def _reduce_namespace_partitions(self):
         """Override conftest: use 8 partitions for prewarm until DDL is faster."""
-        from pyseekdb import get_namespace_partition_count, set_namespace_partition_count
-        original = get_namespace_partition_count()
-        set_namespace_partition_count(8)
+        from pyseekdb import get_collection_partition_count, set_collection_partition_count
+        original = get_collection_partition_count()
+        set_collection_partition_count(8)
         yield
-        set_namespace_partition_count(original)
+        set_collection_partition_count(original)
 
     def _create_ns_collection_and_namespace(self, client):
         name = f"test_ns_pw_{int(time.time() * 1000)}"

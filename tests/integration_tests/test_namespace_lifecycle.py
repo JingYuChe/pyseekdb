@@ -202,14 +202,14 @@ class TestNamespaceLifecycle:
             client.delete_collection(name=name)
 
 
-    def test_custom_namespace_partition_count(self, oceanbase_client):
-        """Verify set_namespace_partition_count controls the PARTITIONS clause."""
-        from pyseekdb import get_namespace_partition_count, set_namespace_partition_count
+    def test_custom_collection_partition_count(self, oceanbase_client):
+        """Verify set_collection_partition_count controls the PARTITIONS clause."""
+        from pyseekdb import get_collection_partition_count, set_collection_partition_count
         from pyseekdb.client.meta_info import NamespaceCollectionNames
 
-        original = get_namespace_partition_count()
+        original = get_collection_partition_count()
         try:
-            set_namespace_partition_count(4)
+            set_collection_partition_count(4)
             collection = self._create_ns_collection(oceanbase_client, suffix="_pc")
             try:
                 data_table = NamespaceCollectionNames.data_table_name(collection.id)
@@ -223,7 +223,7 @@ class TestNamespaceLifecycle:
             finally:
                 oceanbase_client.delete_collection(name=collection.name)
         finally:
-            set_namespace_partition_count(original)
+            set_collection_partition_count(original)
 
 
 if __name__ == "__main__":
