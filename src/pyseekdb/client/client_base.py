@@ -27,6 +27,7 @@ from .configuration import (
     FulltextIndexConfig,
     HNSWConfiguration,
     IVFConfiguration,
+    IVFIndexType,
     VectorIndexConfig,
 )
 from .database import Database
@@ -59,6 +60,9 @@ _COLLECTION_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
 
 # Maximum allowed length for user-facing collection names.
 _MAX_COLLECTION_NAME_LENGTH = 512
+
+# Minimum OceanBase version that supports namespace-enabled collections.
+NAMESPACE_MIN_OB_VERSION = Version("4.6.1.0")
 
 logger = logging.getLogger(__name__)
 
@@ -412,9 +416,14 @@ class BaseClient(BaseConnection, AdminAPI):
     # ==================== Database Type Detection ====================
 
     def _validate_ob_database_type(self) -> None:
-        db_type, _version = self.detect_db_type_and_version()
+        db_type, version = self.detect_db_type_and_version()
         if db_type.lower() != "oceanbase":
             raise ValueError("use_namespace=True is only supported on OceanBase")
+        if version < NAMESPACE_MIN_OB_VERSION:
+            raise ValueError(
+                f"use_namespace=True requires OceanBase version >= {NAMESPACE_MIN_OB_VERSION}, "
+                f"current version is {version}"
+            )
 
     def _is_shared_storage_mode(self) -> bool:
         try:
@@ -939,6 +948,11 @@ class BaseClient(BaseConnection, AdminAPI):
 
         if hnsw_config is not None:
             raise ValueError("use_namespace=True only supports IVF index type, HNSW is not allowed")
+        if ivf_config is not None and ivf_config.type != IVFIndexType.IVF_FLAT.value:
+            raise ValueError(
+                f"use_namespace=True currently only supports IVF index type '{IVFIndexType.IVF_FLAT.value}', "
+                f"got '{ivf_config.type}'"
+            )
         self._validate_ob_database_type()
 
         if ivf_config is not None:
