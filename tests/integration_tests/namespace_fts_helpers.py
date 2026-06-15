@@ -17,6 +17,7 @@ from typing import Any, Literal
 VectorDistanceMetric = Literal["l2", "cosine"]
 VECTOR_DISTANCE_METRICS: tuple[VectorDistanceMetric, ...] = ("l2", "cosine")
 
+from namespace_dml_helpers import use_namespace_test_partitions
 from pyseekdb import IVFConfiguration
 from pyseekdb.client.configuration import VectorIndexConfig
 from pyseekdb.client.schema import Schema
@@ -512,6 +513,7 @@ def setup_large_fts_collection(
         raise ValueError(f"corpus must exceed 1000 rows, got {len(corpus)}")
 
     name = f"test_ns_hs_ft_{distance}_{int(time.time() * 1000)}"
+    use_namespace_test_partitions()
     collection = db_client.create_collection(
         name=name, schema=ns_schema(distance), use_namespace=True
     )
@@ -526,6 +528,7 @@ def setup_fts_namespace_with_corpus(
 ) -> Any:
     """Create a namespace under an existing collection and bulk-load the corpus."""
     namespace = collection.create_namespace(namespace_name)
+    namespace.prewarm()
     insert_corpus_into_namespace(namespace, corpus)
     expected = len(corpus)
     actual = namespace.count()
@@ -571,6 +574,7 @@ def _create_multi_coll_multi_ns_layout(
     distance: VectorDistanceMetric = "l2",
 ) -> dict[str, Any]:
     ts = int(time.time() * 1000)
+    use_namespace_test_partitions()
     coll_1 = db_client.create_collection(
         name=f"{name_prefix}_{distance}_{ts}_c1",
         schema=ns_schema(distance),
@@ -584,7 +588,9 @@ def _create_multi_coll_multi_ns_layout(
     ctx: dict[str, Any] = {"coll_1": coll_1, "coll_2": coll_2}
     for coll_tag, collection in (("c1", coll_1), ("c2", coll_2)):
         for ns_suffix in ("x", "y"):
-            ctx[f"{coll_tag}_{ns_suffix}"] = collection.create_namespace(f"ns_{ns_suffix}")
+            ns = collection.create_namespace(f"ns_{ns_suffix}")
+            ns.prewarm()
+            ctx[f"{coll_tag}_{ns_suffix}"] = ns
     return ctx
 
 
@@ -627,6 +633,7 @@ def setup_same_collection_both_ns_fts(db_client: Any) -> dict[str, Any]:
     remain visible via get.
     """
     ts = int(time.time() * 1000)
+    use_namespace_test_partitions()
     collection = db_client.create_collection(
         name=f"test_ns_hs_ft_sc2ns_{ts}",
         schema=ns_schema(),
@@ -635,6 +642,8 @@ def setup_same_collection_both_ns_fts(db_client: Any) -> dict[str, Any]:
     corpus = build_large_fts_corpus(CORPUS_SIZE)
     ns_x = collection.create_namespace("ns_x")
     ns_y = collection.create_namespace("ns_y")
+    ns_x.prewarm()
+    ns_y.prewarm()
     insert_corpus_in_batches(ns_x, corpus)
     insert_corpus_in_batches(ns_y, corpus)
     time.sleep(INDEX_SETTLE_SECONDS)

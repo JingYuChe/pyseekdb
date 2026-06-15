@@ -9,6 +9,7 @@ import time
 
 import pytest
 
+from namespace_dml_helpers import use_namespace_test_partitions
 from pyseekdb import IVFConfiguration
 from pyseekdb.client.configuration import VectorIndexConfig
 from pyseekdb.client.schema import Schema
@@ -18,6 +19,7 @@ class TestNamespaceSessionVars:
 
     def _create_ns_collection(self, client):
         name = f"test_ns_sessvar_{int(time.time() * 1000)}"
+        use_namespace_test_partitions()
         schema = Schema(
             vector_index=VectorIndexConfig(
                 ivf=IVFConfiguration(dimension=3, distance="l2", fresh_mode="spfresh"),

@@ -18,7 +18,7 @@ class TestNamespaceDMLMultiCollMultiNs:
     def _setup_quadrants(self, db_client):
         coll_1 = create_ns_collection(db_client, suffix="_mcmn_c1")
         coll_2 = create_ns_collection(db_client, suffix="_mcmn_c2")
-        return {
+        quadrants = {
             "coll_1": coll_1,
             "coll_2": coll_2,
             "c1_x": coll_1.create_namespace("ns_x"),
@@ -26,6 +26,9 @@ class TestNamespaceDMLMultiCollMultiNs:
             "c2_x": coll_2.create_namespace("ns_x"),
             "c2_y": coll_2.create_namespace("ns_y"),
         }
+        for key in ("c1_x", "c1_y", "c2_x", "c2_y"):
+            quadrants[key].prewarm()
+        return quadrants
 
     def test_cross_quadrant_isolation(self, db_client):
         q = self._setup_quadrants(db_client)
