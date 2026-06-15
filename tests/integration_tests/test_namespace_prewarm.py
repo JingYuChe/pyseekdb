@@ -17,6 +17,15 @@ from pyseekdb.client.schema import Schema
 
 class TestNamespacePrewarm:
 
+    @pytest.fixture(autouse=True)
+    def _reduce_namespace_partitions(self):
+        """Override conftest: use 8 partitions for prewarm until DDL is faster."""
+        from pyseekdb import get_collection_partition_count, set_collection_partition_count
+        original = get_collection_partition_count()
+        set_collection_partition_count(8)
+        yield
+        set_collection_partition_count(original)
+
     def _create_ns_collection_and_namespace(self, client):
         from namespace_dml_helpers import use_namespace_test_partitions
 

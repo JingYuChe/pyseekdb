@@ -19,7 +19,7 @@ VECTOR_DISTANCE_METRICS: tuple[VectorDistanceMetric, ...] = ("l2", "cosine")
 
 from namespace_dml_helpers import use_namespace_test_partitions
 from pyseekdb import IVFConfiguration
-from pyseekdb.client.configuration import VectorIndexConfig
+from pyseekdb.client.configuration import FulltextIndexConfig, VectorIndexConfig
 from pyseekdb.client.schema import Schema
 
 # Rare ASCII tokens to reduce IK segmentation surprises in assertions.
@@ -59,6 +59,7 @@ def ns_schema(distance: VectorDistanceMetric = "l2") -> Schema:
             ivf=IVFConfiguration(dimension=3, distance=distance, fresh_mode="spfresh"),
             embedding_function=None,
         ),
+        fulltext_index=FulltextIndexConfig(analyzer="ik"),
     )
 
 

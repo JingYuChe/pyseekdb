@@ -41,8 +41,8 @@ except ImportError:  # pragma: no cover - pymysql ships with the test deps
 
 from pyseekdb import (
     IVFConfiguration,
-    get_namespace_partition_count,
-    set_namespace_partition_count,
+    get_collection_partition_count,
+    set_collection_partition_count,
 )
 from pyseekdb.client.configuration import VectorIndexConfig
 from pyseekdb.client.meta_info import NamespaceCollectionNames
@@ -194,7 +194,7 @@ def _grep_lob_prewarm_log(lob_meta_tablet_ids):
 class _BaseLobPrewarm:
 
     def _make_collection(self, client, name, partitions):
-        set_namespace_partition_count(partitions)
+        set_collection_partition_count(partitions)
         schema = Schema(
             vector_index=VectorIndexConfig(
                 ivf=IVFConfiguration(dimension=3, distance="cosine"),
@@ -234,9 +234,9 @@ class TestLobPrewarmStructural(_BaseLobPrewarm):
 
     @pytest.fixture(autouse=True)
     def _restore_partitions(self):
-        original = get_namespace_partition_count()
+        original = get_collection_partition_count()
         yield
-        set_namespace_partition_count(original)
+        set_collection_partition_count(original)
 
     def test_kv_table_has_lob_meta_tablet(self, oceanbase_client):
         """Tier 1: the prewarm target (kv_data_table) owns an aux LOB-meta tablet."""
@@ -295,9 +295,9 @@ class TestLobPrewarmCaching(_BaseLobPrewarm):
 
     @pytest.fixture(autouse=True)
     def _restore_partitions(self):
-        original = get_namespace_partition_count()
+        original = get_collection_partition_count()
         yield
-        set_namespace_partition_count(original)
+        set_collection_partition_count(original)
 
     @staticmethod
     def _total_bytes(cache):
