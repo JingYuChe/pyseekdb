@@ -47,9 +47,9 @@ def ns_schema() -> Schema:
 
 
 def use_namespace_test_partitions() -> None:
-    from pyseekdb import set_namespace_partition_count
+    from pyseekdb import set_collection_partition_count
 
-    set_namespace_partition_count(NAMESPACE_TEST_PARTITION_COUNT)
+    set_collection_partition_count(NAMESPACE_TEST_PARTITION_COUNT)
 
 
 def create_ns_collection(client: Any, suffix: str = "") -> Any:
