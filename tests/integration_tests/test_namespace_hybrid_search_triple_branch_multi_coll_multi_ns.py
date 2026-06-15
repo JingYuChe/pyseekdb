@@ -16,6 +16,7 @@ import time
 
 import pytest
 
+from namespace_dml_helpers import use_namespace_test_partitions
 from namespace_fts_helpers import (
     CORPUS_SIZE,
     MULTI_COLL_MULTI_NS_FTS_LOADED_QUADRANTS,
@@ -80,6 +81,7 @@ def _setup_multi_coll_multi_ns_isolation_triple(
 ):
     """2 collections x 2 loaded namespaces with distinct per-namespace corpus markers."""
     ts = int(time.time() * 1000)
+    use_namespace_test_partitions()
     coll_1 = db_client.create_collection(
         name=f"test_ns_hs_tb_mcmn_iso_{distance}_{ts}_c1",
         schema=ns_schema(distance),
@@ -93,8 +95,12 @@ def _setup_multi_coll_multi_ns_isolation_triple(
     ctx: dict[str, object] = {"coll_1": coll_1, "coll_2": coll_2}
     for coll_tag, collection in (("c1", coll_1), ("c2", coll_2)):
         for ns_suffix in ("x", "y"):
-            ctx[f"{coll_tag}_{ns_suffix}"] = collection.create_namespace(f"ns_{ns_suffix}")
-        ctx[f"{coll_tag}_empty"] = collection.create_namespace("ns_empty")
+            ns = collection.create_namespace(f"ns_{ns_suffix}")
+            ns.prewarm()
+            ctx[f"{coll_tag}_{ns_suffix}"] = ns
+        empty_ns = collection.create_namespace("ns_empty")
+        empty_ns.prewarm()
+        ctx[f"{coll_tag}_empty"] = empty_ns
 
     base_corpus = build_large_fts_corpus(CORPUS_SIZE)
     if len(base_corpus) <= 1000:

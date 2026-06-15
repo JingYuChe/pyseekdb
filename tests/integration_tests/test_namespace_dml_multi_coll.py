@@ -20,6 +20,8 @@ class TestNamespaceDMLMultiColl:
         coll_b = create_ns_collection(db_client, suffix="_mc_b")
         ns_a = coll_a.create_namespace("tenant")
         ns_b = coll_b.create_namespace("tenant")
+        ns_a.prewarm()
+        ns_b.prewarm()
         try:
             ns_a.add(
                 ids="doc1",
@@ -48,6 +50,8 @@ class TestNamespaceDMLMultiColl:
         coll_b = create_ns_collection(db_client, suffix="_mc_upd_b")
         ns_a = coll_a.create_namespace("tenant")
         ns_b = coll_b.create_namespace("tenant")
+        ns_a.prewarm()
+        ns_b.prewarm()
         try:
             ns_a.add(ids="doc1", embeddings=[1.0, 0.0, 0.0], documents="Original A")
             ns_b.add(ids="doc1", embeddings=[0.0, 1.0, 0.0], documents="Original B")

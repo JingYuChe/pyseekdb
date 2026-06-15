@@ -7,6 +7,7 @@ import time
 
 import pytest
 
+from namespace_dml_helpers import use_namespace_test_partitions
 from pyseekdb import IVFConfiguration
 from pyseekdb.client.configuration import VectorIndexConfig
 from pyseekdb.client.schema import Schema
@@ -16,6 +17,7 @@ class TestNamespaceQuery:
 
     def _setup(self, client, suffix=""):
         name = f"test_ns_q_{int(time.time() * 1000)}{suffix}"
+        use_namespace_test_partitions()
         schema = Schema(
             vector_index=VectorIndexConfig(
                 ivf=IVFConfiguration(dimension=3, distance="l2", fresh_mode="spfresh"),
