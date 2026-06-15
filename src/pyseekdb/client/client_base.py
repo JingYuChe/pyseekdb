@@ -27,6 +27,7 @@ from .configuration import (
     FulltextIndexConfig,
     HNSWConfiguration,
     IVFConfiguration,
+    IVFIndexType,
     VectorIndexConfig,
 )
 from .database import Database
@@ -59,6 +60,9 @@ _COLLECTION_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
 
 # Maximum allowed length for user-facing collection names.
 _MAX_COLLECTION_NAME_LENGTH = 512
+
+# Minimum OceanBase version that supports namespace-enabled collections.
+NAMESPACE_MIN_OB_VERSION = Version("4.6.1.0")
 
 logger = logging.getLogger(__name__)
 
@@ -130,14 +134,14 @@ _NS_PARTITION_COUNT = 1000
 _NS_DATA_CONTENT_ID_EXPR = "JSON_UNQUOTE(JSON_EXTRACT(data_content, '$.id'))"
 
 
-def set_namespace_partition_count(n: int) -> None:
+def set_collection_partition_count(n: int) -> None:
     global _NS_PARTITION_COUNT
     if n < 1:
-        raise ValueError("namespace partition count must be >= 1")
+        raise ValueError("collection partition count must be >= 1")
     _NS_PARTITION_COUNT = n
 
 
-def get_namespace_partition_count() -> int:
+def get_collection_partition_count() -> int:
     return _NS_PARTITION_COUNT
 
 
@@ -412,9 +416,14 @@ class BaseClient(BaseConnection, AdminAPI):
     # ==================== Database Type Detection ====================
 
     def _validate_ob_database_type(self) -> None:
-        db_type, _version = self.detect_db_type_and_version()
+        db_type, version = self.detect_db_type_and_version()
         if db_type.lower() != "oceanbase":
             raise ValueError("use_namespace=True is only supported on OceanBase")
+        if version < NAMESPACE_MIN_OB_VERSION:
+            raise ValueError(
+                f"use_namespace=True requires OceanBase version >= {NAMESPACE_MIN_OB_VERSION}, "
+                f"current version is {version}"
+            )
 
     def _is_shared_storage_mode(self) -> bool:
         try:
@@ -939,21 +948,22 @@ class BaseClient(BaseConnection, AdminAPI):
 
         if hnsw_config is not None:
             raise ValueError("use_namespace=True only supports IVF index type, HNSW is not allowed")
+        if ivf_config is not None and ivf_config.type != IVFIndexType.IVF_FLAT.value:
+            raise ValueError(
+                f"use_namespace=True currently only supports IVF index type '{IVFIndexType.IVF_FLAT.value}', "
+                f"got '{ivf_config.type}'"
+            )
         self._validate_ob_database_type()
 
         if ivf_config is not None:
             dimension = ivf_config.dimension
             distance = ivf_config.distance
-            if ivf_config.fresh_mode is not None and ivf_config.fresh_mode != "spfresh":
-                raise ValueError("use_namespace=True requires fresh_mode='spfresh'")
         else:
             if dense_embedding_function is not None:
                 dimension = self._get_embedding_function_dimension(dense_embedding_function)
             else:
                 dimension = DEFAULT_VECTOR_DIMENSION
             distance = DEFAULT_DISTANCE_METRIC
-            from .configuration import IVFConfiguration
-            ivf_config = IVFConfiguration(dimension=dimension, distance=distance, fresh_mode="spfresh")
 
         if dimension < 1 or dimension > 4096:
             raise ValueError(f"Dimension must be between 1 and 4096, got {dimension}")
@@ -962,12 +972,14 @@ class BaseClient(BaseConnection, AdminAPI):
         settings = {
             "version": 2,
             "use_namespace": True,
-            "dense_index_type": "ivf",
-            "fresh_mode": "spfresh",
             "storage_mode": "ss" if is_ss else "sn",
             "dimension": dimension,
             "distance": distance,
         }
+        if ivf_config is not None:
+            settings["dense_index_type"] = "ivf"
+            if ivf_config.fresh_mode is not None:
+                settings["fresh_mode"] = ivf_config.fresh_mode
         if dense_embedding_function is not None and EmbeddingFunction.support_persistence(dense_embedding_function):
             settings["embedding_function"] = {
                 "name": dense_embedding_function.name(),
@@ -1285,7 +1297,7 @@ class BaseClient(BaseConnection, AdminAPI):
         self,
         collection_id: str,
         dimension: int,
-        ivf_config,
+        ivf_config=None,
         fulltext_config=None,
         is_shared_storage: bool = False,
     ) -> None:
@@ -1294,19 +1306,18 @@ class BaseClient(BaseConnection, AdminAPI):
         kv_table = NamespaceCollectionNames.kv_data_table_name(collection_id)
         schema_table = NamespaceCollectionNames.logic_schema_table_name(collection_id)
 
-        fulltext_clause = _get_fulltext_index_sql(fulltext_config)
-        vector_index_sql = _get_ivf_vector_index_sql(ivf_config)
+        index_parts = ["SEARCH INDEX idx_json(data_content)"]
+        if fulltext_config is not None:
+            fulltext_clause = _get_fulltext_index_sql(fulltext_config)
+            index_parts.insert(0, f"FULLTEXT INDEX idx_fts(document) {fulltext_clause}")
+        if ivf_config is not None:
+            vector_index_sql = _get_ivf_vector_index_sql(ivf_config)
+            index_parts.append(f"VECTOR INDEX idx_vec(embedding) {vector_index_sql}")
+        index_sql = ",\n                ".join(index_parts)
         partition_clause = f"PARTITION BY KEY(namespace_id) PARTITIONS {_NS_PARTITION_COUNT}"
 
         try:
             self._execute(f"CREATE TABLEGROUP `{tg_name}` SHARDING='ADAPTIVE'")
-
-            # Inline VECTOR INDEX in CREATE TABLE for both SN and SS logic tables.
-            index_sql = (
-                f"FULLTEXT INDEX idx_fts(document) {fulltext_clause},\n"
-                f"                SEARCH INDEX idx_json(data_content),\n"
-                f"                VECTOR INDEX idx_vec(embedding) {vector_index_sql}"
-            )
 
             data_sql = f"""CREATE TABLE `{data_table}` (
                 namespace_id BIGINT UNSIGNED NOT NULL,
