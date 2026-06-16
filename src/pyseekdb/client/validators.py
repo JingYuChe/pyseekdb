@@ -4,6 +4,7 @@ _NAME_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
 _MAX_NAME_LENGTH = 512
 _MAX_NAMESPACE_NAME_LENGTH = 256
 _MAX_NAMESPACE_BATCH_SIZE = 100
+_MAX_N_RESULTS = 16384  # OceanBase vector-search k upper bound
 
 
 def _validate_namespace_name(name: str) -> None:
