@@ -42,6 +42,7 @@ class Collection:
         distance: str | None = None,
         sparse_vector_index_config: Optional["SparseVectorIndexConfig"] = None,
         use_namespace: bool = False,
+        partition_count: int | None = None,
         **metadata,
     ):
         self._client = client
@@ -52,6 +53,7 @@ class Collection:
         self._distance = distance
         self._sparse_vector_index_config = sparse_vector_index_config
         self._use_namespace = use_namespace
+        self._partition_count = partition_count
         self._metadata = metadata
 
     # ==================== Properties ====================
@@ -106,6 +108,16 @@ class Collection:
     @property
     def use_namespace(self) -> bool:
         return self._use_namespace
+
+    @property
+    def partition_count(self) -> int | None:
+        """Number of partitions for the namespace physical tables.
+
+        Returns the configured partition count for namespace-enabled collections
+        (defaults to 1000 when not set at creation), or None for non-namespace
+        collections, which are not partitioned.
+        """
+        return self._partition_count
 
     def _guard_collection_data_api(self) -> None:
         if self._use_namespace:

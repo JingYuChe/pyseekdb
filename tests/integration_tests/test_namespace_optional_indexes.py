@@ -21,6 +21,7 @@ from typing import Any
 import pymysql.err
 import pytest
 
+from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT
 from pyseekdb import IVFConfiguration
 from pyseekdb.client.configuration import FulltextIndexConfig, VectorIndexConfig
 from pyseekdb.client.meta_info import NamespaceCollectionNames
@@ -63,7 +64,10 @@ def _collection_settings(client: Any, collection_id: str) -> dict:
 
 def _create_collection(client: Any, label: str, schema: Schema) -> Any:
     name = f"test_ns_opt_idx_{label}_{int(time.time() * 1000)}"
-    return client.create_collection(name=name, schema=schema, use_namespace=True)
+    return client.create_collection(
+        name=name, schema=schema, use_namespace=True,
+        partition_count=NAMESPACE_TEST_PARTITION_COUNT,
+    )
 
 
 def _unit_vector(dimension: int, axis: int = 0) -> list[float]:

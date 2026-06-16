@@ -8,7 +8,7 @@ import time
 import pytest
 
 import pyseekdb
-from namespace_dml_helpers import use_namespace_test_partitions
+from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT
 from pyseekdb import IVFConfiguration
 from pyseekdb.client.configuration import VectorIndexConfig
 from pyseekdb.client.schema import Schema
@@ -19,14 +19,16 @@ class TestNamespaceLifecycle:
 
     def _create_ns_collection(self, client, suffix=""):
         name = f"test_ns_lc_{int(time.time() * 1000)}{suffix}"
-        use_namespace_test_partitions()
         schema = Schema(
             vector_index=VectorIndexConfig(
                 ivf=IVFConfiguration(dimension=3, distance="cosine", fresh_mode="spfresh"),
                 embedding_function=None,
             ),
         )
-        collection = client.create_collection(name=name, schema=schema, use_namespace=True)
+        collection = client.create_collection(
+            name=name, schema=schema, use_namespace=True,
+            partition_count=NAMESPACE_TEST_PARTITION_COUNT,
+        )
         return collection
 
     def test_create_namespace_collection(self, db_client):
@@ -52,14 +54,16 @@ class TestNamespaceLifecycle:
 
         ef = DefaultEmbeddingFunction()
         name = f"test_ns_ef_{int(time.time() * 1000)}"
-        use_namespace_test_partitions()
         schema = Schema(
             vector_index=VectorIndexConfig(
                 ivf=IVFConfiguration(dimension=ef.dimension, distance="cosine", fresh_mode="spfresh"),
                 embedding_function=ef,
             ),
         )
-        collection = db_client.create_collection(name=name, schema=schema, use_namespace=True)
+        collection = db_client.create_collection(
+            name=name, schema=schema, use_namespace=True,
+            partition_count=NAMESPACE_TEST_PARTITION_COUNT,
+        )
         try:
             reopened = db_client.get_collection(name)
             assert reopened.use_namespace is True
@@ -206,7 +210,6 @@ class TestNamespaceLifecycle:
             type(client._server), "_is_shared_storage_mode", return_value=True
         ):
             name = f"test_ns_ss_{int(time.time() * 1000)}"
-            use_namespace_test_partitions()
             schema = Schema(
                 vector_index=VectorIndexConfig(
                     ivf=IVFConfiguration(dimension=3, distance="cosine", fresh_mode="spfresh"),
@@ -214,7 +217,8 @@ class TestNamespaceLifecycle:
                 ),
             )
             collection = client.create_collection(
-                name=name, schema=schema, use_namespace=True
+                name=name, schema=schema, use_namespace=True,
+                partition_count=NAMESPACE_TEST_PARTITION_COUNT,
             )
 
         try:
@@ -240,27 +244,46 @@ class TestNamespaceLifecycle:
 
 
     def test_custom_collection_partition_count(self, oceanbase_client):
-        """Verify set_collection_partition_count controls the PARTITIONS clause."""
-        from pyseekdb import get_collection_partition_count, set_collection_partition_count
+        """Verify create_collection(partition_count=...) controls the PARTITIONS clause
+        and is exposed via collection.partition_count."""
+        import re
         from pyseekdb.client.meta_info import NamespaceCollectionNames
 
-        original = get_collection_partition_count()
+        name = f"test_ns_lc_pc_{int(time.time() * 1000)}"
+        schema = Schema(
+            vector_index=VectorIndexConfig(
+                ivf=IVFConfiguration(dimension=3, distance="cosine", fresh_mode="spfresh"),
+                embedding_function=None,
+            ),
+        )
+        collection = oceanbase_client.create_collection(
+            name=name, schema=schema, use_namespace=True, partition_count=4
+        )
         try:
-            set_collection_partition_count(4)
-            collection = self._create_ns_collection(oceanbase_client, suffix="_pc")
-            try:
-                data_table = NamespaceCollectionNames.data_table_name(collection.id)
-                rows = oceanbase_client._server._execute(f"SHOW CREATE TABLE `{data_table}`")
-                create_sql = rows[0].get("Create Table", "") if rows else ""
-                import re
-                partitions = re.findall(r"partition `p\d+`", create_sql)
-                assert len(partitions) == 4, (
-                    f"Expected 4 partitions, found {len(partitions)}: {create_sql[-300:]}"
-                )
-            finally:
-                oceanbase_client.delete_collection(name=collection.name)
+            assert collection.partition_count == 4
+            # Reopened handle restores partition_count from settings.
+            assert oceanbase_client.get_collection(name).partition_count == 4
+
+            data_table = NamespaceCollectionNames.data_table_name(collection.id)
+            rows = oceanbase_client._server._execute(f"SHOW CREATE TABLE `{data_table}`")
+            create_sql = rows[0].get("Create Table", "") if rows else ""
+            partitions = re.findall(r"partition `p\d+`", create_sql)
+            assert len(partitions) == 4, (
+                f"Expected 4 partitions, found {len(partitions)}: {create_sql[-300:]}"
+            )
         finally:
-            set_collection_partition_count(original)
+            oceanbase_client.delete_collection(name=collection.name)
+
+    def test_partition_count_rejected_for_non_namespace(self, db_client):
+        name = f"test_nons_pc_{int(time.time() * 1000)}"
+        with pytest.raises(ValueError, match="partition_count is only supported"):
+            db_client.create_collection(
+                name=name,
+                configuration=pyseekdb.HNSWConfiguration(dimension=3),
+                embedding_function=None,
+                partition_count=4,
+            )
+        assert not db_client.has_collection(name)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ import time
 
 import pytest
 
+from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT
 from pyseekdb import IVFConfiguration
 from pyseekdb.client.client_base import NAMESPACE_MIN_OB_VERSION
 from pyseekdb.client.configuration import VectorIndexConfig
@@ -47,7 +48,8 @@ class TestNamespaceIvfTypeConstraint:
         """Positive control: ivf_flat namespace collection creation succeeds."""
         name = _unique_name("_ivf_flat")
         collection = oceanbase_client.create_collection(
-            name=name, schema=_make_schema("ivf_flat"), use_namespace=True
+            name=name, schema=_make_schema("ivf_flat"), use_namespace=True,
+            partition_count=NAMESPACE_TEST_PARTITION_COUNT,
         )
         try:
             assert collection.use_namespace is True
@@ -67,7 +69,8 @@ class TestNamespaceMinVersionConstraint:
 
         name = _unique_name("_ver_ok")
         collection = oceanbase_client.create_collection(
-            name=name, schema=_make_schema("ivf_flat"), use_namespace=True
+            name=name, schema=_make_schema("ivf_flat"), use_namespace=True,
+            partition_count=NAMESPACE_TEST_PARTITION_COUNT,
         )
         try:
             assert collection.use_namespace is True

@@ -272,11 +272,3 @@ def oceanbase_admin_client():
             client.close()
 
 
-@pytest.fixture(autouse=True)
-def _reduce_namespace_partitions():
-    """Use a small partition count in integration tests to speed up DDL."""
-    from pyseekdb import get_collection_partition_count, set_collection_partition_count
-    original = get_collection_partition_count()
-    set_collection_partition_count(8)
-    yield
-    set_collection_partition_count(original)

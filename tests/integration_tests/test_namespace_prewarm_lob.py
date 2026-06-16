@@ -39,11 +39,7 @@ try:
 except ImportError:  # pragma: no cover - pymysql ships with the test deps
     pymysql = None
 
-from pyseekdb import (
-    IVFConfiguration,
-    get_collection_partition_count,
-    set_collection_partition_count,
-)
+from pyseekdb import IVFConfiguration
 from pyseekdb.client.configuration import VectorIndexConfig
 from pyseekdb.client.meta_info import NamespaceCollectionNames
 from pyseekdb.client.schema import Schema
@@ -194,14 +190,15 @@ def _grep_lob_prewarm_log(lob_meta_tablet_ids):
 class _BaseLobPrewarm:
 
     def _make_collection(self, client, name, partitions):
-        set_collection_partition_count(partitions)
         schema = Schema(
             vector_index=VectorIndexConfig(
                 ivf=IVFConfiguration(dimension=3, distance="cosine"),
                 embedding_function=None,
             ),
         )
-        return client.create_collection(name=name, schema=schema, use_namespace=True)
+        return client.create_collection(
+            name=name, schema=schema, use_namespace=True, partition_count=partitions
+        )
 
     def _force_out_of_row_lob(self, client, collection_id, namespace_id):
         """Insert several >0.75MB incompressible kv_values so they spill out-of-row
@@ -231,12 +228,6 @@ class _BaseLobPrewarm:
 # ==================== Tier 1 + structural multi-namespace ====================
 
 class TestLobPrewarmStructural(_BaseLobPrewarm):
-
-    @pytest.fixture(autouse=True)
-    def _restore_partitions(self):
-        original = get_collection_partition_count()
-        yield
-        set_collection_partition_count(original)
 
     def test_kv_table_has_lob_meta_tablet(self, oceanbase_client):
         """Tier 1: the prewarm target (kv_data_table) owns an aux LOB-meta tablet."""
@@ -292,12 +283,6 @@ class TestLobPrewarmStructural(_BaseLobPrewarm):
 # ==================== Tier 2 + Tier 3: real LOB caching ====================
 
 class TestLobPrewarmCaching(_BaseLobPrewarm):
-
-    @pytest.fixture(autouse=True)
-    def _restore_partitions(self):
-        original = get_collection_partition_count()
-        yield
-        set_collection_partition_count(original)
 
     @staticmethod
     def _total_bytes(cache):

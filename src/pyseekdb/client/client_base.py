@@ -128,21 +128,10 @@ def _validate_collection_name(name: str) -> None:
 
 from .validators import _MAX_NAMESPACE_BATCH_SIZE, _validate_namespace_name, _validate_record_ids  # noqa: F401
 
-_NS_PARTITION_COUNT = 1000
+_DEFAULT_PARTITION_COUNT = 1000
 # Unquoted id for WHERE/CASE; plain JSON_EXTRACT returns a quoted JSON string and
 # can route through SEARCH INDEX on SS logic tables, breaking cross-namespace id lookups.
 _NS_DATA_CONTENT_ID_EXPR = "JSON_UNQUOTE(JSON_EXTRACT(data_content, '$.id'))"
-
-
-def set_collection_partition_count(n: int) -> None:
-    global _NS_PARTITION_COUNT
-    if n < 1:
-        raise ValueError("collection partition count must be >= 1")
-    _NS_PARTITION_COUNT = n
-
-
-def get_collection_partition_count() -> int:
-    return _NS_PARTITION_COUNT
 
 
 def _build_default_ltable_schema() -> dict:
@@ -801,6 +790,7 @@ class BaseClient(BaseConnection, AdminAPI):
         configuration: ConfigurationParam = _NOT_PROVIDED,
         embedding_function: EmbeddingFunctionParam = _NOT_PROVIDED,
         use_namespace: bool = False,
+        partition_count: int | None = None,
         **kwargs,
     ) -> "Collection":
         """Create a new collection.
@@ -817,6 +807,9 @@ class BaseClient(BaseConnection, AdminAPI):
                 Defaults to ``DefaultEmbeddingFunction`` (all-MiniLM-L6-v2). If set to None,
                 no embedding function will be used (embeddings must be provided manually).
             use_namespace: If True, create a namespace-enabled collection. Defaults to False.
+            partition_count: Number of partitions for the namespace physical tables.
+                Only valid when ``use_namespace=True``. Defaults to 1000 when not provided.
+                Passing it for a non-namespace collection raises ``ValueError``.
             **kwargs: Additional parameters for collection creation.
 
         Returns:
@@ -849,6 +842,10 @@ class BaseClient(BaseConnection, AdminAPI):
             ... )
         """
         _validate_collection_name(name)
+        if partition_count is not None and not use_namespace:
+            raise ValueError(
+                "partition_count is only supported for namespace-enabled collections (use_namespace=True)."
+            )
         if self.has_collection(name):
             raise ValueError(f"Collection '{name}' already exists")
 
@@ -866,7 +863,7 @@ class BaseClient(BaseConnection, AdminAPI):
         logger.debug(f"schema: {schema}")
 
         if use_namespace:
-            return self._create_namespace_collection(name, schema, **kwargs)
+            return self._create_namespace_collection(name, schema, partition_count=partition_count, **kwargs)
 
         # Resolve HNSW configuration dimension if not set
         hnsw_config = schema.vector_index.hnsw
@@ -941,7 +938,10 @@ class BaseClient(BaseConnection, AdminAPI):
             **kwargs,
         )
 
-    def _create_namespace_collection(self, name: str, schema: Schema, **kwargs) -> "Collection":
+    def _create_namespace_collection(self, name: str, schema: Schema, partition_count: int | None = None, **kwargs) -> "Collection":
+        pc = _DEFAULT_PARTITION_COUNT if partition_count is None else partition_count
+        if pc < 1:
+            raise ValueError("partition_count must be >= 1")
         dense_embedding_function = schema.vector_index.embedding_function
         ivf_config = schema.vector_index.ivf
         hnsw_config = schema.vector_index.hnsw
@@ -975,6 +975,7 @@ class BaseClient(BaseConnection, AdminAPI):
             "storage_mode": "ss" if is_ss else "sn",
             "dimension": dimension,
             "distance": distance,
+            "partition_count": pc,
         }
         if ivf_config is not None:
             settings["dense_index_type"] = "ivf"
@@ -998,6 +999,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 ivf_config=ivf_config,
                 fulltext_config=schema.fulltext_index,
                 is_shared_storage=is_ss,
+                partition_count=pc,
             )
         except Exception:
             with contextlib.suppress(Exception):
@@ -1016,6 +1018,7 @@ class BaseClient(BaseConnection, AdminAPI):
             embedding_function=dense_embedding_function,
             distance=distance,
             use_namespace=True,
+            partition_count=pc,
         )
 
     def _get_embedding_function_dimension(self, embedding_function: EmbeddingFunction) -> int:
@@ -1205,7 +1208,7 @@ class BaseClient(BaseConnection, AdminAPI):
             PRIMARY KEY (namespace_id, ltable_id, included_index),
             KEY idx_sdk_ns_stat_by_collection (collection_id)
         ) COMMENT='Logic table row count and storage size statistics' DEFAULT CHARSET=utf8mb4
-        PARTITION BY KEY(namespace_id) PARTITIONS {_NS_PARTITION_COUNT};"""
+        PARTITION BY KEY(namespace_id) PARTITIONS 8;"""
         self._execute(ns_namespaces_sql)
         self._execute(ns_ltables_sql)
         self._execute(namespaces_stats_sql)
@@ -1313,6 +1316,7 @@ class BaseClient(BaseConnection, AdminAPI):
         ivf_config=None,
         fulltext_config=None,
         is_shared_storage: bool = False,
+        partition_count: int = _DEFAULT_PARTITION_COUNT,
     ) -> None:
         tg_name = NamespaceCollectionNames.tablegroup_name(collection_id)
         data_table = NamespaceCollectionNames.data_table_name(collection_id)
@@ -1327,7 +1331,7 @@ class BaseClient(BaseConnection, AdminAPI):
             vector_index_sql = _get_ivf_vector_index_sql(ivf_config)
             index_parts.append(f"VECTOR INDEX idx_vec(embedding) {vector_index_sql}")
         index_sql = ",\n                ".join(index_parts)
-        partition_clause = f"PARTITION BY KEY(namespace_id) PARTITIONS {_NS_PARTITION_COUNT}"
+        partition_clause = f"PARTITION BY KEY(namespace_id) PARTITIONS {partition_count}"
 
         try:
             self._execute(f"CREATE TABLEGROUP `{tg_name}` SHARDING='ADAPTIVE'")
@@ -1600,6 +1604,7 @@ class BaseClient(BaseConnection, AdminAPI):
         settings = meta.get("settings", {})
         dimension = settings.get("dimension")
         distance = settings.get("distance", DEFAULT_DISTANCE_METRIC)
+        partition_count = settings.get("partition_count")
         ef = None
         if embedding_function is not _NOT_PROVIDED:
             ef = embedding_function
@@ -1617,6 +1622,7 @@ class BaseClient(BaseConnection, AdminAPI):
             embedding_function=ef,
             distance=distance,
             use_namespace=True,
+            partition_count=partition_count,
         )
 
     def _resolve_collection_metadata_from_sdk_collections(self, collection_name: str) -> _CollectionMeta | None:
