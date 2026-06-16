@@ -1524,6 +1524,24 @@ class BaseClient(BaseConnection, AdminAPI):
     def _has_ns_namespace(self, collection_id: str, namespace_name: str) -> bool:
         return self._get_ns_namespace_meta(collection_id, namespace_name) is not None
 
+    def _ns_namespace_exists_by_id(self, collection_id: str, namespace_id: str) -> bool:
+        """Whether a namespace with this id is still live in the catalog.
+
+        Used to reject DML/DQL on a stale Namespace handle whose namespace (or
+        whole collection) was deleted. delete_namespace soft-deletes by renaming
+        the row to '__recyclebin_<name>_<id>' (kernel async cleanup follows), so
+        a recyclebin-prefixed row counts as gone; a deleted collection removes
+        the row outright. Underlying data may linger after either, so we trust
+        the catalog, not the data table.
+        """
+        collection_id_escaped = escape_string(str(collection_id))
+        rows = self._execute(
+            f"SELECT namespace_id FROM {self._qtable(NamespaceCollectionNames.sdk_namespaces_table())} "
+            f"WHERE collection_id = '{collection_id_escaped}' AND namespace_id = {int(namespace_id)} "
+            f"AND LEFT(namespace_name, 13) <> '__recyclebin_'"
+        )
+        return bool(rows)
+
     def _delete_ns_namespace_meta(self, collection_id: str, namespace_name: str) -> None:
         meta = self._get_ns_namespace_meta(collection_id, namespace_name)
         if meta is None:

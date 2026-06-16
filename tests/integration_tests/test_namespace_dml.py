@@ -43,6 +43,33 @@ class TestNamespaceDML:
         finally:
             cleanup(db_client, collection)
 
+    def test_ops_blocked_after_namespace_deleted(self, db_client):
+        collection = create_ns_collection(db_client, suffix="_delns")
+        ns = _create_namespace(collection, "dml_ns")
+        try:
+            ns.add(ids="d1", embeddings=[1.0, 2.0, 3.0])
+            collection.delete_namespace("dml_ns")
+            with pytest.raises(ValueError, match="no longer exists"):
+                ns.add(ids="d2", embeddings=[4.0, 5.0, 6.0])
+            with pytest.raises(ValueError, match="no longer exists"):
+                ns.get(ids="d1")
+            with pytest.raises(ValueError, match="no longer exists"):
+                ns.query(query_embeddings=[1.0, 2.0, 3.0], n_results=1)
+            with pytest.raises(ValueError, match="no longer exists"):
+                ns.count()
+        finally:
+            cleanup(db_client, collection)
+
+    def test_ops_blocked_after_collection_deleted(self, db_client):
+        collection = create_ns_collection(db_client, suffix="_delcoll")
+        ns = _create_namespace(collection, "dml_ns")
+        ns.add(ids="d1", embeddings=[1.0, 2.0, 3.0])
+        db_client.delete_collection(name=collection.name)
+        with pytest.raises(ValueError, match="no longer exists"):
+            ns.add(ids="d2", embeddings=[4.0, 5.0, 6.0])
+        with pytest.raises(ValueError, match="no longer exists"):
+            ns.query(query_embeddings=[1.0, 2.0, 3.0], n_results=1)
+
     def test_add_batch(self, db_client):
         collection = create_ns_collection(db_client, suffix="_addb")
         ns = _create_namespace(collection,"dml_ns")
