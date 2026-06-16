@@ -47,6 +47,27 @@ class TestNamespaceLifecycle:
         finally:
             db_client.delete_collection(name=collection.name)
 
+    def test_get_collection_restores_embedding_function(self, db_client):
+        from pyseekdb import DefaultEmbeddingFunction
+
+        ef = DefaultEmbeddingFunction()
+        name = f"test_ns_ef_{int(time.time() * 1000)}"
+        use_namespace_test_partitions()
+        schema = Schema(
+            vector_index=VectorIndexConfig(
+                ivf=IVFConfiguration(dimension=ef.dimension, distance="cosine", fresh_mode="spfresh"),
+                embedding_function=ef,
+            ),
+        )
+        collection = db_client.create_collection(name=name, schema=schema, use_namespace=True)
+        try:
+            reopened = db_client.get_collection(name)
+            assert reopened.use_namespace is True
+            assert reopened.embedding_function is not None
+            assert reopened.embedding_function.name() == "default"
+        finally:
+            db_client.delete_collection(name=name)
+
     def test_create_and_get_namespace(self, db_client):
         collection = self._create_ns_collection(db_client)
         try:

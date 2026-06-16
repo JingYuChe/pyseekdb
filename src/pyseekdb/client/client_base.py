@@ -1605,9 +1605,10 @@ class BaseClient(BaseConnection, AdminAPI):
             ef = embedding_function
         elif "embedding_function" in settings:
             ef_info = settings["embedding_function"]
-            ef = EmbeddingFunctionRegistry.get(ef_info["name"])
-            if ef and hasattr(ef, "set_config"):
-                ef.set_config(ef_info.get("properties", {}))
+            ef_class = EmbeddingFunctionRegistry.get_class(ef_info["name"])
+            if ef_class is None:
+                raise ValueError(f"Embedding function class '{ef_info['name']}' not found")
+            ef = ef_class.build_from_config(ef_info.get("properties", {}))
         return Collection(
             client=self,
             name=meta["collection_name"],
