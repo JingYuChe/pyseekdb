@@ -126,7 +126,7 @@ def _validate_collection_name(name: str) -> None:
         )
 
 
-from .validators import _MAX_NAMESPACE_BATCH_SIZE, _validate_namespace_name, _validate_record_ids  # noqa: F401
+from .validators import _MAX_N_RESULTS, _MAX_NAMESPACE_BATCH_SIZE, _validate_namespace_name, _validate_record_ids  # noqa: F401
 
 _DEFAULT_PARTITION_COUNT = 1000
 # Unquoted id for WHERE/CASE; plain JSON_EXTRACT returns a quoted JSON string and
@@ -4450,6 +4450,13 @@ class BaseClient(BaseConnection, AdminAPI):
         query_embeddings = knn.get("query_embeddings")
         where = knn.get("where")
         n_results = knn.get("n_results", 10)
+        if not isinstance(n_results, int) or n_results < 1:
+            raise ValueError(f"n_results must be an integer >= 1, got {n_results!r}")
+        if n_results > _MAX_N_RESULTS:
+            raise ValueError(
+                f"n_results must be <= {_MAX_N_RESULTS}, got {n_results}. "
+                "Use a smaller value or paginate with offset/limit."
+            )
         boost = knn.get("boost")
 
         embedding_function = kwargs.get("embedding_function")
