@@ -27,7 +27,10 @@ class TestNamespacePrewarm:
         set_collection_partition_count(original)
 
     def _create_ns_collection_and_namespace(self, client):
+        from namespace_dml_helpers import use_namespace_test_partitions
+
         name = f"test_ns_pw_{int(time.time() * 1000)}"
+        use_namespace_test_partitions()
         schema = Schema(
             vector_index=VectorIndexConfig(
                 ivf=IVFConfiguration(dimension=3, distance="cosine", fresh_mode="spfresh"),

@@ -4,6 +4,7 @@ import time
 import pytest
 
 import pyseekdb
+from namespace_dml_helpers import use_namespace_test_partitions
 from pyseekdb import IVFConfiguration
 from pyseekdb.client.configuration import VectorIndexConfig
 from pyseekdb.client.meta_info import NamespaceCollectionNames
@@ -22,10 +23,17 @@ BG_POLL_INTERVAL_SEC = 1.0
 # --------------------------------------------------------------------------- #
 
 
+def _create_namespace(collection, name: str):
+    ns = collection.create_namespace(name)
+    ns.prewarm()
+    return ns
+
+
 def _make_collection(client, suffix: str = ""):
     """Create a namespace-mode collection with an IVF index (so we get a full
     set of physical tables: logic_data / kv_data / logic_schema / hot_table)."""
     name = f"test_ns_drop_{int(time.time() * 1000)}{suffix}"
+    use_namespace_test_partitions()
     schema = Schema(
         vector_index=VectorIndexConfig(
             ivf=IVFConfiguration(dimension=3, distance="cosine", fresh_mode="spfresh"),
@@ -350,7 +358,7 @@ class TestDropNamespaceCatalogValidation:
         collection = _make_collection(client)
         coll_id = collection.id
         try:
-            ns = collection.create_namespace("ns_validate")
+            ns = _create_namespace(collection,"ns_validate")
             ns_id = int(ns.namespace_id)
 
             # Pre-conditions
@@ -363,8 +371,6 @@ class TestDropNamespaceCatalogValidation:
                 "create_namespace should have inserted a logic_schema row"
             )
             if is_ss:
-                # Seed a hot_table row so we can verify the SS-only delete.
-                assert _seed_hot_table(client, coll_id, ns_id) is True
                 assert _count_hot_table_rows(client, coll_id, ns_id) == 1
 
             # Seed logic_data rows — sync DROP must not touch them; LTABLE_BG ns DAG
@@ -413,7 +419,7 @@ class TestDropNamespaceCatalogValidation:
         collection = _make_collection(client)
         coll_id = collection.id
         try:
-            ns = collection.create_namespace("ns_async")
+            ns = _create_namespace(collection,"ns_async")
             ns_id = int(ns.namespace_id)
             lt_id = _fetch_ltable_id(client, coll_id, ns_id)
             assert lt_id is not None
@@ -453,7 +459,7 @@ class TestDropNamespaceCatalogValidation:
         coll_id = collection.id
         blocker_lt_id = 9_000_001
         try:
-            ns = collection.create_namespace("ns_block")
+            ns = _create_namespace(collection,"ns_block")
             ns_id = int(ns.namespace_id)
             _drop_namespace_via_pl(client, coll_id, ns_id)
             assert _fetch_namespace_name(client, coll_id, ns_id).startswith(RECYCLEBIN_PREFIX)
@@ -491,7 +497,7 @@ class TestDropNamespaceCatalogValidation:
         collection = _make_collection(client)
         coll_id = collection.id
         try:
-            ns = collection.create_namespace("ns_empty_kv")
+            ns = _create_namespace(collection,"ns_empty_kv")
             ns_id = int(ns.namespace_id)
             assert _count_kv_data_rows(client, coll_id, ns_id) == 0
 
@@ -516,9 +522,8 @@ class TestDropNamespaceCatalogValidation:
         if hot_err is not None:
             pytest.fail(f"hot_table setup failed: {hot_err}")
         try:
-            ns = collection.create_namespace("ns_hot_async")
+            ns = _create_namespace(collection, "ns_hot_async")
             ns_id = int(ns.namespace_id)
-            assert _seed_hot_table(client, coll_id, ns_id) is True
             assert _count_hot_table_rows(client, coll_id, ns_id) == 1
 
             _drop_namespace_via_pl(client, coll_id, ns_id)
@@ -543,7 +548,7 @@ class TestDropNamespaceCatalogValidation:
         collection = _make_collection(client)
         coll_id = collection.id
         try:
-            ns = collection.create_namespace("ns_history")
+            ns = _create_namespace(collection,"ns_history")
             ns_id = int(ns.namespace_id)
             _seed_kv_data(client, coll_id, ns_id, count=2)
             _drop_namespace_via_pl(client, coll_id, ns_id)
@@ -572,7 +577,7 @@ class TestDropNamespaceCatalogValidation:
         client = oceanbase_client
         collection = _make_collection(client)
         try:
-            ns = collection.create_namespace("fmt_ns")
+            ns = _create_namespace(collection,"fmt_ns")
             ns_id = int(ns.namespace_id)
             _drop_namespace_via_pl(client, collection.id, ns_id)
             new_name = _fetch_namespace_name(client, collection.id, ns_id)
@@ -592,7 +597,7 @@ class TestDropNamespaceCatalogValidation:
         client = oceanbase_client
         collection = _make_collection(client)
         try:
-            ns = collection.create_namespace("ns_multi")
+            ns = _create_namespace(collection,"ns_multi")
             ns_id = int(ns.namespace_id)
             # Insert two extra ltable rows directly so we can verify bulk delete.
             lt_table = _catalog_table(client, "sdk_ltables")
@@ -624,7 +629,7 @@ class TestDropNamespaceCatalogValidation:
         schema_tbl = NamespaceCollectionNames.logic_schema_table_name(coll_id)
         schema_tbl_q = f"`{client._server.database}`.`{schema_tbl}`"
         try:
-            ns = collection.create_namespace("ns_rollback")
+            ns = _create_namespace(collection,"ns_rollback")
             ns_id = int(ns.namespace_id)
             orig_name = _fetch_namespace_name(client, coll_id, ns_id)
             assert orig_name == "ns_rollback"
@@ -671,7 +676,7 @@ class TestDropNamespaceCatalogValidation:
         collection = _make_collection(client)
         coll_id = collection.id
         try:
-            ns = collection.create_namespace("ns_idem")
+            ns = _create_namespace(collection,"ns_idem")
             ns_id = int(ns.namespace_id)
             _drop_namespace_via_pl(client, coll_id, ns_id)
             first_name = _fetch_namespace_name(client, coll_id, ns_id)
@@ -706,7 +711,7 @@ class TestDropNamespaceCatalogValidation:
         collection = _make_collection(client_a, suffix="_conc")
         coll_id = collection.id
         try:
-            ns = collection.create_namespace("ns_concurrent")
+            ns = _create_namespace(collection,"ns_concurrent")
             ns_id = int(ns.namespace_id)
 
             results = {}
