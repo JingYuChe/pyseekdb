@@ -415,16 +415,31 @@ class BaseClient(BaseConnection, AdminAPI):
             )
 
     def _is_shared_storage_mode(self) -> bool:
+        cached = getattr(self, "_shared_storage", None)
+        if cached is not None:
+            return cached
+        result = False
         try:
             rows = self._execute(
                 "SELECT VALUE FROM oceanbase.GV$OB_PARAMETERS WHERE name = 'ob_startup_mode'"
             )
             if rows:
                 val = rows[0][0] if isinstance(rows[0], (list, tuple)) else rows[0]["VALUE"]
-                return str(val).upper() == "SHARED_STORAGE"
+                result = str(val).upper() == "SHARED_STORAGE"
         except Exception:
-            pass
-        return False
+            result = False
+        self._shared_storage = result
+        return result
+
+    def _stg_cache_policy_clause(self) -> str:
+        """SS mode: make catalog tables global-hot so metadata is locally cached.
+
+        STORAGE_CACHE_POLICY is only supported in shared-storage mode; SN mode
+        returns an empty string.
+        """
+        if self._is_shared_storage_mode():
+            return 'STORAGE_CACHE_POLICY = (GLOBAL = "hot")'
+        return ""
 
     def detect_db_type_and_version(self) -> tuple[str, "Version"]:  # noqa: C901
         """
@@ -1048,6 +1063,7 @@ class BaseClient(BaseConnection, AdminAPI):
         try:
             self._use_catalog_database()
             sdk_coll = self._qtable(CollectionNames.sdk_collections_table_name())
+            scp = self._stg_cache_policy_clause()
             create_table_sql = f"""CREATE TABLE IF NOT EXISTS {sdk_coll} (
                 collection_id CHAR(32) PRIMARY KEY DEFAULT (replace(uuid(), '-', '')),
                 collection_name STRING,
@@ -1055,7 +1071,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 INDEX idx_name(collection_name)
-            ) COMMENT='Settings of collections created by SDK';"""
+            ) COMMENT='Settings of collections created by SDK' {scp};"""
             self._execute(create_table_sql)
         except Exception as e:
             raise ValueError(f"Failed to create sdk_collections table: {e}") from e
@@ -1172,6 +1188,7 @@ class BaseClient(BaseConnection, AdminAPI):
         self._isolate_sdk_catalog_to_client_database()
         ns_namespaces_q = self._qtable(NamespaceCollectionNames.sdk_namespaces_table())
         ns_ltables_q = self._qtable(NamespaceCollectionNames.sdk_ltables_table())
+        scp = self._stg_cache_policy_clause()
         ns_namespaces_sql = f"""CREATE TABLE IF NOT EXISTS {ns_namespaces_q} (
             namespace_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             collection_id CHAR(32) NOT NULL,
@@ -1182,7 +1199,7 @@ class BaseClient(BaseConnection, AdminAPI):
             PRIMARY KEY (namespace_id),
             UNIQUE KEY uk_sdk_ns_coll_name (collection_id, namespace_name),
             KEY idx_sdk_ns_by_collection (collection_id)
-        ) COMMENT='Namespace catalog';"""
+        ) COMMENT='Namespace catalog' {scp};"""
         ns_ltables_sql = f"""CREATE TABLE IF NOT EXISTS {ns_ltables_q} (
             ltable_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             collection_id CHAR(32) NOT NULL,
@@ -1194,7 +1211,7 @@ class BaseClient(BaseConnection, AdminAPI):
             PRIMARY KEY (ltable_id),
             UNIQUE KEY uk_sdk_lt_coll_ns_name (collection_id, namespace_id, ltable_name),
             KEY idx_sdk_lt_by_ns (collection_id, namespace_id)
-        ) COMMENT='LTable catalog';"""
+        ) COMMENT='LTable catalog' {scp};"""
         namespaces_stats_sql = f"""CREATE TABLE IF NOT EXISTS {self._qtable(NamespaceCollectionNames.sdk_namespaces_stats_table())} (
             collection_id CHAR(32) NOT NULL COMMENT 'collection id',
             namespace_id BIGINT UNSIGNED NOT NULL COMMENT 'namespace internal id',
@@ -4822,10 +4839,18 @@ class BaseClient(BaseConnection, AdminAPI):
                 embeddings = embedding_function(documents)
             else:
                 raise ValueError(
-                    "Documents provided but no embeddings and no embedding function."
+                    "Documents provided but no embeddings and no embedding function. "
+                    "Either:\n"
+                    "  1. Provide embeddings directly when calling add(), or\n"
+                    "  2. Provide embedding_function to auto-generate embeddings from documents."
                 )
         else:
-            raise ValueError("Neither embeddings nor documents provided.")
+            raise ValueError(
+                "Neither embeddings nor documents provided. "
+                "Please provide either:\n"
+                "  1. embeddings directly, or\n"
+                "  2. documents with embedding_function to generate embeddings."
+            )
 
         num_items = len(ids)
         if documents and len(documents) != num_items:
@@ -4898,8 +4923,20 @@ class BaseClient(BaseConnection, AdminAPI):
         ):
             embeddings = [embeddings]
 
-        if embeddings is None and documents is not None and embedding_function is not None:
-            embeddings = embedding_function(documents)
+        if embeddings:
+            # embeddings provided, use them directly without embedding
+            pass
+        elif documents:
+            # embeddings not provided but documents are provided, check for embedding_function
+            if embedding_function is not None:
+                embeddings = embedding_function(documents)
+            else:
+                raise ValueError(
+                    "Documents provided but no embeddings and no embedding function. "
+                    "Either:\n"
+                    "  1. Provide embeddings directly when calling update(), or\n"
+                    "  2. Provide embedding_function to auto-generate embeddings from documents."
+                )
 
         table_name = NamespaceCollectionNames.data_table_name(collection_id)
         ns_id = int(namespace_id)
