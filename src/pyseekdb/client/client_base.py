@@ -1369,10 +1369,10 @@ class BaseClient(BaseConnection, AdminAPI):
 
     def _cleanup_namespace_physical_tables(self, collection_id: str) -> None:
         for suffix_fn in [
+            NamespaceCollectionNames.data_table_name,
             NamespaceCollectionNames.logic_schema_table_name,
             NamespaceCollectionNames.kv_data_table_name,
-            NamespaceCollectionNames.hot_table_name,
-            NamespaceCollectionNames.data_table_name,
+            NamespaceCollectionNames.hot_table_name
         ]:
             with contextlib.suppress(Exception):
                 self._execute(f"DROP TABLE IF EXISTS `{suffix_fn(collection_id)}`")

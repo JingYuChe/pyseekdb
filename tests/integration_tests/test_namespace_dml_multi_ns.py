@@ -19,6 +19,8 @@ class TestNamespaceDMLMultiNs:
         collection = create_ns_collection(db_client, suffix="_mns_add")
         ns_a = collection.create_namespace("ns_a")
         ns_b = collection.create_namespace("ns_b")
+        ns_a.prewarm()
+        ns_b.prewarm()
         try:
             ns_a.add(ids="a1", embeddings=[1.0, 0.0, 0.0], metadatas={"owner": "A"})
             ns_b.add(ids="b1", embeddings=[0.0, 1.0, 0.0], metadatas={"owner": "B"})
@@ -34,6 +36,8 @@ class TestNamespaceDMLMultiNs:
         collection = create_ns_collection(db_client, suffix="_mns_sameid")
         ns_x = collection.create_namespace("ns_x")
         ns_y = collection.create_namespace("ns_y")
+        ns_x.prewarm()
+        ns_y.prewarm()
         try:
             ns_x.add(ids="shared", embeddings=[1.0, 0.0, 0.0], metadatas={"src": "X"})
             ns_y.add(ids="shared", embeddings=[0.0, 1.0, 0.0], metadatas={"src": "Y"})
@@ -47,6 +51,8 @@ class TestNamespaceDMLMultiNs:
         collection = create_ns_collection(db_client, suffix="_mns_upd")
         ns_a = collection.create_namespace("ns_a")
         ns_b = collection.create_namespace("ns_b")
+        ns_a.prewarm()
+        ns_b.prewarm()
         doc_id = "shared_upd"
         try:
             ns_a.add(ids=doc_id, embeddings=[1.0, 0.0, 0.0], documents="A original")
@@ -65,6 +71,8 @@ class TestNamespaceDMLMultiNs:
         collection = create_ns_collection(db_client, suffix="_mns_del")
         ns_a = collection.create_namespace("ns_a")
         ns_b = collection.create_namespace("ns_b")
+        ns_a.prewarm()
+        ns_b.prewarm()
         doc_id = "shared_del"
         try:
             ns_a.add(ids=doc_id, embeddings=[1.0, 0.0, 0.0])
@@ -83,6 +91,8 @@ class TestNamespaceDMLMultiNs:
         collection = create_ns_collection(db_client, suffix="_mns_ups")
         ns_a = collection.create_namespace("ns_a")
         ns_b = collection.create_namespace("ns_b")
+        ns_a.prewarm()
+        ns_b.prewarm()
         try:
             ns_a.add(ids="a_only", embeddings=[1.0, 0.0, 0.0], metadatas={"ns": "a"})
             ns_b.upsert(ids="b_only", embeddings=[0.0, 1.0, 0.0], metadatas={"ns": "b"})

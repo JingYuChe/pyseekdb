@@ -17,6 +17,7 @@ import time
 
 import pytest
 
+from namespace_dml_helpers import use_namespace_test_partitions
 from namespace_fts_helpers import (
     CORPUS_SIZE,
     MULTI_COLL_MULTI_NS_QUADRANT_KEYS,
@@ -58,6 +59,7 @@ def _setup_multi_coll_multi_ns_isolation_fts(db_client):
     sibling namespace fails the existing corpus-based assertions.
     """
     ts = int(time.time() * 1000)
+    use_namespace_test_partitions()
     coll_1 = db_client.create_collection(
         name=f"test_ns_hs_ft_mcmn_iso_{ts}_c1",
         schema=ns_schema(),
@@ -71,8 +73,12 @@ def _setup_multi_coll_multi_ns_isolation_fts(db_client):
     ctx: dict[str, object] = {"coll_1": coll_1, "coll_2": coll_2}
     for coll_tag, collection in (("c1", coll_1), ("c2", coll_2)):
         for ns_suffix in ("x", "y"):
-            ctx[f"{coll_tag}_{ns_suffix}"] = collection.create_namespace(f"ns_{ns_suffix}")
-        ctx[f"{coll_tag}_empty"] = collection.create_namespace("ns_empty")
+            ns = collection.create_namespace(f"ns_{ns_suffix}")
+            ns.prewarm()
+            ctx[f"{coll_tag}_{ns_suffix}"] = ns
+        empty_ns = collection.create_namespace("ns_empty")
+        empty_ns.prewarm()
+        ctx[f"{coll_tag}_empty"] = empty_ns
 
     base_corpus = build_large_fts_corpus(CORPUS_SIZE)
     if len(base_corpus) <= 1000:

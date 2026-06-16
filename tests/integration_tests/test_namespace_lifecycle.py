@@ -8,6 +8,7 @@ import time
 import pytest
 
 import pyseekdb
+from namespace_dml_helpers import use_namespace_test_partitions
 from pyseekdb import IVFConfiguration
 from pyseekdb.client.configuration import VectorIndexConfig
 from pyseekdb.client.schema import Schema
@@ -18,6 +19,7 @@ class TestNamespaceLifecycle:
 
     def _create_ns_collection(self, client, suffix=""):
         name = f"test_ns_lc_{int(time.time() * 1000)}{suffix}"
+        use_namespace_test_partitions()
         schema = Schema(
             vector_index=VectorIndexConfig(
                 ivf=IVFConfiguration(dimension=3, distance="cosine", fresh_mode="spfresh"),
@@ -170,6 +172,7 @@ class TestNamespaceLifecycle:
             type(client._server), "_is_shared_storage_mode", return_value=True
         ):
             name = f"test_ns_ss_{int(time.time() * 1000)}"
+            use_namespace_test_partitions()
             schema = Schema(
                 vector_index=VectorIndexConfig(
                     ivf=IVFConfiguration(dimension=3, distance="cosine", fresh_mode="spfresh"),

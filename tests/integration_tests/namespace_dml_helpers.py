@@ -12,6 +12,8 @@ from pyseekdb import IVFConfiguration
 from pyseekdb.client.configuration import FulltextIndexConfig, VectorIndexConfig
 from pyseekdb.client.schema import Schema
 
+NAMESPACE_TEST_PARTITION_COUNT = 4
+
 LARGE_DML_CORPUS_SIZE = 1000
 DML_BATCH_SIZE = 100
 # Wait for FULLTEXT index after bulk load (same as namespace_fts_helpers).
@@ -44,7 +46,14 @@ def ns_schema() -> Schema:
     )
 
 
+def use_namespace_test_partitions() -> None:
+    from pyseekdb import set_collection_partition_count
+
+    set_collection_partition_count(NAMESPACE_TEST_PARTITION_COUNT)
+
+
 def create_ns_collection(client: Any, suffix: str = "") -> Any:
+    use_namespace_test_partitions()
     name = f"test_ns_dml_{int(time.time() * 1000)}{suffix}"
     return client.create_collection(name=name, schema=ns_schema(), use_namespace=True)
 

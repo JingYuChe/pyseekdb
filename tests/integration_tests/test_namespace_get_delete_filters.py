@@ -33,6 +33,7 @@ class TestNamespaceDeleteWhere:
     def test_delete_where_metadata_tag(self, db_client):
         collection = create_ns_collection(db_client, suffix="_del_where")
         ns = collection.create_namespace("del_where_ns")
+        ns.prewarm()
         corpus, gt = build_filter_corpus()
         try:
             load_dml_corpus(ns, corpus)
@@ -55,6 +56,7 @@ class TestNamespaceDeleteWhere:
     def test_delete_where_document_obsolete(self, db_client):
         collection = create_ns_collection(db_client, suffix="_del_wdoc")
         ns = collection.create_namespace("del_wdoc_ns")
+        ns.prewarm()
         corpus, gt = build_filter_corpus()
         where_document = {"$contains": "obsolete"}
         try:
@@ -94,6 +96,7 @@ class TestNamespaceGetWhere:
     def test_get_where_metadata_category_ai(self, db_client):
         collection = create_ns_collection(db_client, suffix="_get_where")
         ns = collection.create_namespace("get_where_ns")
+        ns.prewarm()
         corpus, gt = build_filter_corpus()
         try:
             load_dml_corpus(ns, corpus)
@@ -120,6 +123,7 @@ class TestNamespaceGetWhere:
     def test_get_where_document_contains_python(self, db_client):
         collection = create_ns_collection(db_client, suffix="_get_wdoc")
         ns = collection.create_namespace("get_wdoc_ns")
+        ns.prewarm()
         corpus, gt = build_filter_corpus()
         where_document = {"$contains": "python"}
         try:
@@ -152,6 +156,8 @@ class TestNamespaceFilterMultiNs:
         collection = create_ns_collection(db_client, suffix="_filt_mns")
         ns_a = collection.create_namespace("ns_alpha")
         ns_b = collection.create_namespace("ns_beta")
+        ns_a.prewarm()
+        ns_b.prewarm()
         corpus_a, gt = build_filter_corpus(
             keep_count=FILTER_MULTI_NS_KEEP,
             purge_count=FILTER_MULTI_NS_PURGE,
@@ -209,6 +215,8 @@ class TestNamespaceCrossNsGetWhere:
         collection = create_ns_collection(db_client, suffix="_cross_ns_get")
         ns_a = collection.create_namespace("cross_alpha")
         ns_b = collection.create_namespace("cross_beta")
+        ns_a.prewarm()
+        ns_b.prewarm()
         corpus_a, gt = build_filter_corpus(
             keep_count=50,
             purge_count=50,
