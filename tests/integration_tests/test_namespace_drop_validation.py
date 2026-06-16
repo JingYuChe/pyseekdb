@@ -4,7 +4,7 @@ import time
 import pytest
 
 import pyseekdb
-from namespace_dml_helpers import use_namespace_test_partitions
+from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT
 from pyseekdb import IVFConfiguration
 from pyseekdb.client.configuration import VectorIndexConfig
 from pyseekdb.client.meta_info import NamespaceCollectionNames
@@ -33,14 +33,16 @@ def _make_collection(client, suffix: str = ""):
     """Create a namespace-mode collection with an IVF index (so we get a full
     set of physical tables: logic_data / kv_data / logic_schema / hot_table)."""
     name = f"test_ns_drop_{int(time.time() * 1000)}{suffix}"
-    use_namespace_test_partitions()
     schema = Schema(
         vector_index=VectorIndexConfig(
             ivf=IVFConfiguration(dimension=3, distance="cosine", fresh_mode="spfresh"),
             embedding_function=None,
         ),
     )
-    return client.create_collection(name=name, schema=schema, use_namespace=True)
+    return client.create_collection(
+        name=name, schema=schema, use_namespace=True,
+        partition_count=NAMESPACE_TEST_PARTITION_COUNT,
+    )
 
 
 def _execute(client, sql: str):

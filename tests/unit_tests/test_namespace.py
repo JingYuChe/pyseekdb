@@ -862,6 +862,17 @@ class TestValidateNamespaceName:
         with pytest.raises(TypeError, match="must be a string"):
             coll.has_namespace(42)
 
+    def test_partition_count_property(self):
+        mock_client = MagicMock()
+        ns_coll = Collection(
+            client=mock_client, name="c", collection_id="1", dimension=3,
+            use_namespace=True, partition_count=4,
+        )
+        assert ns_coll.partition_count == 4
+        # Non-namespace collections are not partitioned.
+        plain = Collection(client=mock_client, name="p", collection_id="2", dimension=3)
+        assert plain.partition_count is None
+
 
 # ==================== Record ID Validation Tests ====================
 

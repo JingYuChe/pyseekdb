@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from namespace_dml_helpers import use_namespace_test_partitions
+from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT
 from pyseekdb import IVFConfiguration
 from pyseekdb.client.configuration import FulltextIndexConfig, VectorIndexConfig
 from pyseekdb.client.schema import Schema
@@ -17,7 +17,6 @@ class TestNamespaceQuery:
 
     def _setup(self, client, suffix=""):
         name = f"test_ns_q_{int(time.time() * 1000)}{suffix}"
-        use_namespace_test_partitions()
         schema = Schema(
             vector_index=VectorIndexConfig(
                 ivf=IVFConfiguration(dimension=3, distance="l2", fresh_mode="spfresh"),
@@ -25,7 +24,10 @@ class TestNamespaceQuery:
             ),
             fulltext_index=FulltextIndexConfig(analyzer="ik"),
         )
-        collection = client.create_collection(name=name, schema=schema, use_namespace=True)
+        collection = client.create_collection(
+            name=name, schema=schema, use_namespace=True,
+            partition_count=NAMESPACE_TEST_PARTITION_COUNT,
+        )
         return collection
 
     def _insert_data(self, ns):

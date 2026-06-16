@@ -17,7 +17,7 @@ import time
 
 import pytest
 
-from namespace_dml_helpers import use_namespace_test_partitions
+from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT
 from namespace_fts_helpers import (
     CORPUS_SIZE,
     MULTI_COLL_MULTI_NS_QUADRANT_KEYS,
@@ -59,16 +59,17 @@ def _setup_multi_coll_multi_ns_isolation_fts(db_client):
     sibling namespace fails the existing corpus-based assertions.
     """
     ts = int(time.time() * 1000)
-    use_namespace_test_partitions()
     coll_1 = db_client.create_collection(
         name=f"test_ns_hs_ft_mcmn_iso_{ts}_c1",
         schema=ns_schema(),
         use_namespace=True,
+        partition_count=NAMESPACE_TEST_PARTITION_COUNT,
     )
     coll_2 = db_client.create_collection(
         name=f"test_ns_hs_ft_mcmn_iso_{ts}_c2",
         schema=ns_schema(),
         use_namespace=True,
+        partition_count=NAMESPACE_TEST_PARTITION_COUNT,
     )
     ctx: dict[str, object] = {"coll_1": coll_1, "coll_2": coll_2}
     for coll_tag, collection in (("c1", coll_1), ("c2", coll_2)):
