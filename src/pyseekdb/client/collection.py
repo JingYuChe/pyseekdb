@@ -115,6 +115,15 @@ class Collection:
                 "Get a namespace via collection.create_namespace() or collection.get_namespace()."
             )
 
+    def _guard_namespace_enabled(self) -> None:
+        if not self._use_namespace:
+            raise ValueError("Namespace is not enabled for this collection. Use use_namespace=True when creating the collection.")
+        if not self._client._ns_collection_exists_by_id(self._id):
+            raise ValueError(
+                f"Collection '{self._name}' no longer exists (it may have been deleted). "
+                "Namespace operations are not allowed on a deleted collection."
+            )
+
     def __repr__(self) -> str:
         ns_str = ", use_namespace=True" if self._use_namespace else ""
         return f"Collection(name='{self._name}', dimension={self._dimension}{ns_str}, client={self._client.mode})"
@@ -122,16 +131,14 @@ class Collection:
     # ==================== Namespace Management ====================
 
     def create_namespace(self, name: str) -> "Namespace":
-        if not self._use_namespace:
-            raise ValueError("Namespace is not enabled for this collection. Use use_namespace=True when creating the collection.")
+        self._guard_namespace_enabled()
         _validate_namespace_name(name)
         from .namespace import Namespace
         meta = self._client._create_ns_namespace_meta(self._id, name)
         return Namespace(client=self._client, collection=self, name=name, namespace_id=meta["namespace_id"])
 
     def get_namespace(self, name: str) -> "Namespace":
-        if not self._use_namespace:
-            raise ValueError("Namespace is not enabled for this collection.")
+        self._guard_namespace_enabled()
         _validate_namespace_name(name)
         from .namespace import Namespace
         meta = self._client._get_ns_namespace_meta(self._id, name)
@@ -140,8 +147,7 @@ class Collection:
         return Namespace(client=self._client, collection=self, name=name, namespace_id=meta["namespace_id"])
 
     def get_or_create_namespace(self, name: str) -> "Namespace":
-        if not self._use_namespace:
-            raise ValueError("Namespace is not enabled for this collection.")
+        self._guard_namespace_enabled()
         _validate_namespace_name(name)
         from .namespace import Namespace
         meta = self._client._get_ns_namespace_meta(self._id, name)
@@ -150,14 +156,12 @@ class Collection:
         return Namespace(client=self._client, collection=self, name=name, namespace_id=meta["namespace_id"])
 
     def delete_namespace(self, name: str) -> None:
-        if not self._use_namespace:
-            raise ValueError("Namespace is not enabled for this collection.")
+        self._guard_namespace_enabled()
         _validate_namespace_name(name)
         self._client._delete_ns_namespace_meta(self._id, name)
 
     def list_namespaces(self) -> list["Namespace"]:
-        if not self._use_namespace:
-            raise ValueError("Namespace is not enabled for this collection.")
+        self._guard_namespace_enabled()
         from .namespace import Namespace
         metas = self._client._list_ns_namespaces(self._id)
         return [
@@ -166,8 +170,7 @@ class Collection:
         ]
 
     def has_namespace(self, name: str) -> bool:
-        if not self._use_namespace:
-            raise ValueError("Namespace is not enabled for this collection.")
+        self._guard_namespace_enabled()
         _validate_namespace_name(name)
         return self._client._has_ns_namespace(self._id, name)
 

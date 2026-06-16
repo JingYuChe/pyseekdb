@@ -1266,6 +1266,19 @@ class BaseClient(BaseConnection, AdminAPI):
         except Exception:
             return False
 
+    def _ns_collection_exists_by_id(self, collection_id: str) -> bool:
+        """Whether a namespace-enabled collection with this id still exists.
+
+        Used to reject namespace operations on a stale Collection handle whose
+        underlying collection was deleted (the in-memory handle keeps its old id).
+        """
+        collection_id_escaped = escape_string(str(collection_id))
+        rows = self._execute(
+            f"SELECT collection_id FROM {self._qtable(CollectionNames.sdk_collections_table_name())} "
+            f"WHERE collection_id = '{collection_id_escaped}'"
+        )
+        return bool(rows)
+
     def _delete_ns_collection_meta(self, collection_name: str) -> None:
         meta = self._get_ns_collection_meta(collection_name)
         if meta is None:
