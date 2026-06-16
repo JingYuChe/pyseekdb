@@ -49,6 +49,13 @@ class Namespace:
             f"collection='{self._collection.name}')"
         )
 
+    def _guard_exists(self) -> None:
+        if not self._client._ns_namespace_exists_by_id(self._collection.id, self._namespace_id):
+            raise ValueError(
+                f"Namespace '{self._name}' no longer exists (it or its collection may have been deleted). "
+                "Operations are not allowed on a deleted namespace."
+            )
+
     # ==================== DML Operations ====================
 
     def add(
@@ -59,6 +66,7 @@ class Namespace:
         documents: str | list[str] | None = None,
         **kwargs,
     ) -> None:
+        self._guard_exists()
         return self._client._namespace_add(
             collection_id=self._collection.id,
             collection_name=self._collection.name,
@@ -80,6 +88,7 @@ class Namespace:
         documents: str | list[str] | None = None,
         **kwargs,
     ) -> None:
+        self._guard_exists()
         return self._client._namespace_update(
             collection_id=self._collection.id,
             collection_name=self._collection.name,
@@ -101,6 +110,7 @@ class Namespace:
         documents: str | list[str] | None = None,
         **kwargs,
     ) -> None:
+        self._guard_exists()
         return self._client._namespace_upsert(
             collection_id=self._collection.id,
             collection_name=self._collection.name,
@@ -121,6 +131,7 @@ class Namespace:
         where_document: dict[str, Any] | None = None,
         **kwargs,
     ) -> None:
+        self._guard_exists()
         return self._client._namespace_delete(
             collection_id=self._collection.id,
             collection_name=self._collection.name,
@@ -144,6 +155,7 @@ class Namespace:
         include: list[str] | None = None,
         **kwargs,
     ) -> dict[str, Any]:
+        self._guard_exists()
         return self._client._namespace_query(
             collection_id=self._collection.id,
             collection_name=self._collection.name,
@@ -169,6 +181,7 @@ class Namespace:
         include: list[str] | None = None,
         **kwargs,
     ) -> dict[str, Any]:
+        self._guard_exists()
         if include is None and not query and not knn:
             include = []
         return self._client._namespace_hybrid_search(
@@ -196,6 +209,7 @@ class Namespace:
         include: list[str] | None = None,
         **kwargs,
     ) -> dict[str, Any]:
+        self._guard_exists()
         return self._client._namespace_get(
             collection_id=self._collection.id,
             collection_name=self._collection.name,
@@ -211,6 +225,7 @@ class Namespace:
         )
 
     def count(self) -> int:
+        self._guard_exists()
         return self._client._namespace_count(
             collection_id=self._collection.id,
             collection_name=self._collection.name,
@@ -219,6 +234,7 @@ class Namespace:
         )
 
     def peek(self, limit: int = 10) -> dict[str, Any]:
+        self._guard_exists()
         return self._client._namespace_peek(
             collection_id=self._collection.id,
             collection_name=self._collection.name,
@@ -228,6 +244,7 @@ class Namespace:
         )
 
     def prewarm(self) -> None:
+        self._guard_exists()
         return self._client._namespace_prewarm(
             collection_id=self._collection.id,
             collection_name=self._collection.name,
