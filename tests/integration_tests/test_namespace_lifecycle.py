@@ -120,6 +120,19 @@ class TestNamespaceLifecycle:
 
         assert db_client.has_collection(coll_name) is False
 
+    def test_namespace_ops_blocked_after_collection_deleted(self, db_client):
+        collection = self._create_ns_collection(db_client)
+        db_client.delete_collection(name=collection.name)
+
+        with pytest.raises(ValueError, match="no longer exists"):
+            collection.create_namespace("demo")
+        with pytest.raises(ValueError, match="no longer exists"):
+            collection.get_or_create_namespace("demo")
+        with pytest.raises(ValueError, match="no longer exists"):
+            collection.list_namespaces()
+        with pytest.raises(ValueError, match="no longer exists"):
+            collection.has_namespace("demo")
+
     def test_collection_data_api_blocked_when_namespace_enabled(self, db_client):
         collection = self._create_ns_collection(db_client)
         try:
