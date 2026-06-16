@@ -60,7 +60,7 @@ class TestNamespaceDMLMultiNs:
             assert_get_present(ns_a, doc_id, documents="A original")
             assert_get_present(ns_b, doc_id, documents="B original")
 
-            ns_a.update(ids=doc_id, documents="A updated", metadatas={"updated": True})
+            ns_a.update(ids=doc_id, embeddings=[0.5, 0.5, 0.5], documents="A updated", metadatas={"updated": True})
 
             assert_get_present(ns_a, doc_id, documents="A updated", metadatas={"updated": True})
             assert_get_present(ns_b, doc_id, documents="B original")

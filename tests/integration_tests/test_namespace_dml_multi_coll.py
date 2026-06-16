@@ -56,7 +56,7 @@ class TestNamespaceDMLMultiColl:
             ns_a.add(ids="doc1", embeddings=[1.0, 0.0, 0.0], documents="Original A")
             ns_b.add(ids="doc1", embeddings=[0.0, 1.0, 0.0], documents="Original B")
 
-            ns_a.update(ids="doc1", documents="Updated A", metadatas={"updated": True})
+            ns_a.update(ids="doc1", embeddings=[0.5, 0.5, 0.5], documents="Updated A", metadatas={"updated": True})
             assert_get_present(ns_a, "doc1", documents="Updated A", metadatas={"updated": True})
             assert_get_present(ns_b, "doc1", documents="Original B")
 
