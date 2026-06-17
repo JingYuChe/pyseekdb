@@ -145,6 +145,51 @@ class TestNamespaceLifecycle:
 
         assert db_client.has_collection(coll_name) is False
 
+    def test_create_resumes_incomplete_collection(self, oceanbase_client):
+        """A namespace collection whose physical tables were partially lost (e.g. a
+        crash mid-create) is finished by re-running create_collection, instead of
+        being blocked by 'already exists'. A complete collection still errors."""
+        from pyseekdb.client.meta_info import NamespaceCollectionNames
+
+        client = oceanbase_client
+        srv = client._server
+        name = f"test_ns_resume_{int(time.time() * 1000)}"
+        schema = Schema(
+            vector_index=VectorIndexConfig(
+                ivf=IVFConfiguration(dimension=3, distance="cosine", fresh_mode="spfresh"),
+                embedding_function=None,
+            ),
+        )
+        collection = client.create_collection(
+            name=name, schema=schema, use_namespace=True, partition_count=4
+        )
+        try:
+            cid = collection.id
+            # Simulate an interrupted create: drop one physical table.
+            srv._use_catalog_database()
+            srv._execute(f"DROP TABLE IF EXISTS `{NamespaceCollectionNames.kv_data_table_name(cid)}`")
+            assert srv._is_incomplete_ns_collection(name) is True
+
+            # Re-create resumes (same id, rebuilds the missing table) instead of raising.
+            resumed = client.create_collection(
+                name=name, schema=schema, use_namespace=True, partition_count=4
+            )
+            assert resumed.id == cid
+            assert srv._is_incomplete_ns_collection(name) is False
+
+            # Data path works after resume.
+            ns = resumed.create_namespace("ns_x")
+            ns.add(ids="d1", embeddings=[1.0, 2.0, 3.0])
+            assert ns.count() == 1
+
+            # A complete collection still rejects a duplicate create.
+            with pytest.raises(ValueError, match="already exists"):
+                client.create_collection(
+                    name=name, schema=schema, use_namespace=True, partition_count=4
+                )
+        finally:
+            client.delete_collection(name=name)
+
     def test_namespace_ops_blocked_after_collection_deleted(self, db_client):
         collection = self._create_ns_collection(db_client)
         db_client.delete_collection(name=collection.name)
