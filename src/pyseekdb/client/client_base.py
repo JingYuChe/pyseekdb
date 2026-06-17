@@ -862,7 +862,12 @@ class BaseClient(BaseConnection, AdminAPI):
                 "partition_count is only supported for namespace-enabled collections (use_namespace=True)."
             )
         if self.has_collection(name):
-            raise ValueError(f"Collection '{name}' already exists")
+            # A namespace collection whose catalog row exists but whose physical
+            # tables are incomplete (e.g. a crash interrupted creation) is allowed
+            # through so the create can be resumed/finished idempotently. A complete
+            # collection still errors as "already exists".
+            if not (use_namespace and self._is_incomplete_ns_collection(name)):
+                raise ValueError(f"Collection '{name}' already exists")
 
         # Resolve schema: either use the provided schema or build one from legacy params
         if schema is not None:
@@ -954,9 +959,6 @@ class BaseClient(BaseConnection, AdminAPI):
         )
 
     def _create_namespace_collection(self, name: str, schema: Schema, partition_count: int | None = None, **kwargs) -> "Collection":
-        pc = _DEFAULT_PARTITION_COUNT if partition_count is None else partition_count
-        if pc < 1:
-            raise ValueError("partition_count must be >= 1")
         dense_embedding_function = schema.vector_index.embedding_function
         ivf_config = schema.vector_index.ivf
         hnsw_config = schema.vector_index.hnsw
@@ -970,40 +972,60 @@ class BaseClient(BaseConnection, AdminAPI):
             )
         self._validate_ob_database_type()
 
-        if ivf_config is not None:
-            dimension = ivf_config.dimension
-            distance = ivf_config.distance
+        # Resume an incomplete collection (meta row exists but physical tables are
+        # missing, e.g. a crash interrupted creation): reuse its id/settings and
+        # idempotently (re)build only the missing physical tables. Otherwise create
+        # from scratch. Both paths are safe to call repeatedly.
+        existing = self._get_ns_collection_meta(name)
+        if existing is not None:
+            collection_id = existing["collection_id"]
+            settings = existing.get("settings", {})
+            dimension = settings.get("dimension")
+            distance = settings.get("distance", DEFAULT_DISTANCE_METRIC)
+            pc = int(settings.get("partition_count", _DEFAULT_PARTITION_COUNT))
+            is_ss = settings.get("storage_mode") == "ss"
+            logger.info(
+                f"Namespace collection '{name}' already has a catalog entry; resuming creation "
+                f"(reusing collection_id={collection_id}, rebuilding any missing physical tables)."
+            )
         else:
-            if dense_embedding_function is not None:
-                dimension = self._get_embedding_function_dimension(dense_embedding_function)
+            pc = _DEFAULT_PARTITION_COUNT if partition_count is None else partition_count
+            if pc < 1:
+                raise ValueError("partition_count must be >= 1")
+            if ivf_config is not None:
+                dimension = ivf_config.dimension
+                distance = ivf_config.distance
             else:
-                dimension = DEFAULT_VECTOR_DIMENSION
-            distance = DEFAULT_DISTANCE_METRIC
+                if dense_embedding_function is not None:
+                    dimension = self._get_embedding_function_dimension(dense_embedding_function)
+                else:
+                    dimension = DEFAULT_VECTOR_DIMENSION
+                distance = DEFAULT_DISTANCE_METRIC
 
-        if dimension < 1 or dimension > 4096:
-            raise ValueError(f"Dimension must be between 1 and 4096, got {dimension}")
+            if dimension < 1 or dimension > 4096:
+                raise ValueError(f"Dimension must be between 1 and 4096, got {dimension}")
 
-        is_ss = self._is_shared_storage_mode()
-        settings = {
-            "version": 2,
-            "use_namespace": True,
-            "storage_mode": "ss" if is_ss else "sn",
-            "dimension": dimension,
-            "distance": distance,
-            "partition_count": pc,
-        }
-        if ivf_config is not None:
-            settings["dense_index_type"] = "ivf"
-            if ivf_config.fresh_mode is not None:
-                settings["fresh_mode"] = ivf_config.fresh_mode
-        if dense_embedding_function is not None and EmbeddingFunction.support_persistence(dense_embedding_function):
-            settings["embedding_function"] = {
-                "name": dense_embedding_function.name(),
-                "properties": dense_embedding_function.get_config(),
+            is_ss = self._is_shared_storage_mode()
+            settings = {
+                "version": 2,
+                "use_namespace": True,
+                "storage_mode": "ss" if is_ss else "sn",
+                "dimension": dimension,
+                "distance": distance,
+                "partition_count": pc,
             }
+            if ivf_config is not None:
+                settings["dense_index_type"] = "ivf"
+                if ivf_config.fresh_mode is not None:
+                    settings["fresh_mode"] = ivf_config.fresh_mode
+            if dense_embedding_function is not None and EmbeddingFunction.support_persistence(dense_embedding_function):
+                settings["embedding_function"] = {
+                    "name": dense_embedding_function.name(),
+                    "properties": dense_embedding_function.get_config(),
+                }
 
-        collection_meta = self._create_ns_collection_meta(name, settings)
-        collection_id = collection_meta["collection_id"]
+            collection_meta = self._create_ns_collection_meta(name, settings)
+            collection_id = collection_meta["collection_id"]
 
         self._ensure_namespace_catalogs()
 
@@ -1015,14 +1037,19 @@ class BaseClient(BaseConnection, AdminAPI):
                 fulltext_config=schema.fulltext_index,
                 is_shared_storage=is_ss,
                 partition_count=pc,
+                # On a fresh create, roll back partial tables so a failure leaves no
+                # trace. On resume, keep whatever already exists so a later retry can
+                # finish the job.
+                cleanup_on_error=existing is None,
             )
         except Exception:
-            with contextlib.suppress(Exception):
-                collection_id_escaped = escape_string(collection_id)
-                self._execute(
-                    f"DELETE FROM `{CollectionNames.sdk_collections_table_name()}` "
-                    f"WHERE collection_id = '{collection_id_escaped}'"
-                )
+            if existing is None:
+                with contextlib.suppress(Exception):
+                    collection_id_escaped = escape_string(collection_id)
+                    self._execute(
+                        f"DELETE FROM `{CollectionNames.sdk_collections_table_name()}` "
+                        f"WHERE collection_id = '{collection_id_escaped}'"
+                    )
             raise
 
         return Collection(
@@ -1334,6 +1361,7 @@ class BaseClient(BaseConnection, AdminAPI):
         fulltext_config=None,
         is_shared_storage: bool = False,
         partition_count: int = _DEFAULT_PARTITION_COUNT,
+        cleanup_on_error: bool = True,
     ) -> None:
         tg_name = NamespaceCollectionNames.tablegroup_name(collection_id)
         data_table = NamespaceCollectionNames.data_table_name(collection_id)
@@ -1350,10 +1378,13 @@ class BaseClient(BaseConnection, AdminAPI):
         index_sql = ",\n                ".join(index_parts)
         partition_clause = f"PARTITION BY KEY(namespace_id) PARTITIONS {partition_count}"
 
+        # All CREATEs use IF NOT EXISTS so this is idempotent: a fresh create builds
+        # everything, while a resume (after a crash left some tables behind) skips the
+        # existing ones and only fills in the gaps.
         try:
-            self._execute(f"CREATE TABLEGROUP `{tg_name}` SHARDING='ADAPTIVE'")
+            self._execute(f"CREATE TABLEGROUP IF NOT EXISTS `{tg_name}` SHARDING='ADAPTIVE'")
 
-            data_sql = f"""CREATE TABLE `{data_table}` (
+            data_sql = f"""CREATE TABLE IF NOT EXISTS `{data_table}` (
                 namespace_id BIGINT UNSIGNED NOT NULL,
                 ltable_id BIGINT UNSIGNED NOT NULL,
                 document LONGTEXT,
@@ -1369,7 +1400,7 @@ class BaseClient(BaseConnection, AdminAPI):
 
             if is_shared_storage:
                 hot_table = NamespaceCollectionNames.hot_table_name(collection_id)
-                self._execute(f"""CREATE TABLE `{hot_table}` (
+                self._execute(f"""CREATE TABLE IF NOT EXISTS `{hot_table}` (
                     namespace_id BIGINT UNSIGNED NOT NULL,
                     last_access_time TIMESTAMP(6) NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -1378,7 +1409,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 ) TABLEGROUP=`{tg_name}` COMMENT='热点/TTL附属表' DEFAULT CHARSET=utf8mb4
                 {partition_clause}""")
 
-            self._execute(f"""CREATE TABLE `{kv_table}` (
+            self._execute(f"""CREATE TABLE IF NOT EXISTS `{kv_table}` (
                 namespace_id BIGINT UNSIGNED NOT NULL,
                 kv_key VARBINARY(1024) NOT NULL,
                 kv_value LONGBLOB NOT NULL,
@@ -1386,7 +1417,7 @@ class BaseClient(BaseConnection, AdminAPI):
             ) TABLEGROUP=`{tg_name}` COMMENT='索引与映射KV表' DEFAULT CHARSET=utf8mb4 LOB_INROW_THRESHOLD=786432
             {partition_clause}""")
 
-            self._execute(f"""CREATE TABLE `{schema_table}` (
+            self._execute(f"""CREATE TABLE IF NOT EXISTS `{schema_table}` (
                 namespace_id BIGINT UNSIGNED NOT NULL,
                 ltable_id BIGINT UNSIGNED NOT NULL,
                 schema_content JSON NOT NULL,
@@ -1398,7 +1429,8 @@ class BaseClient(BaseConnection, AdminAPI):
             {partition_clause}""")
 
         except Exception:
-            self._cleanup_namespace_physical_tables(collection_id)
+            if cleanup_on_error:
+                self._cleanup_namespace_physical_tables(collection_id)
             raise
 
     def _cleanup_namespace_physical_tables(self, collection_id: str) -> None:
@@ -1412,6 +1444,44 @@ class BaseClient(BaseConnection, AdminAPI):
                 self._execute(f"DROP TABLE IF EXISTS `{suffix_fn(collection_id)}`")
         with contextlib.suppress(Exception):
             self._execute(f"DROP TABLEGROUP IF EXISTS `{NamespaceCollectionNames.tablegroup_name(collection_id)}`")
+
+    def _table_exists(self, table_name: str) -> bool:
+        """Whether `table_name` exists in the current (catalog) database."""
+        name_escaped = escape_string(table_name)
+        try:
+            rows = self._execute(
+                "SELECT 1 FROM information_schema.TABLES "
+                f"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{name_escaped}'"
+            )
+            return bool(rows)
+        except Exception:
+            return False
+
+    def _ns_missing_physical_tables(self, collection_id: str, is_shared_storage: bool) -> list[str]:
+        """Return the namespace physical tables that are expected but absent.
+
+        An empty list means the collection's physical tables are complete.
+        """
+        expected = [
+            NamespaceCollectionNames.data_table_name(collection_id),
+            NamespaceCollectionNames.kv_data_table_name(collection_id),
+            NamespaceCollectionNames.logic_schema_table_name(collection_id),
+        ]
+        if is_shared_storage:
+            expected.append(NamespaceCollectionNames.hot_table_name(collection_id))
+        return [t for t in expected if not self._table_exists(t)]
+
+    def _is_incomplete_ns_collection(self, name: str) -> bool:
+        """Whether `name` is a namespace collection whose catalog row exists but
+        whose physical tables are not all present (e.g. creation was interrupted
+        by a crash). Such a collection can be finished by re-running create.
+        """
+        meta = self._get_ns_collection_meta(name)
+        if meta is None:
+            return False
+        is_ss = meta.get("settings", {}).get("storage_mode") == "ss"
+        self._use_catalog_database()
+        return len(self._ns_missing_physical_tables(meta["collection_id"], is_ss)) > 0
 
     def _resolve_namespace_ltable_id(
         self, collection_id: str, namespace_id: int
