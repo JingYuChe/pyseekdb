@@ -228,7 +228,7 @@ def _get_ivf_vector_index_sql(ivf_config: "IVFConfiguration") -> str:
             else:
                 property_parts.append(f"{k}={v}")
     if ivf_config.fresh_mode:
-        property_parts.append(f"fresh_mode={ivf_config.fresh_mode}")
+        property_parts.append(f"centroids_fresh_mode={ivf_config.fresh_mode}")
     property_str = ", ".join(property_parts)
     properties_str = f", {property_str}" if property_str else ""
     return f"WITH (DISTANCE={ivf_config.distance}, TYPE={ivf_config.type.upper()}, LIB={ivf_config.lib.upper()}{properties_str})"
@@ -1172,8 +1172,49 @@ class BaseClient(BaseConnection, AdminAPI):
         """Align session with pymysql database= so PL (DROP_NAMESPACE) uses the same DB."""
         self._execute(f"USE `{self._catalog_database()}`")
 
+    # NOTE: temporarily restored (reverting commit fb708d2) to reproduce the
+    # multi-database primary-key conflict. Remove again after repro.
+    def _isolate_sdk_catalog_to_client_database(self) -> None:
+        """Drop sdk_* catalog tables in other databases so kernel bg task scans self.database.
+
+        ObLTableBGTaskScheduler picks the first tenant database that has sdk_collections.
+        mysqltest may leave a copy in the `oceanbase` database while pyseekdb uses `test`.
+        """
+        target = self._catalog_database()
+        try:
+            rows = self._execute(
+                "SELECT DISTINCT table_schema AS table_schema "
+                "FROM information_schema.tables "
+                "WHERE table_name = 'sdk_collections'"
+            )
+        except Exception:
+            return
+        other_schemas: list[str] = []
+        for row in rows or []:
+            schema = row["table_schema"] if isinstance(row, dict) else row[0]
+            if schema and schema != target:
+                other_schemas.append(schema)
+        if not other_schemas:
+            return
+        catalog_tables = [
+            CollectionNames.sdk_collections_table_name(),
+            NamespaceCollectionNames.sdk_namespaces_table(),
+            NamespaceCollectionNames.sdk_ltables_table(),
+            NamespaceCollectionNames.sdk_namespaces_stats_table(),
+        ]
+        for schema in other_schemas:
+            for table in catalog_tables:
+                with contextlib.suppress(Exception):
+                    self._execute(f"DROP TABLE IF EXISTS `{schema}`.`{table}`")
+        logger.info(
+            "Removed duplicate sdk catalog tables from %s (catalog DB is %s)",
+            other_schemas,
+            target,
+        )
+
     def _ensure_namespace_catalogs(self) -> None:
         self._use_catalog_database()
+        self._isolate_sdk_catalog_to_client_database()
         ns_namespaces_q = self._qtable(NamespaceCollectionNames.sdk_namespaces_table())
         ns_ltables_q = self._qtable(NamespaceCollectionNames.sdk_ltables_table())
         scp = self._stg_cache_policy_clause()
