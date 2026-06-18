@@ -729,7 +729,7 @@ class TestNamespaceSQLGeneration:
         assert "VECTOR INDEX idx_vec(embedding)" in data_create
         assert "FULLTEXT INDEX idx_fts(document) WITH PARSER ik" in data_create
         assert "SEARCH INDEX idx_json(data_content)" in data_create
-        assert "fresh_mode=spfresh" in data_create
+        assert "centroids_fresh_mode=spfresh" in data_create
         assert not any(s.startswith("CREATE VECTOR INDEX") for s in c.executed_sqls)
         assert not any("_hot_table" in s for s in c.executed_sqls if s.startswith("CREATE TABLE"))
 
@@ -749,7 +749,7 @@ class TestNamespaceSQLGeneration:
         assert "VECTOR INDEX idx_vec(embedding)" in data_create
         assert "FULLTEXT INDEX" not in data_create
         assert "SEARCH INDEX idx_json(data_content)" in data_create
-        assert "fresh_mode=spfresh" in data_create
+        assert "centroids_fresh_mode=spfresh" in data_create
         assert not any(s.startswith("CREATE VECTOR INDEX") for s in c.executed_sqls)
         hot_create = next(
             s for s in c.executed_sqls if "CREATE TABLE" in s and "_hot_table" in s
