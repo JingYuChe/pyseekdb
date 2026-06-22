@@ -91,6 +91,25 @@ def _is_collection_conflict_error(exc: BaseException) -> bool:
     return False
 
 
+def _is_namespace_catalog_conflict_error(exc: BaseException) -> bool:
+    current: BaseException | None = exc
+    while current is not None:
+        message = str(current).lower()
+        if (
+            "duplicate entry" in message
+            and (
+                "uk_sdk_ns_coll_name" in message
+                or "uk_sdk_lt_coll_ns_name" in message
+                or "code=1062" in message
+            )
+        ):
+            return True
+        if type(current).__name__ == "IntegrityError" and "1062" in message:
+            return True
+        current = current.__cause__
+    return False
+
+
 def _extract_hnsw_config(config: ConfigurationParam) -> HNSWConfiguration | None:
     if config is None:
         return None
@@ -1530,30 +1549,95 @@ class BaseClient(BaseConnection, AdminAPI):
         if ltable_id is not None:
             self._execute(f"SET @ltable_id = {int(ltable_id)}")
 
-    def _create_ns_namespace_meta(self, collection_id: str, namespace_name: str) -> dict:
+    def _fetch_ns_namespace_id(self, collection_id: str, namespace_name: str) -> int:
         namespace_name_escaped = escape_string(namespace_name)
         collection_id_escaped = escape_string(collection_id)
         ns_table = self._qtable(NamespaceCollectionNames.sdk_namespaces_table())
-        lt_table = self._qtable(NamespaceCollectionNames.sdk_ltables_table())
-        self._execute(
-            f"INSERT INTO {ns_table} "
-            f"(collection_id, namespace_name) VALUES ('{collection_id_escaped}', '{namespace_name_escaped}')"
-        )
         rows = self._execute(
             f"SELECT namespace_id FROM {ns_table} "
             f"WHERE collection_id = '{collection_id_escaped}' AND namespace_name = '{namespace_name_escaped}'"
         )
-        ns_id = int(rows[0][0] if isinstance(rows[0], (list, tuple)) else rows[0]["namespace_id"])
-        self._execute(
-            f"INSERT INTO {lt_table} "
-            f"(collection_id, namespace_id, ltable_name) VALUES ('{collection_id_escaped}', {ns_id}, 'default')"
-        )
+        if not rows:
+            raise ValueError(
+                f"Namespace '{namespace_name}' not found for collection_id={collection_id} in sdk_namespaces"
+            )
+        return int(rows[0][0] if isinstance(rows[0], (list, tuple)) else rows[0]["namespace_id"])
+
+    def _fetch_ns_ltable_id(
+        self,
+        collection_id: str,
+        namespace_id: int,
+        ltable_name: str = "default",
+    ) -> int:
+        collection_id_escaped = escape_string(collection_id)
+        ltable_name_escaped = escape_string(ltable_name)
+        lt_table = self._qtable(NamespaceCollectionNames.sdk_ltables_table())
         lt_rows = self._execute(
             f"SELECT ltable_id FROM {lt_table} "
-            f"WHERE collection_id = '{collection_id_escaped}' AND namespace_id = {ns_id} AND ltable_name = 'default'"
+            f"WHERE collection_id = '{collection_id_escaped}' AND namespace_id = {int(namespace_id)} "
+            f"AND ltable_name = '{ltable_name_escaped}'"
         )
-        lt_id = int(lt_rows[0][0] if isinstance(lt_rows[0], (list, tuple)) else lt_rows[0]["ltable_id"])
-        self._cache_namespace_ltable_id(collection_id, ns_id, lt_id)
+        if not lt_rows:
+            raise ValueError(
+                f"LTable '{ltable_name}' not found for collection_id={collection_id}, "
+                f"namespace_id={namespace_id} in sdk_ltables"
+            )
+        return int(lt_rows[0][0] if isinstance(lt_rows[0], (list, tuple)) else lt_rows[0]["ltable_id"])
+
+    def _insert_ns_namespace_catalog_row(
+        self,
+        collection_id: str,
+        namespace_name: str,
+        *,
+        idempotent: bool,
+    ) -> int:
+        namespace_name_escaped = escape_string(namespace_name)
+        collection_id_escaped = escape_string(collection_id)
+        ns_table = self._qtable(NamespaceCollectionNames.sdk_namespaces_table())
+        try:
+            self._execute(
+                f"INSERT INTO {ns_table} "
+                f"(collection_id, namespace_name) VALUES ('{collection_id_escaped}', '{namespace_name_escaped}')"
+            )
+        except Exception as exc:
+            if idempotent and _is_namespace_catalog_conflict_error(exc):
+                pass
+            else:
+                raise
+        return self._fetch_ns_namespace_id(collection_id, namespace_name)
+
+    def _insert_ns_ltable_catalog_row(
+        self,
+        collection_id: str,
+        namespace_id: int,
+        *,
+        idempotent: bool,
+        ltable_name: str = "default",
+    ) -> int:
+        collection_id_escaped = escape_string(collection_id)
+        ltable_name_escaped = escape_string(ltable_name)
+        lt_table = self._qtable(NamespaceCollectionNames.sdk_ltables_table())
+        try:
+            self._execute(
+                f"INSERT INTO {lt_table} "
+                f"(collection_id, namespace_id, ltable_name) "
+                f"VALUES ('{collection_id_escaped}', {int(namespace_id)}, '{ltable_name_escaped}')"
+            )
+        except Exception as exc:
+            if idempotent and _is_namespace_catalog_conflict_error(exc):
+                pass
+            else:
+                raise
+        return self._fetch_ns_ltable_id(collection_id, namespace_id, ltable_name)
+
+    def _finalize_ns_namespace_meta(
+        self,
+        collection_id: str,
+        namespace_name: str,
+        namespace_id: int,
+        ltable_id: int,
+    ) -> dict:
+        self._cache_namespace_ltable_id(collection_id, namespace_id, ltable_id)
         schema_table = self._qtable(
             NamespaceCollectionNames.logic_schema_table_name(collection_id)
         )
@@ -1561,10 +1645,38 @@ class BaseClient(BaseConnection, AdminAPI):
         with contextlib.suppress(Exception):
             self._execute(
                 f"INSERT INTO {schema_table} (namespace_id, ltable_id, schema_content) "
-                f"VALUES ({ns_id}, {lt_id}, '{escape_string(schema_content)}')"
+                f"VALUES ({namespace_id}, {ltable_id}, '{escape_string(schema_content)}')"
             )
-        self._set_session_ns_context(namespace_id=ns_id, ltable_id=lt_id)
-        return {"namespace_id": str(ns_id), "namespace_name": namespace_name}
+        self._set_session_ns_context(namespace_id=namespace_id, ltable_id=ltable_id)
+        return {"namespace_id": str(namespace_id), "namespace_name": namespace_name, "ltable_id": str(ltable_id)}
+
+    def _create_ns_namespace_meta(self, collection_id: str, namespace_name: str) -> dict:
+        ns_id = self._insert_ns_namespace_catalog_row(
+            collection_id, namespace_name, idempotent=False
+        )
+        lt_id = self._insert_ns_ltable_catalog_row(
+            collection_id, ns_id, idempotent=False
+        )
+        return self._finalize_ns_namespace_meta(collection_id, namespace_name, ns_id, lt_id)
+
+    def _get_or_create_ns_namespace_meta(self, collection_id: str, namespace_name: str) -> dict:
+        meta = self._get_ns_namespace_meta(collection_id, namespace_name)
+        if meta is not None:
+            if meta.get("ltable_id") is not None:
+                return meta
+            lt_id = self._insert_ns_ltable_catalog_row(
+                collection_id, int(meta["namespace_id"]), idempotent=True
+            )
+            return self._finalize_ns_namespace_meta(
+                collection_id, namespace_name, int(meta["namespace_id"]), lt_id
+            )
+        ns_id = self._insert_ns_namespace_catalog_row(
+            collection_id, namespace_name, idempotent=True
+        )
+        lt_id = self._insert_ns_ltable_catalog_row(
+            collection_id, ns_id, idempotent=True
+        )
+        return self._finalize_ns_namespace_meta(collection_id, namespace_name, ns_id, lt_id)
 
     def _get_ns_namespace_meta(self, collection_id: str, namespace_name: str) -> dict | None:
         namespace_name_escaped = escape_string(namespace_name)
