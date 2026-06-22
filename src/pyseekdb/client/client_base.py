@@ -1098,7 +1098,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 INDEX idx_name(collection_name)
-            ) COMMENT='Settings of collections created by SDK' {scp};"""
+            ) COMMENT='Settings of collections created by SDK' ORGANIZATION INDEX {scp};"""
             self._execute(create_table_sql)
         except Exception as e:
             raise ValueError(f"Failed to create sdk_collections table: {e}") from e
@@ -1187,7 +1187,7 @@ class BaseClient(BaseConnection, AdminAPI):
             PRIMARY KEY (namespace_id),
             UNIQUE KEY uk_sdk_ns_coll_name (collection_id, namespace_name),
             KEY idx_sdk_ns_by_collection (collection_id)
-        ) COMMENT='Namespace catalog' {scp};"""
+        ) COMMENT='Namespace catalog' ORGANIZATION INDEX {scp};"""
         ns_ltables_sql = f"""CREATE TABLE IF NOT EXISTS {ns_ltables_q} (
             ltable_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             collection_id CHAR(32) NOT NULL,
@@ -1199,7 +1199,7 @@ class BaseClient(BaseConnection, AdminAPI):
             PRIMARY KEY (ltable_id),
             UNIQUE KEY uk_sdk_lt_coll_ns_name (collection_id, namespace_id, ltable_name),
             KEY idx_sdk_lt_by_ns (collection_id, namespace_id)
-        ) COMMENT='LTable catalog' {scp};"""
+        ) COMMENT='LTable catalog' ORGANIZATION INDEX {scp};"""
         namespaces_stats_sql = f"""CREATE TABLE IF NOT EXISTS {self._qtable(NamespaceCollectionNames.sdk_namespaces_stats_table())} (
             collection_id CHAR(32) NOT NULL COMMENT 'collection id',
             namespace_id BIGINT UNSIGNED NOT NULL COMMENT 'namespace internal id',
@@ -1212,7 +1212,7 @@ class BaseClient(BaseConnection, AdminAPI):
             included_index BOOL NOT NULL DEFAULT FALSE COMMENT 'whether stats include index data',
             PRIMARY KEY (namespace_id, ltable_id, included_index),
             KEY idx_sdk_ns_stat_by_collection (collection_id)
-        ) COMMENT='Logic table row count and storage size statistics' DEFAULT CHARSET=utf8mb4
+        ) COMMENT='Logic table row count and storage size statistics' DEFAULT CHARSET=utf8mb4 ORGANIZATION INDEX
         PARTITION BY KEY(namespace_id) PARTITIONS 8;"""
         self._execute(ns_namespaces_sql)
         self._execute(ns_ltables_sql)
@@ -1367,7 +1367,7 @@ class BaseClient(BaseConnection, AdminAPI):
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                     PRIMARY KEY(namespace_id)
-                ) TABLEGROUP=`{tg_name}` COMMENT='热点/TTL附属表' DEFAULT CHARSET=utf8mb4
+                ) TABLEGROUP=`{tg_name}` COMMENT='热点/TTL附属表' DEFAULT CHARSET=utf8mb4 ORGANIZATION INDEX
                 {partition_clause}""")
 
             self._execute(f"""CREATE TABLE IF NOT EXISTS `{kv_table}` (
@@ -1375,7 +1375,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 kv_key VARBINARY(1024) NOT NULL,
                 kv_value LONGBLOB NOT NULL,
                 PRIMARY KEY(namespace_id, kv_key)
-            ) TABLEGROUP=`{tg_name}` COMMENT='索引与映射KV表' DEFAULT CHARSET=utf8mb4 LOB_INROW_THRESHOLD=786432
+            ) TABLEGROUP=`{tg_name}` COMMENT='索引与映射KV表' DEFAULT CHARSET=utf8mb4 ORGANIZATION INDEX LOB_INROW_THRESHOLD=786432
             {partition_clause}""")
 
             self._execute(f"""CREATE TABLE IF NOT EXISTS `{schema_table}` (
@@ -1386,7 +1386,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 PRIMARY KEY(namespace_id, ltable_id)
-            ) TABLEGROUP=`{tg_name}` COMMENT='LTable schema定义' DEFAULT CHARSET=utf8mb4
+            ) TABLEGROUP=`{tg_name}` COMMENT='LTable schema定义' DEFAULT CHARSET=utf8mb4 ORGANIZATION INDEX
             {partition_clause}""")
 
         except Exception:
