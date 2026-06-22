@@ -13,9 +13,10 @@ Key features:
 
 ## Documentation
 
-- Docs home: https://oceanbase.github.io/pyseekdb/
-- User guide: https://oceanbase.github.io/pyseekdb/guide/
-- API reference: https://oceanbase.github.io/pyseekdb/api/
+- Docs home: https://docs.seekdb.ai
+- SDK guide: https://docs.seekdb.ai/seekdb/pyseekdb-sdk-get-started
+- User guide: https://docs.seekdb.ai/seekdb/deploy-overview
+- API reference: https://docs.seekdb.ai/seekdb/api-overview
 - RAG demo: [English](demo/rag/README.md) / [中文](demo/rag/README_CN.md)
 - Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
 
@@ -41,12 +42,15 @@ collection.add(
     metadatas=[{"tag": "hello"}, {"tag": "demo"}],
 )
 
+# Refresh the index to make the added documents searchable
+collection.refresh_index()
+
 results = collection.query(query_texts=["hello"], n_results=3)
 print(results["ids"][0])
 ```
 
 For full usage, connection modes, collection management, and operations, see the
-User Guide: https://oceanbase.github.io/pyseekdb/guide/.
+[User Guide](https://oceanbase.github.io/pyseekdb/guide/).
 
 ## License
 
