@@ -1145,6 +1145,7 @@ class TestDeleteNamespaceUsesKernel:
     def test_delete_namespace_calls_dbms_logic_table(self):
         c = FakeClient()
         c._execute = MagicMock(side_effect=[
+            [{"got": 1}],  # GET_LOCK
             [{"namespace_id": 10, "namespace_name": "ns1", "ltable_id": 7}],
             None,  # _get_ns_namespace_meta -> SET @namespace_id
             None,  # _get_ns_namespace_meta -> SET @ltable_id
@@ -1153,9 +1154,12 @@ class TestDeleteNamespaceUsesKernel:
             None,  # _delete_ns_namespace_meta -> SET @namespace_id
             None,  # _delete_ns_namespace_meta -> SET @ltable_id
             None,  # CALL DBMS_LOGIC_TABLE.DROP_NAMESPACE
+            [{"got": 1}],  # RELEASE_LOCK
         ])
         c._delete_ns_namespace_meta("abc123", "ns1")
         calls = [str(call) for call in c._execute.call_args_list]
+        assert any("GET_LOCK" in s and "pyseekdb:nslc:" in s for s in calls)
+        assert any("RELEASE_LOCK" in s for s in calls)
         assert any("DBMS_LOGIC_TABLE.DROP_NAMESPACE" in s for s in calls)
         # session context must be set BEFORE DROP_NAMESPACE so the kernel sees the
         # right @collection_id / @namespace_id / @ltable_id for this call.
