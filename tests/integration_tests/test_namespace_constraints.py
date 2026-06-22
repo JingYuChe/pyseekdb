@@ -22,7 +22,7 @@ from pyseekdb.client.version import Version
 def _make_schema(ivf_type: str) -> Schema:
     return Schema(
         vector_index=VectorIndexConfig(
-            ivf=IVFConfiguration(dimension=3, distance="cosine", type=ivf_type, fresh_mode="spfresh"),
+            ivf=IVFConfiguration(dimension=3, distance="cosine", type=ivf_type, centroids_fresh_mode="spfresh"),
             embedding_function=None,
         ),
     )

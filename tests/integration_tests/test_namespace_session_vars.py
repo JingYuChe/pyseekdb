@@ -21,7 +21,7 @@ class TestNamespaceSessionVars:
         name = f"test_ns_sessvar_{int(time.time() * 1000)}"
         schema = Schema(
             vector_index=VectorIndexConfig(
-                ivf=IVFConfiguration(dimension=3, distance="l2", fresh_mode="spfresh"),
+                ivf=IVFConfiguration(dimension=3, distance="l2", centroids_fresh_mode="spfresh"),
                 embedding_function=None,
             ),
         )

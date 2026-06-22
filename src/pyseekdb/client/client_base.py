@@ -249,8 +249,8 @@ def _get_ivf_vector_index_sql(ivf_config: "IVFConfiguration") -> str:
                 property_parts.append(f"{k}='{v}'")
             else:
                 property_parts.append(f"{k}={v}")
-    if ivf_config.fresh_mode:
-        property_parts.append(f"centroids_fresh_mode={ivf_config.fresh_mode}")
+    if ivf_config.centroids_fresh_mode:
+        property_parts.append(f"centroids_fresh_mode={ivf_config.centroids_fresh_mode}")
     property_str = ", ".join(property_parts)
     properties_str = f", {property_str}" if property_str else ""
     return f"WITH (DISTANCE={ivf_config.distance}, TYPE={ivf_config.type.upper()}, LIB={ivf_config.lib.upper()}{properties_str})"
@@ -1040,8 +1040,8 @@ class BaseClient(BaseConnection, AdminAPI):
             }
             if ivf_config is not None:
                 settings["dense_index_type"] = "ivf"
-                if ivf_config.fresh_mode is not None:
-                    settings["fresh_mode"] = ivf_config.fresh_mode
+                if ivf_config.centroids_fresh_mode is not None:
+                    settings["centroids_fresh_mode"] = ivf_config.centroids_fresh_mode
             if dense_embedding_function is not None and EmbeddingFunction.support_persistence(dense_embedding_function):
                 settings["embedding_function"] = {
                     "name": dense_embedding_function.name(),

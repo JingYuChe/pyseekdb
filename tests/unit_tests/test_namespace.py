@@ -32,14 +32,14 @@ class TestIVFConfiguration:
         config = IVFConfiguration()
         assert config.dimension == 384
         assert config.distance == "cosine"
-        assert config.fresh_mode is None
+        assert config.centroids_fresh_mode is None
         assert config.properties is None
 
     def test_valid_custom(self):
-        config = IVFConfiguration(dimension=128, distance="l2", fresh_mode="spfresh")
+        config = IVFConfiguration(dimension=128, distance="l2", centroids_fresh_mode="spfresh")
         assert config.dimension == 128
         assert config.distance == "l2"
-        assert config.fresh_mode == "spfresh"
+        assert config.centroids_fresh_mode == "spfresh"
 
     def test_valid_inner_product(self):
         config = IVFConfiguration(dimension=1024, distance="inner_product")
@@ -77,9 +77,9 @@ class TestIVFConfiguration:
         with pytest.raises(ValueError, match="distance must be one of"):
             IVFConfiguration(distance="invalid")
 
-    def test_invalid_fresh_mode_type(self):
-        with pytest.raises(TypeError, match="fresh_mode must be a str"):
-            IVFConfiguration(fresh_mode=True)
+    def test_invalid_centroids_fresh_mode_type(self):
+        with pytest.raises(TypeError, match="centroids_fresh_mode must be a str"):
+            IVFConfiguration(centroids_fresh_mode=True)
 
     def test_properties_valid(self):
         config = IVFConfiguration(properties={"nlist": 128, "nprobe": 16})
@@ -715,7 +715,7 @@ class TestNamespaceSQLGeneration:
         from pyseekdb.client.configuration import FulltextIndexConfig
 
         c = self._client()
-        ivf_config = IVFConfiguration(dimension=3, distance="l2", fresh_mode="spfresh")
+        ivf_config = IVFConfiguration(dimension=3, distance="l2", centroids_fresh_mode="spfresh")
         c._create_namespace_physical_tables(
             collection_id=self.COLLECTION_ID,
             dimension=3,
@@ -736,7 +736,7 @@ class TestNamespaceSQLGeneration:
     def test_create_namespace_physical_tables_ss_inline_vector_index(self):
         """SS logic_data_table: inline VECTOR INDEX in CREATE TABLE."""
         c = self._client()
-        ivf_config = IVFConfiguration(dimension=3, distance="l2", fresh_mode="spfresh")
+        ivf_config = IVFConfiguration(dimension=3, distance="l2", centroids_fresh_mode="spfresh")
         c._create_namespace_physical_tables(
             collection_id=self.COLLECTION_ID,
             dimension=3,
@@ -771,8 +771,8 @@ class TestNamespaceSQLGeneration:
         assert "VECTOR INDEX" not in data_create
         assert "FULLTEXT INDEX" not in data_create
 
-    def test_create_namespace_physical_tables_ivf_without_fresh_mode(self):
-        """IVF without fresh_mode omits fresh_mode from VECTOR INDEX DDL."""
+    def test_create_namespace_physical_tables_ivf_without_centroids_fresh_mode(self):
+        """IVF without centroids_fresh_mode omits centroids_fresh_mode from VECTOR INDEX DDL."""
         c = self._client()
         ivf_config = IVFConfiguration(dimension=3, distance="l2")
         c._create_namespace_physical_tables(
@@ -785,7 +785,7 @@ class TestNamespaceSQLGeneration:
             s for s in c.executed_sqls if "CREATE TABLE" in s and self.TABLE in s
         )
         assert "VECTOR INDEX idx_vec(embedding)" in data_create
-        assert "fresh_mode" not in data_create
+        assert "centroids_fresh_mode" not in data_create
 
 
 # ==================== Namespace Name Validation Tests ====================
@@ -1087,7 +1087,7 @@ class TestUseNamespaceValidation:
         c.detect_db_type_and_version = MagicMock(return_value=("mysql", "8.0"))
         from pyseekdb.client.schema import Schema
         from pyseekdb.client.configuration import VectorIndexConfig
-        schema = Schema(vector_index=VectorIndexConfig(ivf=IVFConfiguration(dimension=3, fresh_mode="spfresh"), embedding_function=None))
+        schema = Schema(vector_index=VectorIndexConfig(ivf=IVFConfiguration(dimension=3, centroids_fresh_mode="spfresh"), embedding_function=None))
         with pytest.raises(ValueError, match="only supported on OceanBase"):
             c._create_namespace_collection("test", schema)
 
@@ -1109,9 +1109,9 @@ class TestUseNamespaceValidation:
         assert "SEARCH INDEX idx_json(data_content)" in data_create
         settings = c._create_ns_collection_meta.call_args[0][1]
         assert "dense_index_type" not in settings
-        assert "fresh_mode" not in settings
+        assert "centroids_fresh_mode" not in settings
 
-    def test_create_namespace_collection_ivf_without_fresh_mode(self):
+    def test_create_namespace_collection_ivf_without_centroids_fresh_mode(self):
         c = FakeClient()
         c.detect_db_type_and_version = MagicMock(return_value=("oceanbase", "4.3"))
         c._is_shared_storage_mode = MagicMock(return_value=False)
@@ -1131,10 +1131,10 @@ class TestUseNamespaceValidation:
             s for s in c.executed_sqls if "CREATE TABLE" in s and "logic_data_table" in s
         )
         assert "VECTOR INDEX idx_vec(embedding)" in data_create
-        assert "fresh_mode" not in data_create
+        assert "centroids_fresh_mode" not in data_create
         settings = c._create_ns_collection_meta.call_args[0][1]
         assert settings["dense_index_type"] == "ivf"
-        assert "fresh_mode" not in settings
+        assert "centroids_fresh_mode" not in settings
 
 
 # ==================== Delete Namespace Uses Kernel ====================

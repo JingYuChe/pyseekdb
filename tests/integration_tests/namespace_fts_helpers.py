@@ -56,7 +56,7 @@ class FtsQueryCase:
 def ns_schema(distance: VectorDistanceMetric = "l2") -> Schema:
     return Schema(
         vector_index=VectorIndexConfig(
-            ivf=IVFConfiguration(dimension=3, distance=distance, fresh_mode="spfresh"),
+            ivf=IVFConfiguration(dimension=3, distance=distance, centroids_fresh_mode="spfresh"),
             embedding_function=None,
         ),
         fulltext_index=FulltextIndexConfig(analyzer="ik"),
