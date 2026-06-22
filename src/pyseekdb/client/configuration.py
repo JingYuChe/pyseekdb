@@ -336,7 +336,7 @@ class IVFConfiguration:
         dimension: Vector dimension (number of elements in each vector)
         distance: Distance metric for similarity calculation (e.g., 'l2', 'cosine', 'inner_product')
         type: IVF index subtype ('ivf_flat', 'ivf_sq8', 'ivf_pq')
-        fresh_mode: SPFresh mode for online index updates (e.g., 'spfresh'). Defaults to None (disabled).
+        centroids_fresh_mode: SPFresh mode for online index updates (e.g., 'spfresh'). Defaults to None (disabled).
         properties: Optional dictionary of additional IVF index properties
     """
 
@@ -344,7 +344,7 @@ class IVFConfiguration:
     distance: str | DistanceMetric = DistanceMetric.COSINE.value
     type: str | IVFIndexType = IVFIndexType.IVF_FLAT.value
     lib: str | IVFIndexLib = IVFIndexLib.OB.value
-    fresh_mode: str | None = None
+    centroids_fresh_mode: str | None = None
     properties: dict[str, PrimitiveValue] | None = None
 
     def __post_init__(self):
@@ -367,8 +367,10 @@ class IVFConfiguration:
         if self.lib not in valid_libs:
             raise ValueError(f"lib must be one of {valid_libs}, got {self.lib}")
 
-        if self.fresh_mode is not None and not isinstance(self.fresh_mode, str):
-            raise TypeError(f"fresh_mode must be a str, got {type(self.fresh_mode).__name__}")
+        if self.centroids_fresh_mode is not None and not isinstance(self.centroids_fresh_mode, str):
+            raise TypeError(
+                f"centroids_fresh_mode must be a str, got {type(self.centroids_fresh_mode).__name__}"
+            )
 
         _ensure_primitive_properties(self.properties)
 

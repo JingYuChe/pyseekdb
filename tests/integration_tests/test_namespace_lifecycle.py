@@ -21,7 +21,7 @@ class TestNamespaceLifecycle:
         name = f"test_ns_lc_{int(time.time() * 1000)}{suffix}"
         schema = Schema(
             vector_index=VectorIndexConfig(
-                ivf=IVFConfiguration(dimension=3, distance="cosine", fresh_mode="spfresh"),
+                ivf=IVFConfiguration(dimension=3, distance="cosine", centroids_fresh_mode="spfresh"),
                 embedding_function=None,
             ),
         )
@@ -56,7 +56,7 @@ class TestNamespaceLifecycle:
         name = f"test_ns_ef_{int(time.time() * 1000)}"
         schema = Schema(
             vector_index=VectorIndexConfig(
-                ivf=IVFConfiguration(dimension=ef.dimension, distance="cosine", fresh_mode="spfresh"),
+                ivf=IVFConfiguration(dimension=ef.dimension, distance="cosine", centroids_fresh_mode="spfresh"),
                 embedding_function=ef,
             ),
         )
@@ -156,7 +156,7 @@ class TestNamespaceLifecycle:
         name = f"test_ns_resume_{int(time.time() * 1000)}"
         schema = Schema(
             vector_index=VectorIndexConfig(
-                ivf=IVFConfiguration(dimension=3, distance="cosine", fresh_mode="spfresh"),
+                ivf=IVFConfiguration(dimension=3, distance="cosine", centroids_fresh_mode="spfresh"),
                 embedding_function=None,
             ),
         )
@@ -257,7 +257,7 @@ class TestNamespaceLifecycle:
             name = f"test_ns_ss_{int(time.time() * 1000)}"
             schema = Schema(
                 vector_index=VectorIndexConfig(
-                    ivf=IVFConfiguration(dimension=3, distance="cosine", fresh_mode="spfresh"),
+                    ivf=IVFConfiguration(dimension=3, distance="cosine", centroids_fresh_mode="spfresh"),
                     embedding_function=None,
                 ),
             )
@@ -297,7 +297,7 @@ class TestNamespaceLifecycle:
         name = f"test_ns_lc_pc_{int(time.time() * 1000)}"
         schema = Schema(
             vector_index=VectorIndexConfig(
-                ivf=IVFConfiguration(dimension=3, distance="cosine", fresh_mode="spfresh"),
+                ivf=IVFConfiguration(dimension=3, distance="cosine", centroids_fresh_mode="spfresh"),
                 embedding_function=None,
             ),
         )

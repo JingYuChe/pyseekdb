@@ -23,7 +23,7 @@ class TestNamespacePrewarm:
         name = f"test_ns_pw_{int(time.time() * 1000)}"
         schema = Schema(
             vector_index=VectorIndexConfig(
-                ivf=IVFConfiguration(dimension=3, distance="cosine", fresh_mode="spfresh"),
+                ivf=IVFConfiguration(dimension=3, distance="cosine", centroids_fresh_mode="spfresh"),
                 embedding_function=None,
             ),
         )

@@ -38,7 +38,7 @@ def _schema_fts_only() -> Schema:
 def _schema_vector_only() -> Schema:
     return Schema(
         vector_index=VectorIndexConfig(
-            ivf=IVFConfiguration(dimension=3, distance="l2", fresh_mode="spfresh"),
+            ivf=IVFConfiguration(dimension=3, distance="l2", centroids_fresh_mode="spfresh"),
             embedding_function=None,
         ),
     )
@@ -125,7 +125,7 @@ class TestNamespaceOptionalIndexes:
             settings = _collection_settings(db_client, collection.id)
             assert keys == {"idx_json", "idx_vec"}
             assert settings.get("dense_index_type") == "ivf"
-            assert settings.get("fresh_mode") == "spfresh"
+            assert settings.get("centroids_fresh_mode") == "spfresh"
 
             ns = collection.create_namespace("ns")
             _seed_namespace(ns, collection.dimension)
