@@ -3,11 +3,13 @@ Base client interface definition
 """
 
 import contextlib
+import hashlib
 import json
 import logging
 import os
 import re
 import struct
+import time
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
@@ -4981,6 +4983,152 @@ class BaseClient(BaseConnection, AdminAPI):
             return f"WHERE {ns_cond} AND ({inner})", params
         return f"WHERE {ns_cond} AND ({where_clause})", params
 
+    @staticmethod
+    def _namespace_record_lock_name(
+        collection_id: str,
+        namespace_id: str | int,
+        ltable_id: int,
+        record_id: str,
+    ) -> str:
+        key = f"{collection_id}:{namespace_id}:{ltable_id}:{record_id}"
+        digest = hashlib.sha256(key.encode()).hexdigest()[:40]
+        return f"pyseekdb:nsu:{digest}"
+
+    @contextlib.contextmanager
+    def _namespace_record_lock(
+        self,
+        collection_id: str,
+        namespace_id: str | int,
+        ltable_id: int,
+        record_id: str,
+        *,
+        total_wait_seconds: float = 30.0,
+    ):
+        lock_name = self._namespace_record_lock_name(
+            collection_id, namespace_id, ltable_id, record_id
+        )
+        lock_name_escaped = escape_string(lock_name)
+        acquired = False
+        deadline = time.monotonic() + total_wait_seconds
+        try:
+            while time.monotonic() < deadline:
+                rows = self._execute(
+                    f"SELECT GET_LOCK('{lock_name_escaped}', 1) AS got"
+                )
+                row = rows[0]
+                got = row.get("got") if isinstance(row, dict) else row[0]
+                if got == 1:
+                    acquired = True
+                    yield True
+                    return
+                time.sleep(0.05)
+            yield False
+        finally:
+            if acquired:
+                with contextlib.suppress(Exception):
+                    self._execute(f"SELECT RELEASE_LOCK('{lock_name_escaped}')")
+
+    def _count_namespace_records_by_id(
+        self,
+        table_name: str,
+        namespace_id: int,
+        ltable_id: int,
+        record_id: str,
+    ) -> int:
+        id_expr = _NS_DATA_CONTENT_ID_EXPR
+        sql = (
+            f"SELECT COUNT(*) AS cnt FROM `{table_name}` "
+            f"WHERE namespace_id = {int(namespace_id)} AND ltable_id = {int(ltable_id)} "
+            f"AND {id_expr} = %s"
+        )
+        conn = self._ensure_connection()
+        use_ctx = self._use_context_manager_for_cursor()
+        rows = self._execute_query_with_cursor(conn, sql, [record_id], use_ctx)
+        if not rows:
+            return 0
+        row = rows[0]
+        if isinstance(row, dict):
+            return int(row.get("cnt", 0))
+        if isinstance(row, (tuple, list)):
+            return int(row[0])
+        return int(row)
+
+    def _delete_namespace_records_by_id(
+        self,
+        table_name: str,
+        namespace_id: int,
+        ltable_id: int,
+        record_id: str,
+    ) -> None:
+        id_expr = _NS_DATA_CONTENT_ID_EXPR
+        sql = (
+            f"DELETE FROM `{table_name}` "
+            f"WHERE namespace_id = {int(namespace_id)} AND ltable_id = {int(ltable_id)} "
+            f"AND {id_expr} = %s"
+        )
+        conn = self._ensure_connection()
+        use_ctx = self._use_context_manager_for_cursor()
+        if use_ctx:
+            with conn.cursor() as cursor:
+                cursor.execute(sql, [record_id])
+        else:
+            cursor = conn.cursor()
+            try:
+                cursor.execute(sql, [record_id])
+            finally:
+                cursor.close()
+
+    def _reconcile_namespace_duplicate_records(
+        self,
+        collection_id: str | None,
+        collection_name: str,
+        namespace_id: str,
+        namespace_name: str,
+        ltable_id: int,
+        table_name: str,
+        ids: list[str],
+        documents: list[str] | None,
+        metadatas: list[dict] | None,
+        embeddings: list[list[float]] | None,
+        embedding_function: EmbeddingFunction[EmbeddingDocuments] | None,
+        **kwargs: Any,
+    ) -> None:
+        """Collapse concurrent upsert races to a single row per business id."""
+        if not ids or collection_id is None:
+            return
+        ns_id = int(namespace_id)
+        for i, record_id in enumerate(ids):
+            doc_val = documents[i] if documents and i < len(documents) else None
+            meta_val = metadatas[i] if metadatas and i < len(metadatas) else None
+            emb_val = embeddings[i] if embeddings and i < len(embeddings) else None
+            for _ in range(60):
+                with self._namespace_record_lock(
+                    collection_id, namespace_id, ltable_id, record_id
+                ) as acquired:
+                    if not acquired:
+                        continue
+                    duplicate_count = self._count_namespace_records_by_id(
+                        table_name, ns_id, ltable_id, record_id
+                    )
+                    if duplicate_count <= 1:
+                        break
+                    self._delete_namespace_records_by_id(
+                        table_name, ns_id, ltable_id, record_id
+                    )
+                    self._namespace_add(
+                        collection_id=collection_id,
+                        collection_name=collection_name,
+                        namespace_id=namespace_id,
+                        namespace_name=namespace_name,
+                        ids=[record_id],
+                        embeddings=[emb_val] if emb_val is not None else None,
+                        metadatas=[meta_val] if meta_val is not None else None,
+                        documents=[doc_val] if doc_val is not None else None,
+                        embedding_function=embedding_function,
+                        **kwargs,
+                    )
+                    break
+
     def _namespace_add(  # noqa: C901
         self,
         collection_id: str | None,
@@ -5304,6 +5452,21 @@ class BaseClient(BaseConnection, AdminAPI):
                 ids=upd_ids, embeddings=upd_embs, metadatas=upd_metas,
                 documents=upd_docs, embedding_function=embedding_function, **kwargs,
             )
+
+        self._reconcile_namespace_duplicate_records(
+            collection_id=collection_id,
+            collection_name=collection_name,
+            namespace_id=namespace_id,
+            namespace_name=namespace_name,
+            ltable_id=ltable_id,
+            table_name=table_name,
+            ids=ids,
+            documents=documents,
+            metadatas=metadatas,
+            embeddings=embeddings,
+            embedding_function=embedding_function,
+            **kwargs,
+        )
 
     def _namespace_delete(
         self,
