@@ -172,9 +172,7 @@ class Collection:
         self._guard_namespace_enabled()
         _validate_namespace_name(name)
         from .namespace import Namespace
-        meta = self._client._get_ns_namespace_meta(self._id, name)
-        if meta is None:
-            meta = self._client._create_ns_namespace_meta(self._id, name)
+        meta = self._client._get_or_create_ns_namespace_meta(self._id, name)
         return Namespace(client=self._client, collection=self, name=name, namespace_id=meta["namespace_id"])
 
     def delete_namespace(self, name: str) -> None:
