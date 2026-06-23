@@ -15,8 +15,61 @@ sys.path.insert(0, str(src_root))
 from pyseekdb.client.client_base import (  # noqa: E402
     BaseClient,
     _is_collection_conflict_error,
+    _is_sdk_collection_catalog_conflict_error,
 )
 from pyseekdb.client.types import _NOT_PROVIDED  # noqa: E402
+
+
+class TestCollectionCatalogConflictDetection:
+    def test_detects_integrity_error_on_sdk_collections(self):
+        class IntegrityError(Exception):
+            pass
+
+        exc = IntegrityError(
+            '(1062, "Duplicate entry \'my_coll\' for key \'uk_sdk_coll_name\'")'
+        )
+        assert _is_sdk_collection_catalog_conflict_error(exc)
+
+    def test_ignores_unrelated_errors(self):
+        assert not _is_sdk_collection_catalog_conflict_error(ValueError("invalid dimension"))
+
+
+class TestCollectionCatalogInsertRecovery:
+    def test_insert_conflict_reuses_existing_collection_id(self):
+        client = MagicMock(spec=BaseClient)
+        client._get_collection_id.side_effect = [ValueError("not found"), "existing_id"]
+        conn = MagicMock()
+        client._ensure_connection.return_value = conn
+
+        class IntegrityError(Exception):
+            pass
+
+        def execute_side_effect(sql):
+            if "INSERT INTO" in sql:
+                raise IntegrityError(
+                    '(1062, "Duplicate entry \'items\' for key \'uk_sdk_coll_name\'")'
+                )
+            return []
+
+        client._execute.side_effect = execute_side_effect
+
+        result = BaseClient._create_collection_meta_v2(client, "items", None)
+
+        assert result["collection_id"] == "existing_id"
+        conn.rollback.assert_called_once()
+        assert client._get_collection_id.call_count == 2
+
+    def test_existing_catalog_row_is_reused_without_insert(self):
+        client = MagicMock(spec=BaseClient)
+        client._get_collection_id.return_value = "existing_id"
+
+        result = BaseClient._create_collection_meta_v2(client, "items", None)
+
+        assert result["collection_id"] == "existing_id"
+        insert_calls = [
+            call for call in client._execute.call_args_list if "INSERT INTO" in str(call)
+        ]
+        assert not insert_calls
 
 
 class TestCollectionConflictDetection:
