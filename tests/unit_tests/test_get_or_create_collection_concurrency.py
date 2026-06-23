@@ -73,6 +73,43 @@ class TestGetOrCreateCollectionRecovery:
         assert result is existing
         client.get_collection.assert_called_once_with("items", embedding_function=_NOT_PROVIDED)
 
+    def test_resumes_incomplete_namespace_collection_when_present(self):
+        client = MagicMock(spec=BaseClient)
+        resumed = object()
+        client.has_collection.return_value = True
+        client._is_incomplete_ns_collection.return_value = True
+        client.create_collection.return_value = resumed
+
+        result = BaseClient.get_or_create_collection(client, "items", use_namespace=True)
+
+        assert result is resumed
+        client.create_collection.assert_called_once()
+        client.get_collection.assert_not_called()
+
+    def test_does_not_mask_unrelated_create_errors(self):
+        client = MagicMock(spec=BaseClient)
+        client.has_collection.return_value = False
+        client.create_collection.side_effect = ValueError("invalid dimension")
+
+        with pytest.raises(ValueError, match="invalid dimension"):
+            BaseClient.get_or_create_collection(client, "items")
+
+
+class TestListNsNamespacesRecyclebinFilter:
+    def test_sql_excludes_recyclebin_rows(self):
+        client = MagicMock(spec=BaseClient)
+        client._qtable.return_value = "`sdk_namespaces`"
+        client._execute.return_value = [
+            ("1", "active_ns"),
+        ]
+
+        result = BaseClient._list_ns_namespaces(client, "coll_1")
+
+        assert result == [{"namespace_id": "1", "namespace_name": "active_ns"}]
+        sql = client._execute.call_args[0][0]
+        assert "__recyclebin_" in sql
+        assert "LEFT(namespace_name, 13) <> '__recyclebin_'" in sql
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

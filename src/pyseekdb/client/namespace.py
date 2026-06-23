@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 
 
 class Namespace:
+    """Scoped view of a single namespace within a namespace-enabled collection."""
+
     def __init__(
         self,
         client: Any,
@@ -24,6 +26,7 @@ class Namespace:
         name: str,
         namespace_id: str,
     ):
+        """Bind a namespace handle to its parent collection and catalog identifiers."""
         self._client = client
         self._collection = collection
         self._name = name
@@ -31,27 +34,33 @@ class Namespace:
 
     @property
     def name(self) -> str:
+        """Human-readable namespace name."""
         return self._name
 
     @property
     def namespace_id(self) -> str:
+        """Stable namespace identifier assigned by the catalog."""
         return self._namespace_id
 
     @property
     def collection(self) -> "Collection":
+        """Parent collection that owns this namespace."""
         return self._collection
 
     @property
     def embedding_function(self) -> "EmbeddingFunction | None":
+        """Embedding function inherited from the parent collection."""
         return self._collection.embedding_function
 
     def __repr__(self) -> str:
+        """Return a debug-friendly representation of this namespace."""
         return (
             f"Namespace(name='{self._name}', namespace_id={self._namespace_id}, "
             f"collection='{self._collection.name}')"
         )
 
     def _guard_exists(self) -> None:
+        """Raise if this namespace or its collection was deleted."""
         if not self._client._ns_namespace_exists_by_id(self._collection.id, self._namespace_id):
             raise ValueError(
                 f"Namespace '{self._name}' no longer exists (it or its collection may have been deleted). "
@@ -60,6 +69,7 @@ class Namespace:
 
     @staticmethod
     def _validate_n_results(n_results: int, *, max_results: int = _MAX_N_RESULTS) -> None:
+        """Validate ``n_results`` is a positive integer within the engine limit."""
         if not isinstance(n_results, int) or n_results < 1:
             raise ValueError(f"n_results must be an integer >= 1, got {n_results!r}")
         if n_results > max_results:
@@ -78,6 +88,7 @@ class Namespace:
         documents: str | list[str] | None = None,
         **kwargs,
     ) -> None:
+        """Insert records into this namespace."""
         self._guard_exists()
         return self._client._namespace_add(
             collection_id=self._collection.id,
@@ -100,6 +111,7 @@ class Namespace:
         documents: str | list[str] | None = None,
         **kwargs,
     ) -> None:
+        """Update existing records in this namespace."""
         self._guard_exists()
         return self._client._namespace_update(
             collection_id=self._collection.id,
@@ -122,6 +134,7 @@ class Namespace:
         documents: str | list[str] | None = None,
         **kwargs,
     ) -> None:
+        """Insert or update records in this namespace."""
         self._guard_exists()
         return self._client._namespace_upsert(
             collection_id=self._collection.id,
@@ -143,6 +156,7 @@ class Namespace:
         where_document: dict[str, Any] | None = None,
         **kwargs,
     ) -> None:
+        """Delete records from this namespace by ids or filters."""
         self._guard_exists()
         return self._client._namespace_delete(
             collection_id=self._collection.id,
@@ -167,6 +181,7 @@ class Namespace:
         include: list[str] | None = None,
         **kwargs,
     ) -> dict[str, Any]:
+        """Run vector similarity search within this namespace."""
         self._guard_exists()
         self._validate_n_results(n_results)
         return self._client._namespace_query(
@@ -194,6 +209,7 @@ class Namespace:
         include: list[str] | None = None,
         **kwargs,
     ) -> dict[str, Any]:
+        """Run hybrid fulltext + vector search within this namespace."""
         self._guard_exists()
         self._validate_n_results(n_results)
         if include is None and not query and not knn:
@@ -223,6 +239,7 @@ class Namespace:
         include: list[str] | None = None,
         **kwargs,
     ) -> dict[str, Any]:
+        """Fetch records from this namespace by ids or filters."""
         self._guard_exists()
         return self._client._namespace_get(
             collection_id=self._collection.id,
@@ -239,6 +256,7 @@ class Namespace:
         )
 
     def count(self) -> int:
+        """Return the number of records in this namespace."""
         self._guard_exists()
         return self._client._namespace_count(
             collection_id=self._collection.id,
@@ -248,6 +266,7 @@ class Namespace:
         )
 
     def peek(self, limit: int = 10) -> dict[str, Any]:
+        """Return up to ``limit`` records from this namespace."""
         self._guard_exists()
         return self._client._namespace_peek(
             collection_id=self._collection.id,
@@ -258,6 +277,7 @@ class Namespace:
         )
 
     def prewarm(self) -> None:
+        """Prewarm namespace physical tables to reduce cold-start latency."""
         self._guard_exists()
         return self._client._namespace_prewarm(
             collection_id=self._collection.id,

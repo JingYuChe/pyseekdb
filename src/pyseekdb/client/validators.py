@@ -1,3 +1,5 @@
+"""Input validators for namespace names and record identifiers."""
+
 import re
 
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
@@ -8,6 +10,7 @@ _MAX_N_RESULTS = 16384  # OceanBase vector-search k upper bound
 
 
 def _validate_namespace_name(name: str) -> None:
+    """Validate a namespace name for type, length, and allowed characters."""
     if not isinstance(name, str):
         raise TypeError(
             f"Invalid namespace name: '{name}'. Namespace name must be a string, got {type(name).__name__}"
@@ -26,6 +29,11 @@ def _validate_namespace_name(name: str) -> None:
 
 
 def _validate_record_ids(ids: list[str]) -> None:
+    """Validate namespace/collection record id list shape and per-id constraints."""
+    if not isinstance(ids, list):
+        raise TypeError(
+            f"Invalid record ids: expected list[str], got {type(ids).__name__}"
+        )
     for rid in ids:
         if not isinstance(rid, str):
             raise TypeError(
