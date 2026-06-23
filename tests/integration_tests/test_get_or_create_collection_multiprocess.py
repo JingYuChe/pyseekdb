@@ -560,6 +560,16 @@ class TestGetOrCreateCollectionMultiprocess:
             assert client.has_collection(collection_name)
             collection = _get_collection(client, collection_name)
             assert collection.name == collection_name
+            rows = client._server._execute(
+                "SELECT collection_id FROM sdk_collections "
+                f"WHERE collection_name = '{collection_name}'"
+            )
+            assert len(rows) == 1, (
+                f"expected exactly one sdk_collections row for {collection_name!r}, got {len(rows)}"
+            )
+            row = rows[0]
+            catalog_id = row["collection_id"] if isinstance(row, dict) else row[0]
+            assert str(catalog_id) == str(collection.id)
         finally:
             with contextlib.suppress(Exception):
                 client.delete_collection(collection_name)

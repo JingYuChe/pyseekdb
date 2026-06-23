@@ -7,11 +7,8 @@ Includes concurrent get_or_create_namespace idempotency coverage.
 from __future__ import annotations
 
 import threading
-import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
-import pytest
 
 import pyseekdb
 from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT, ns_schema
