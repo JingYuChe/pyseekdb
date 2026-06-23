@@ -45,6 +45,7 @@ class Collection:
         partition_count: int | None = None,
         **metadata,
     ):
+        """Initialize a lightweight collection handle bound to a client implementation."""
         self._client = client
         self._name = name
         self._id = collection_id
@@ -107,6 +108,7 @@ class Collection:
 
     @property
     def use_namespace(self) -> bool:
+        """Whether this collection routes data operations through namespaces."""
         return self._use_namespace
 
     @property
@@ -121,6 +123,7 @@ class Collection:
 
     @staticmethod
     def _validate_n_results(n_results: int, *, max_results: int = _MAX_N_RESULTS) -> None:
+        """Validate ``n_results`` is a positive integer within the engine limit."""
         if not isinstance(n_results, int) or n_results < 1:
             raise ValueError(f"n_results must be an integer >= 1, got {n_results!r}")
         if n_results > max_results:
@@ -130,6 +133,7 @@ class Collection:
             )
 
     def _guard_collection_data_api(self) -> None:
+        """Raise if collection-level DML/DQL is used on a namespace-enabled collection."""
         if self._use_namespace:
             raise ValueError(
                 "This collection has namespace enabled. "
@@ -138,6 +142,7 @@ class Collection:
             )
 
     def _guard_namespace_enabled(self) -> None:
+        """Raise if namespace APIs are used on a non-namespace collection."""
         if not self._use_namespace:
             raise ValueError("Namespace is not enabled for this collection. Use use_namespace=True when creating the collection.")
         if not self._client._ns_collection_exists_by_id(self._id):
@@ -147,12 +152,14 @@ class Collection:
             )
 
     def __repr__(self) -> str:
+        """Return a debug-friendly representation of this collection."""
         ns_str = ", use_namespace=True" if self._use_namespace else ""
         return f"Collection(name='{self._name}', dimension={self._dimension}{ns_str}, client={self._client.mode})"
 
     # ==================== Namespace Management ====================
 
     def create_namespace(self, name: str) -> "Namespace":
+        """Create a new namespace and return a handle for scoped operations."""
         self._guard_namespace_enabled()
         _validate_namespace_name(name)
         from .namespace import Namespace
@@ -160,6 +167,7 @@ class Collection:
         return Namespace(client=self._client, collection=self, name=name, namespace_id=meta["namespace_id"])
 
     def get_namespace(self, name: str) -> "Namespace":
+        """Return an existing namespace handle or raise if it does not exist."""
         self._guard_namespace_enabled()
         _validate_namespace_name(name)
         from .namespace import Namespace
@@ -169,6 +177,7 @@ class Collection:
         return Namespace(client=self._client, collection=self, name=name, namespace_id=meta["namespace_id"])
 
     def get_or_create_namespace(self, name: str) -> "Namespace":
+        """Return an existing namespace or create it if missing."""
         self._guard_namespace_enabled()
         _validate_namespace_name(name)
         from .namespace import Namespace
@@ -176,11 +185,13 @@ class Collection:
         return Namespace(client=self._client, collection=self, name=name, namespace_id=meta["namespace_id"])
 
     def delete_namespace(self, name: str) -> None:
+        """Delete a namespace and its records from this collection."""
         self._guard_namespace_enabled()
         _validate_namespace_name(name)
         self._client._delete_ns_namespace_meta(self._id, name)
 
     def list_namespaces(self) -> list["Namespace"]:
+        """List all active namespaces in this collection."""
         self._guard_namespace_enabled()
         from .namespace import Namespace
         metas = self._client._list_ns_namespaces(self._id)
@@ -190,6 +201,7 @@ class Collection:
         ]
 
     def has_namespace(self, name: str) -> bool:
+        """Return whether a namespace with the given name exists."""
         self._guard_namespace_enabled()
         _validate_namespace_name(name)
         return self._client._has_ns_namespace(self._id, name)

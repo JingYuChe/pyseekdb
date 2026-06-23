@@ -921,6 +921,11 @@ class TestValidateRecordIds:
         with pytest.raises(ValueError, match="invalid characters"):
             _validate_record_ids(["good_id", "bad-id"])
 
+    def test_non_list_ids_raises(self):
+        from pyseekdb.client.client_base import _validate_record_ids
+        with pytest.raises(TypeError, match="expected list\\[str\\]"):
+            _validate_record_ids("doc_1")
+
 
 # ==================== Namespace Batch Limit Tests ====================
 

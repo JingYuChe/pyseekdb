@@ -1762,7 +1762,9 @@ class BaseClient(BaseConnection, AdminAPI):
         collection_id_escaped = escape_string(collection_id)
         rows = self._execute(
             f"SELECT namespace_id, namespace_name FROM {self._qtable(NamespaceCollectionNames.sdk_namespaces_table())} "
-            f"WHERE collection_id = '{collection_id_escaped}' ORDER BY namespace_id"
+            f"WHERE collection_id = '{collection_id_escaped}' "
+            f"AND LEFT(namespace_name, 13) <> '__recyclebin_' "
+            f"ORDER BY namespace_id"
         )
         results = []
         for row in rows:
@@ -2318,7 +2320,11 @@ class BaseClient(BaseConnection, AdminAPI):
 
     def _has_collection_v2(self, name: str) -> bool:
         try:
-            query_sql = f"SELECT COLLECTION_ID FROM {CollectionNames.sdk_collections_table_name()} WHERE COLLECTION_NAME = '{name}'"
+            name_escaped = escape_string(name)
+            query_sql = (
+                f"SELECT COLLECTION_ID FROM {CollectionNames.sdk_collections_table_name()} "
+                f"WHERE COLLECTION_NAME = '{name_escaped}'"
+            )
             rows = self._execute(query_sql)
             if not rows or len(rows) == 0:
                 return False
@@ -2392,6 +2398,15 @@ class BaseClient(BaseConnection, AdminAPI):
         _validate_collection_name(name)
 
         if self.has_collection(name):
+            if use_namespace and self._is_incomplete_ns_collection(name):
+                return self.create_collection(
+                    name=name,
+                    schema=schema,
+                    configuration=configuration,
+                    embedding_function=embedding_function,
+                    use_namespace=use_namespace,
+                    **kwargs,
+                )
             return self.get_collection(name, embedding_function=embedding_function)
 
         try:
@@ -2404,7 +2419,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 **kwargs,
             )
         except Exception as exc:
-            if _is_collection_conflict_error(exc) or self.has_collection(name):
+            if _is_collection_conflict_error(exc):
                 return self.get_collection(name, embedding_function=embedding_function)
             raise
 
