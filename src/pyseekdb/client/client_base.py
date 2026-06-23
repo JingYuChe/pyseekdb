@@ -3,7 +3,6 @@ Base client interface definition
 """
 
 import contextlib
-import hashlib
 import json
 import logging
 import os
@@ -1299,6 +1298,22 @@ class BaseClient(BaseConnection, AdminAPI):
         self._execute(ns_namespaces_sql)
         self._execute(ns_ltables_sql)
         self._execute(namespaces_stats_sql)
+        with contextlib.suppress(Exception):
+            self._execute(
+                f"CREATE UNIQUE INDEX uk_sdk_ns_coll_name ON {ns_namespaces_q} "
+                f"(collection_id, namespace_name)"
+            )
+        with contextlib.suppress(Exception):
+            self._execute(
+                f"CREATE UNIQUE INDEX uk_sdk_lt_coll_ns_name ON {ns_ltables_q} "
+                f"(collection_id, namespace_id, ltable_name)"
+            )
+
+    def _rollback_connection_if_supported(self) -> None:
+        conn_getter = getattr(self, "_ensure_connection", None)
+        if conn_getter is not None:
+            with contextlib.suppress(Exception):
+                conn_getter().rollback()
 
     def _create_ns_collection_meta(self, collection_name: str, settings: dict) -> dict:
         self._create_sdk_collections_if_not_exists()
@@ -1643,7 +1658,7 @@ class BaseClient(BaseConnection, AdminAPI):
             )
         except Exception as exc:
             if idempotent and _is_namespace_catalog_conflict_error(exc):
-                pass
+                self._rollback_connection_if_supported()
             else:
                 raise
         return self._fetch_ns_namespace_id(collection_id, namespace_name)
@@ -1667,7 +1682,7 @@ class BaseClient(BaseConnection, AdminAPI):
             )
         except Exception as exc:
             if idempotent and _is_namespace_catalog_conflict_error(exc):
-                pass
+                self._rollback_connection_if_supported()
             else:
                 raise
         return self._fetch_ns_ltable_id(collection_id, namespace_id, ltable_name)
@@ -1693,34 +1708,43 @@ class BaseClient(BaseConnection, AdminAPI):
         return {"namespace_id": str(namespace_id), "namespace_name": namespace_name, "ltable_id": str(ltable_id)}
 
     def _create_ns_namespace_meta(self, collection_id: str, namespace_name: str) -> dict:
-        with self._namespace_lifecycle_guard(collection_id, namespace_name):
+        if self._get_ns_namespace_meta(collection_id, namespace_name) is not None:
+            raise ValueError(f"Namespace '{namespace_name}' already exists")
+        try:
             ns_id = self._insert_ns_namespace_catalog_row(
                 collection_id, namespace_name, idempotent=False
             )
             lt_id = self._insert_ns_ltable_catalog_row(
                 collection_id, ns_id, idempotent=False
             )
-            return self._finalize_ns_namespace_meta(collection_id, namespace_name, ns_id, lt_id)
+        except Exception as exc:
+            if _is_namespace_catalog_conflict_error(exc):
+                self._rollback_connection_if_supported()
+                if self._get_ns_namespace_meta(collection_id, namespace_name) is not None:
+                    raise ValueError(
+                        f"Namespace '{namespace_name}' already exists"
+                    ) from exc
+            raise
+        return self._finalize_ns_namespace_meta(collection_id, namespace_name, ns_id, lt_id)
 
     def _get_or_create_ns_namespace_meta(self, collection_id: str, namespace_name: str) -> dict:
-        with self._namespace_lifecycle_guard(collection_id, namespace_name):
-            meta = self._get_ns_namespace_meta(collection_id, namespace_name)
-            if meta is not None:
-                if meta.get("ltable_id") is not None:
-                    return meta
-                lt_id = self._insert_ns_ltable_catalog_row(
-                    collection_id, int(meta["namespace_id"]), idempotent=True
-                )
-                return self._finalize_ns_namespace_meta(
-                    collection_id, namespace_name, int(meta["namespace_id"]), lt_id
-                )
-            ns_id = self._insert_ns_namespace_catalog_row(
-                collection_id, namespace_name, idempotent=True
-            )
+        meta = self._get_ns_namespace_meta(collection_id, namespace_name)
+        if meta is not None:
+            if meta.get("ltable_id") is not None:
+                return meta
             lt_id = self._insert_ns_ltable_catalog_row(
-                collection_id, ns_id, idempotent=True
+                collection_id, int(meta["namespace_id"]), idempotent=True
             )
-            return self._finalize_ns_namespace_meta(collection_id, namespace_name, ns_id, lt_id)
+            return self._finalize_ns_namespace_meta(
+                collection_id, namespace_name, int(meta["namespace_id"]), lt_id
+            )
+        ns_id = self._insert_ns_namespace_catalog_row(
+            collection_id, namespace_name, idempotent=True
+        )
+        lt_id = self._insert_ns_ltable_catalog_row(
+            collection_id, ns_id, idempotent=True
+        )
+        return self._finalize_ns_namespace_meta(collection_id, namespace_name, ns_id, lt_id)
 
     def _get_ns_namespace_meta(self, collection_id: str, namespace_name: str) -> dict | None:
         namespace_name_escaped = escape_string(namespace_name)
@@ -1759,8 +1783,7 @@ class BaseClient(BaseConnection, AdminAPI):
         return meta
 
     def _has_ns_namespace(self, collection_id: str, namespace_name: str) -> bool:
-        with self._namespace_lifecycle_guard(collection_id, namespace_name):
-            return self._get_ns_namespace_meta(collection_id, namespace_name) is not None
+        return self._get_ns_namespace_meta(collection_id, namespace_name) is not None
 
     def _ns_namespace_exists_by_id(self, collection_id: str, namespace_id: str) -> bool:
         """Whether a namespace with this id is still live in the catalog.
@@ -1781,22 +1804,21 @@ class BaseClient(BaseConnection, AdminAPI):
         return bool(rows)
 
     def _delete_ns_namespace_meta(self, collection_id: str, namespace_name: str) -> None:
-        with self._namespace_lifecycle_guard(collection_id, namespace_name):
-            meta = self._get_ns_namespace_meta(collection_id, namespace_name)
-            if meta is None:
-                raise ValueError(f"Namespace '{namespace_name}' not found")
-            ns_id = meta["namespace_id"]
-            lt_id_raw = meta.get("ltable_id")
-            lt_id = int(lt_id_raw) if lt_id_raw is not None else None
-            collection_id_escaped = escape_string(collection_id)
-            # PL reads session database_name; must match where catalog tables live.
-            self._use_catalog_database()
-            self._set_session_ns_context(
-                collection_id=collection_id, namespace_id=int(ns_id), ltable_id=lt_id
-            )
-            self._execute(
-                f"CALL DBMS_LOGIC_TABLE.DROP_NAMESPACE('{collection_id_escaped}', {ns_id})"
-            )
+        meta = self._get_ns_namespace_meta(collection_id, namespace_name)
+        if meta is None:
+            raise ValueError(f"Namespace '{namespace_name}' not found")
+        ns_id = meta["namespace_id"]
+        lt_id_raw = meta.get("ltable_id")
+        lt_id = int(lt_id_raw) if lt_id_raw is not None else None
+        collection_id_escaped = escape_string(collection_id)
+        # PL reads session database_name; must match where catalog tables live.
+        self._use_catalog_database()
+        self._set_session_ns_context(
+            collection_id=collection_id, namespace_id=int(ns_id), ltable_id=lt_id
+        )
+        self._execute(
+            f"CALL DBMS_LOGIC_TABLE.DROP_NAMESPACE('{collection_id_escaped}', {ns_id})"
+        )
 
     def _list_ns_namespaces(self, collection_id: str) -> list[dict]:
         collection_id_escaped = escape_string(collection_id)
@@ -5048,105 +5070,6 @@ class BaseClient(BaseConnection, AdminAPI):
             return f"WHERE {ns_cond} AND ({inner})", params
         return f"WHERE {ns_cond} AND ({where_clause})", params
 
-    @staticmethod
-    def _namespace_lifecycle_lock_name(collection_id: str, namespace_name: str) -> str:
-        key = f"{collection_id}:{namespace_name}"
-        digest = hashlib.sha256(key.encode()).hexdigest()[:40]
-        return f"pyseekdb:nslc:{digest}"
-
-    @contextlib.contextmanager
-    def _namespace_lifecycle_lock(
-        self,
-        collection_id: str,
-        namespace_name: str,
-        *,
-        total_wait_seconds: float = 30.0,
-    ):
-        lock_name = self._namespace_lifecycle_lock_name(collection_id, namespace_name)
-        lock_name_escaped = escape_string(lock_name)
-        acquired = False
-        deadline = time.monotonic() + total_wait_seconds
-        try:
-            while time.monotonic() < deadline:
-                rows = self._execute(
-                    f"SELECT GET_LOCK('{lock_name_escaped}', 1) AS got"
-                )
-                row = rows[0]
-                got = row.get("got") if isinstance(row, dict) else row[0]
-                if got == 1:
-                    acquired = True
-                    yield True
-                    return
-                time.sleep(0.05)
-            yield False
-        finally:
-            if acquired:
-                with contextlib.suppress(Exception):
-                    self._execute(f"SELECT RELEASE_LOCK('{lock_name_escaped}')")
-
-    @contextlib.contextmanager
-    def _namespace_lifecycle_guard(
-        self,
-        collection_id: str,
-        namespace_name: str,
-        *,
-        total_wait_seconds: float = 30.0,
-    ):
-        with self._namespace_lifecycle_lock(
-            collection_id, namespace_name, total_wait_seconds=total_wait_seconds
-        ) as acquired:
-            if not acquired:
-                raise TimeoutError(
-                    f"timed out waiting for namespace lifecycle lock on "
-                    f"{namespace_name!r} in collection {collection_id!r}"
-                )
-            yield
-
-    @staticmethod
-    def _namespace_record_lock_name(
-        collection_id: str,
-        namespace_id: str | int,
-        ltable_id: int,
-        record_id: str,
-    ) -> str:
-        key = f"{collection_id}:{namespace_id}:{ltable_id}:{record_id}"
-        digest = hashlib.sha256(key.encode()).hexdigest()[:40]
-        return f"pyseekdb:nsu:{digest}"
-
-    @contextlib.contextmanager
-    def _namespace_record_lock(
-        self,
-        collection_id: str,
-        namespace_id: str | int,
-        ltable_id: int,
-        record_id: str,
-        *,
-        total_wait_seconds: float = 30.0,
-    ):
-        lock_name = self._namespace_record_lock_name(
-            collection_id, namespace_id, ltable_id, record_id
-        )
-        lock_name_escaped = escape_string(lock_name)
-        acquired = False
-        deadline = time.monotonic() + total_wait_seconds
-        try:
-            while time.monotonic() < deadline:
-                rows = self._execute(
-                    f"SELECT GET_LOCK('{lock_name_escaped}', 1) AS got"
-                )
-                row = rows[0]
-                got = row.get("got") if isinstance(row, dict) else row[0]
-                if got == 1:
-                    acquired = True
-                    yield True
-                    return
-                time.sleep(0.05)
-            yield False
-        finally:
-            if acquired:
-                with contextlib.suppress(Exception):
-                    self._execute(f"SELECT RELEASE_LOCK('{lock_name_escaped}')")
-
     def _count_namespace_records_by_id(
         self,
         table_name: str,
@@ -5220,20 +5143,18 @@ class BaseClient(BaseConnection, AdminAPI):
             doc_val = documents[i] if documents and i < len(documents) else None
             meta_val = metadatas[i] if metadatas and i < len(metadatas) else None
             emb_val = embeddings[i] if embeddings and i < len(embeddings) else None
-            for _ in range(60):
-                with self._namespace_record_lock(
-                    collection_id, namespace_id, ltable_id, record_id
-                ) as acquired:
-                    if not acquired:
-                        continue
-                    duplicate_count = self._count_namespace_records_by_id(
-                        table_name, ns_id, ltable_id, record_id
-                    )
-                    if duplicate_count <= 1:
-                        break
-                    self._delete_namespace_records_by_id(
-                        table_name, ns_id, ltable_id, record_id
-                    )
+            for attempt in range(120):
+                duplicate_count = self._count_namespace_records_by_id(
+                    table_name, ns_id, ltable_id, record_id
+                )
+                if duplicate_count <= 1:
+                    break
+                self._delete_namespace_records_by_id(
+                    table_name, ns_id, ltable_id, record_id
+                )
+                if self._count_namespace_records_by_id(
+                    table_name, ns_id, ltable_id, record_id
+                ) == 0:
                     self._namespace_add(
                         collection_id=collection_id,
                         collection_name=collection_name,
@@ -5246,7 +5167,8 @@ class BaseClient(BaseConnection, AdminAPI):
                         embedding_function=embedding_function,
                         **kwargs,
                     )
-                    break
+                if attempt < 119:
+                    time.sleep(0.05 * min(attempt + 1, 10))
 
     def _namespace_add(  # noqa: C901
         self,

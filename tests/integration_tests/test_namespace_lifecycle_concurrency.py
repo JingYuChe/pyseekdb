@@ -82,8 +82,8 @@ def test_multi_client_has_false_after_drop_returns(oceanbase_client):
         cleanup(oceanbase_client, collection)
 
 
-def test_multi_client_has_blocks_until_drop_finishes(oceanbase_client):
-    """has_namespace on client B waits for client A drop to release lifecycle lock."""
+def test_multi_client_has_does_not_error_during_drop(oceanbase_client):
+    """has_namespace stays callable while another client drops the namespace."""
     collection = oceanbase_client.create_collection(
         name=_unique_name("test_ns_lc_drop_block"),
         schema=ns_schema(),
@@ -94,9 +94,8 @@ def test_multi_client_has_blocks_until_drop_finishes(oceanbase_client):
     ns_name = "block_ns"
     drop_started = threading.Event()
     drop_can_finish = threading.Event()
-    has_started = threading.Event()
     errors: list[Exception] = []
-    has_result: list[bool] = []
+    has_results: list[bool] = []
 
     try:
         collection.create_namespace(ns_name)
@@ -120,8 +119,9 @@ def test_multi_client_has_blocks_until_drop_finishes(oceanbase_client):
         def _has_worker() -> None:
             try:
                 assert drop_started.wait(timeout=30), "drop did not start"
-                has_started.set()
-                has_result.append(checker.has_namespace(ns_name))
+                for _ in range(10):
+                    has_results.append(checker.has_namespace(ns_name))
+                    time.sleep(0.05)
             except Exception as exc:  # noqa: BLE001
                 errors.append(exc)
 
@@ -130,16 +130,13 @@ def test_multi_client_has_blocks_until_drop_finishes(oceanbase_client):
         drop_thread.start()
         has_thread.start()
 
-        assert has_started.wait(timeout=30), "has did not start while drop in progress"
-        time.sleep(0.2)
-        assert drop_thread.is_alive(), "drop finished before lifecycle lock blocked has"
         drop_can_finish.set()
-
         drop_thread.join(timeout=120)
         has_thread.join(timeout=120)
 
         assert errors == []
-        assert has_result == [False]
+        assert has_results
+        assert checker.has_namespace(ns_name) is False
     finally:
         for client in clients:
             with contextlib.suppress(Exception):

@@ -4,7 +4,7 @@ Unit tests for namespace upsert duplicate-record reconciliation.
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -16,14 +16,8 @@ from pyseekdb.client.client_base import BaseClient  # noqa: E402
 
 
 class TestNamespaceUpsertReconcile:
-    def test_lock_name_is_stable_and_bounded(self):
-        name = BaseClient._namespace_record_lock_name("c" * 32, 7, 9, "same_new_id")
-        assert name.startswith("pyseekdb:nsu:")
-        assert len(name) <= 64
-
     def test_reconcile_skips_when_single_row_exists(self):
         client = MagicMock(spec=BaseClient)
-        client._namespace_record_lock.return_value.__enter__.return_value = True
         client._count_namespace_records_by_id.return_value = 1
 
         BaseClient._reconcile_namespace_duplicate_records(
@@ -46,8 +40,7 @@ class TestNamespaceUpsertReconcile:
 
     def test_reconcile_collapses_duplicate_rows(self):
         client = MagicMock(spec=BaseClient)
-        client._namespace_record_lock.return_value.__enter__.return_value = True
-        client._count_namespace_records_by_id.return_value = 4
+        client._count_namespace_records_by_id.side_effect = [4, 0, 1]
 
         BaseClient._reconcile_namespace_duplicate_records(
             client,
