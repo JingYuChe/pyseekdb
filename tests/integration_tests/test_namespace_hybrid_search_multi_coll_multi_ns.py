@@ -17,6 +17,7 @@ from namespace_fts_helpers import (
     run_hybrid_search_fts_case_all_quadrants,
 )
 from namespace_hybrid_search_helpers import (
+    assert_hybrid_search_index_no_hits,
     get_hybrid_combined_case,
     get_search_index_case,
     get_vector_knn_case,
@@ -43,8 +44,6 @@ class TestNamespaceHybridSearchMultiCollMultiNs:
                 if key == "c1_x":
                     continue
                 _, namespace = ctx[key]
-                from namespace_hybrid_search_helpers import assert_hybrid_search_index_no_hits
-
                 assert_hybrid_search_index_no_hits(namespace, case.where, n_results=case.n_results)
         finally:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)

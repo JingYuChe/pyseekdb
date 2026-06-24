@@ -28,6 +28,37 @@ def _validate_namespace_name(name: str) -> None:
         )
 
 
+def _validate_database_name(name: str) -> None:
+    """Validate a SQL database identifier for catalog table qualification."""
+    if not isinstance(name, str):
+        raise TypeError(
+            f"Invalid database name: '{name}'. Database name must be a string, got {type(name).__name__}"
+        )
+    if not name:
+        raise ValueError(f"Invalid database name: '{name}'. Database name must not be empty")
+    if _NAME_PATTERN.match(name) is None:
+        raise ValueError(
+            f"Invalid database name: '{name}'. Database name contains invalid characters. "
+            "Only letters, digits, and underscore are allowed: [a-zA-Z0-9_]"
+        )
+
+
+def _quote_sql_identifier(identifier: str) -> str:
+    """Quote a SQL identifier and escape embedded backticks."""
+    return "`" + identifier.replace("`", "``") + "`"
+
+
+def _validate_n_results(n_results: int, *, max_results: int = _MAX_N_RESULTS) -> None:
+    """Validate ``n_results`` is a positive integer within the engine limit."""
+    if not isinstance(n_results, int) or n_results < 1:
+        raise ValueError(f"n_results must be an integer >= 1, got {n_results!r}")
+    if n_results > max_results:
+        raise ValueError(
+            f"n_results must be <= {max_results}, got {n_results}. "
+            "Use a smaller value or paginate with offset/limit."
+        )
+
+
 def _validate_record_ids(ids: list[str]) -> None:
     """Validate namespace/collection record id list shape and per-id constraints."""
     if not isinstance(ids, list):

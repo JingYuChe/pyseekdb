@@ -102,7 +102,7 @@ class TestNamespaceHybridSearchTripleBranch:
         ids = result["ids"][0]
         assert len(ids) > 0, "expected at least one hybrid FTS+KNN hit"
         docs = result.get("documents", [[]])[0]
-        for doc_id, doc_text in zip(ids, docs):
+        for doc_id, doc_text in zip(ids, docs, strict=True):
             assert TOKEN_ZPX.lower() in (doc_text or "").lower(), (
                 f"id={doc_id!r} must contain {TOKEN_ZPX!r}"
             )

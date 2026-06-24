@@ -1048,17 +1048,19 @@ class TestNamespaceCatalogs:
         assert "ltable_id BIGINT UNSIGNED NOT NULL" in sql
         assert "included_index BOOL" in sql
         assert "PRIMARY KEY (namespace_id, ltable_id, included_index)" in sql
-        assert "PARTITION BY KEY(namespace_id) PARTITIONS 1000" in sql
+        assert "PARTITION BY KEY(namespace_id) PARTITIONS 8" in sql
 
     def test_ensure_namespace_catalogs_creates_catalog_tables_in_order(self):
         c = FakeClient()
         c._ensure_namespace_catalogs()
 
-        assert len(c.executed_sqls) == 5
+        assert len(c.executed_sqls) == 7
         assert c.executed_sqls[0] == "USE `test`"
         assert "`test`.`sdk_namespaces`" in c.executed_sqls[2]
         assert "`test`.`sdk_ltables`" in c.executed_sqls[3]
         assert "`test`.`sdk_namespaces_stats`" in c.executed_sqls[4]
+        assert "CREATE UNIQUE INDEX uk_sdk_ns_coll_name" in c.executed_sqls[5]
+        assert "CREATE UNIQUE INDEX uk_sdk_lt_coll_ns_name" in c.executed_sqls[6]
 
     def test_delete_ns_collection_meta_cleans_namespaces_stats_table(self):
         c = FakeClient()
@@ -1097,8 +1099,10 @@ class TestUseNamespaceValidation:
             c._create_namespace_collection("test", schema)
 
     def test_create_namespace_collection_without_ivf_skips_vector_index(self):
+        from pyseekdb.client.version import Version
+
         c = FakeClient()
-        c.detect_db_type_and_version = MagicMock(return_value=("oceanbase", "4.3"))
+        c.detect_db_type_and_version = MagicMock(return_value=("oceanbase", Version("4.6.1.0")))
         c._is_shared_storage_mode = MagicMock(return_value=False)
         c._create_ns_collection_meta = MagicMock(return_value={"collection_id": "abc123"})
         c._ensure_namespace_catalogs = MagicMock()
@@ -1117,8 +1121,10 @@ class TestUseNamespaceValidation:
         assert "centroids_fresh_mode" not in settings
 
     def test_create_namespace_collection_ivf_without_centroids_fresh_mode(self):
+        from pyseekdb.client.version import Version
+
         c = FakeClient()
-        c.detect_db_type_and_version = MagicMock(return_value=("oceanbase", "4.3"))
+        c.detect_db_type_and_version = MagicMock(return_value=("oceanbase", Version("4.6.1.0")))
         c._is_shared_storage_mode = MagicMock(return_value=False)
         c._create_ns_collection_meta = MagicMock(return_value={"collection_id": "abc123"})
         c._ensure_namespace_catalogs = MagicMock()

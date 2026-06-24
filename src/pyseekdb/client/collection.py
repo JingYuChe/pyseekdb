@@ -10,7 +10,7 @@ Design Pattern:
 
 from typing import TYPE_CHECKING, Any, Optional
 
-from .validators import _MAX_N_RESULTS, _validate_namespace_name
+from .validators import _MAX_N_RESULTS, _validate_namespace_name, _validate_n_results
 
 if TYPE_CHECKING:
     from .embedding_function import Documents as EmbeddingDocuments
@@ -120,17 +120,6 @@ class Collection:
         collections, which are not partitioned.
         """
         return self._partition_count
-
-    @staticmethod
-    def _validate_n_results(n_results: int, *, max_results: int = _MAX_N_RESULTS) -> None:
-        """Validate ``n_results`` is a positive integer within the engine limit."""
-        if not isinstance(n_results, int) or n_results < 1:
-            raise ValueError(f"n_results must be an integer >= 1, got {n_results!r}")
-        if n_results > max_results:
-            raise ValueError(
-                f"n_results must be <= {max_results}, got {n_results}. "
-                "Use a smaller value or paginate with offset/limit."
-            )
 
     def _guard_collection_data_api(self) -> None:
         """Raise if collection-level DML/DQL is used on a namespace-enabled collection."""
@@ -506,7 +495,7 @@ class Collection:
             )
         """
         self._guard_collection_data_api()
-        self._validate_n_results(n_results)
+        _validate_n_results(n_results)
         return self._client._collection_query(
             collection_id=self._id,
             collection_name=self._name,

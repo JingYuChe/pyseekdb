@@ -71,6 +71,7 @@ def _resolve_password(password: str) -> str:
 
 def _default_seekdb_path() -> str:
     # Keep existing behavior: default to "seekdb.db" under current working directory.
+    """Return the default on-disk path for the embedded SeekDB store."""
     return os.path.abspath("seekdb.db")
 
 

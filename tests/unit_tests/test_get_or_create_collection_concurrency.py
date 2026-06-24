@@ -99,9 +99,16 @@ class TestCollectionConflictDetection:
 
 
 class TestGetOrCreateCollectionRecovery:
+    @staticmethod
+    def _bind_resume_helper(client):
+        client._get_or_resume_existing_collection = (
+            BaseClient._get_or_resume_existing_collection.__get__(client, BaseClient)
+        )
+
     def test_returns_existing_collection_after_create_conflict(self):
         client = MagicMock(spec=BaseClient)
-        client.has_collection.side_effect = [False, True]
+        self._bind_resume_helper(client)
+        client.has_collection.return_value = False
         existing = object()
         client.get_collection.return_value = existing
         client.create_collection.side_effect = ValueError("Collection 'items' already exists")
@@ -113,7 +120,8 @@ class TestGetOrCreateCollectionRecovery:
 
     def test_retries_get_after_wrapped_table_conflict(self):
         client = MagicMock(spec=BaseClient)
-        client.has_collection.side_effect = [False, True]
+        self._bind_resume_helper(client)
+        client.has_collection.return_value = False
         existing = object()
         client.get_collection.return_value = existing
         inner = Exception("Table 'c$v2$abc' already exists failed: code=1050")
@@ -125,6 +133,38 @@ class TestGetOrCreateCollectionRecovery:
 
         assert result is existing
         client.get_collection.assert_called_once_with("items", embedding_function=_NOT_PROVIDED)
+
+    def test_conflict_on_namespace_collection_resumes_incomplete_handle(self):
+        client = MagicMock(spec=BaseClient)
+        self._bind_resume_helper(client)
+        resumed = object()
+        client.has_collection.return_value = False
+        client._get_ns_collection_meta.return_value = {
+            "collection_id": "abc",
+            "collection_name": "items",
+            "settings": {"use_namespace": True},
+        }
+        client._is_incomplete_ns_collection.return_value = True
+        client.create_collection.side_effect = [
+            ValueError("Collection 'items' already exists"),
+            resumed,
+        ]
+
+        result = BaseClient.get_or_create_collection(client, "items", use_namespace=True)
+
+        assert result is resumed
+        assert client.create_collection.call_count == 2
+        client.get_collection.assert_not_called()
+
+    def test_conflict_on_namespace_collection_without_metadata_reraises(self):
+        client = MagicMock(spec=BaseClient)
+        self._bind_resume_helper(client)
+        client.has_collection.return_value = False
+        client._get_ns_collection_meta.return_value = None
+        client.create_collection.side_effect = ValueError("Collection 'items' already exists")
+
+        with pytest.raises(ValueError, match="namespace metadata is missing"):
+            BaseClient.get_or_create_collection(client, "items", use_namespace=True)
 
     def test_resumes_incomplete_namespace_collection_when_present(self):
         client = MagicMock(spec=BaseClient)

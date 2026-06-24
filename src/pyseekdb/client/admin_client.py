@@ -157,6 +157,7 @@ class _AdminClientProxy(AdminAPI):
         return self._server.fork_database(source_name=source_name, destination_name=destination_name, tenant=tenant)
 
     def __repr__(self):
+        """Return the developer-readable representation."""
         return f"<AdminClient server={self._server}>"
 
     def __enter__(self):
@@ -247,6 +248,7 @@ class _ClientProxy:
         return self._server.count_collection()
 
     def __repr__(self):
+        """Return the developer-readable representation."""
         return f"<Client server={self._server}>"
 
     def __enter__(self):

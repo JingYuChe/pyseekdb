@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .validators import _MAX_N_RESULTS
+from .validators import _validate_n_results
 
 if TYPE_CHECKING:
     from .collection import Collection
@@ -65,17 +65,6 @@ class Namespace:
             raise ValueError(
                 f"Namespace '{self._name}' no longer exists (it or its collection may have been deleted). "
                 "Operations are not allowed on a deleted namespace."
-            )
-
-    @staticmethod
-    def _validate_n_results(n_results: int, *, max_results: int = _MAX_N_RESULTS) -> None:
-        """Validate ``n_results`` is a positive integer within the engine limit."""
-        if not isinstance(n_results, int) or n_results < 1:
-            raise ValueError(f"n_results must be an integer >= 1, got {n_results!r}")
-        if n_results > max_results:
-            raise ValueError(
-                f"n_results must be <= {max_results}, got {n_results}. "
-                "Use a smaller value or paginate with offset/limit."
             )
 
     # ==================== DML Operations ====================
@@ -183,7 +172,7 @@ class Namespace:
     ) -> dict[str, Any]:
         """Run vector similarity search within this namespace."""
         self._guard_exists()
-        self._validate_n_results(n_results)
+        _validate_n_results(n_results)
         return self._client._namespace_query(
             collection_id=self._collection.id,
             collection_name=self._collection.name,
@@ -211,7 +200,7 @@ class Namespace:
     ) -> dict[str, Any]:
         """Run hybrid fulltext + vector search within this namespace."""
         self._guard_exists()
-        self._validate_n_results(n_results)
+        _validate_n_results(n_results)
         if include is None and not query and not knn:
             include = []
         return self._client._namespace_hybrid_search(
