@@ -3,6 +3,7 @@ Namespace lifecycle integration tests.
 Tests collection creation with use_namespace=True, namespace CRUD, and collection deletion.
 """
 
+import contextlib
 import time
 
 import pytest
@@ -189,6 +190,42 @@ class TestNamespaceLifecycle:
                 )
         finally:
             client.delete_collection(name=name)
+
+    def test_get_collection_purges_broken_ns_collection(self, oceanbase_client):
+        """get_collection on a namespace collection with missing physical tables
+        should treat it as non-existent and purge catalog leftovers."""
+        from pyseekdb.client.meta_info import NamespaceCollectionNames
+
+        client = oceanbase_client
+        srv = client._server
+        name = f"test_ns_broken_get_{int(time.time() * 1000)}"
+        schema = Schema(
+            vector_index=VectorIndexConfig(
+                ivf=IVFConfiguration(dimension=3, distance="cosine", centroids_fresh_mode="spfresh"),
+                embedding_function=None,
+            ),
+        )
+        collection = client.create_collection(
+            name=name, schema=schema, use_namespace=True, partition_count=4
+        )
+        cid = collection.id
+        try:
+            srv._use_catalog_database()
+            srv._execute(f"DROP TABLE IF EXISTS `{NamespaceCollectionNames.kv_data_table_name(cid)}`")
+            assert srv._is_incomplete_ns_collection(name) is True
+
+            with pytest.raises(ValueError, match="does not exist"):
+                client.get_collection(name)
+
+            assert client.has_collection(name) is False
+            assert srv._get_ns_collection_meta(name) is None
+            assert not srv._table_exists(NamespaceCollectionNames.data_table_name(cid))
+            assert not srv._table_exists(NamespaceCollectionNames.kv_data_table_name(cid))
+            assert not srv._table_exists(NamespaceCollectionNames.logic_schema_table_name(cid))
+            assert not srv._tablegroup_exists(NamespaceCollectionNames.tablegroup_name(cid))
+        finally:
+            with contextlib.suppress(Exception):
+                client.delete_collection(name=name)
 
     def test_namespace_ops_blocked_after_collection_deleted(self, db_client):
         collection = self._create_ns_collection(db_client)

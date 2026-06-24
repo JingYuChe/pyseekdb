@@ -1560,19 +1560,39 @@ class BaseClient(BaseConnection, AdminAPI):
         except Exception:
             return False
 
-    def _ns_missing_physical_tables(self, collection_id: str, is_shared_storage: bool) -> list[str]:
-        """Return the namespace physical tables that are expected but absent.
+    def _tablegroup_exists(self, tablegroup_name: str) -> bool:
+        """Whether `tablegroup_name` exists in the current OceanBase tenant."""
+        name_escaped = escape_string(tablegroup_name)
+        try:
+            rows = self._execute(
+                "SELECT 1 FROM oceanbase.DBA_OB_TABLEGROUPS "
+                f"WHERE TABLEGROUP_NAME = '{name_escaped}'"
+            )
+            return bool(rows)
+        except Exception:
+            return False
 
-        An empty list means the collection's physical tables are complete.
-        """
-        expected = [
-            NamespaceCollectionNames.data_table_name(collection_id),
-            NamespaceCollectionNames.kv_data_table_name(collection_id),
-            NamespaceCollectionNames.logic_schema_table_name(collection_id),
+
+    def _ns_missing_physical_resources(self, collection_id: str, is_shared_storage: bool) -> list[str]:
+        """Return expected tablegroup/tables that are absent for this namespace collection."""
+        resources: list[tuple[str, bool]] = [
+            (NamespaceCollectionNames.tablegroup_name(collection_id), True),
+            (NamespaceCollectionNames.data_table_name(collection_id), False),
+            (NamespaceCollectionNames.kv_data_table_name(collection_id), False),
+            (NamespaceCollectionNames.logic_schema_table_name(collection_id), False),
         ]
         if is_shared_storage:
-            expected.append(NamespaceCollectionNames.hot_table_name(collection_id))
-        return [t for t in expected if not self._table_exists(t)]
+            resources.append((NamespaceCollectionNames.hot_table_name(collection_id), False))
+        missing: list[str] = []
+        for resource_name, is_tablegroup in resources:
+            exists = (
+                self._tablegroup_exists(resource_name)
+                if is_tablegroup
+                else self._table_exists(resource_name)
+            )
+            if not exists:
+                missing.append(resource_name)
+        return missing
 
     def _is_incomplete_ns_collection(self, name: str) -> bool:
         """Whether `name` is a namespace collection whose catalog row exists but
@@ -1584,7 +1604,33 @@ class BaseClient(BaseConnection, AdminAPI):
             return False
         is_ss = meta.get("settings", {}).get("storage_mode") == "ss"
         self._use_catalog_database()
-        return len(self._ns_missing_physical_tables(meta["collection_id"], is_ss)) > 0
+        return len(self._ns_missing_physical_resources(meta["collection_id"], is_ss)) > 0
+
+    def _purge_broken_ns_collection_if_incomplete(
+        self, collection_name: str, meta: dict | None = None
+    ) -> bool:
+        """Purge a namespace collection whose catalog row exists but physical resources are incomplete.
+
+        Returns True when the collection was purged and should be treated as non-existent.
+        """
+        if meta is None:
+            meta = self._get_ns_collection_meta(collection_name)
+        if meta is None:
+            return False
+        self._use_catalog_database()
+        is_ss = meta.get("settings", {}).get("storage_mode") == "ss"
+        missing = self._ns_missing_physical_resources(meta["collection_id"], is_ss)
+        if not missing:
+            return False
+        logger.warning(
+            "Namespace collection '%s' (collection_id=%s) is missing physical resources %s; "
+            "purging catalog metadata and cleaning up leftovers.",
+            collection_name,
+            meta["collection_id"],
+            missing,
+        )
+        self._delete_ns_collection_meta(collection_name)
+        return True
 
     def _resolve_namespace_ltable_id(
         self, collection_id: str, namespace_id: int
@@ -1903,7 +1949,10 @@ class BaseClient(BaseConnection, AdminAPI):
         except Exception:
             pass
         if ns_meta is not None:
-            return self._build_ns_collection_from_meta(ns_meta, embedding_function)
+            if self._purge_broken_ns_collection_if_incomplete(collection_name=name, meta=ns_meta):
+                ns_meta = None
+            else:
+                return self._build_ns_collection_from_meta(ns_meta, embedding_function)
         try:
             collection = self._get_collection_v1(name, embedding_function)
         except ValueError as e:
