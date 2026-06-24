@@ -1075,6 +1075,54 @@ class TestNamespaceCatalogs:
         assert any("WHERE collection_id = 'abc123'" in s for s in calls)
 
 
+class TestBrokenNsCollectionPurge:
+
+    def test_purge_broken_ns_collection_if_incomplete_calls_delete(self):
+        c = FakeClient()
+        meta = {
+            "collection_id": "cid1",
+            "collection_name": "coll",
+            "settings": {"use_namespace": True, "storage_mode": "sn"},
+        }
+        c._use_catalog_database = MagicMock()
+        c._ns_missing_physical_resources = MagicMock(return_value=["cid1_logic_data_table"])
+        c._delete_ns_collection_meta = MagicMock()
+
+        assert c._purge_broken_ns_collection_if_incomplete("coll", meta=meta) is True
+        c._delete_ns_collection_meta.assert_called_once_with("coll")
+
+    def test_purge_skips_complete_collection(self):
+        c = FakeClient()
+        meta = {"collection_id": "cid1", "collection_name": "coll", "settings": {"storage_mode": "sn"}}
+        c._use_catalog_database = MagicMock()
+        c._ns_missing_physical_resources = MagicMock(return_value=[])
+        c._delete_ns_collection_meta = MagicMock()
+
+        assert c._purge_broken_ns_collection_if_incomplete("coll", meta=meta) is False
+        c._delete_ns_collection_meta.assert_not_called()
+
+    def test_get_collection_purges_incomplete_namespace_collection(self):
+        class GetClient(FakeClient):
+            get_collection = BaseClient.get_collection
+
+        c = GetClient()
+        meta = {
+            "collection_id": "cid1",
+            "collection_name": "coll",
+            "settings": {"use_namespace": True, "storage_mode": "sn", "dimension": 3},
+        }
+        c._get_ns_collection_meta = MagicMock(return_value=meta)
+        c._purge_broken_ns_collection_if_incomplete = MagicMock(return_value=True)
+        c._get_collection_v1 = MagicMock(side_effect=ValueError("not v1"))
+        c._get_collection_v2 = MagicMock(side_effect=ValueError("Collection 'coll' does not exist"))
+
+        with pytest.raises(ValueError, match="does not exist"):
+            c.get_collection("coll")
+        c._purge_broken_ns_collection_if_incomplete.assert_called_once_with(
+            collection_name="coll", meta=meta
+        )
+
+
 # ==================== UseNamespace Validation Tests ====================
 
 
