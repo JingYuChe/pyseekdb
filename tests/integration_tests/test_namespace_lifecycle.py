@@ -224,7 +224,7 @@ class TestNamespaceLifecycle:
         finally:
             try:
                 db_client.delete_collection(name=name)
-            except Exception:
+            except (ValueError, RuntimeError):
                 db_client._server._execute(f"DROP TABLE IF EXISTS `{name}`")
                 db_client._server._execute(
                     f"DELETE FROM `sdk_collections` WHERE COLLECTION_NAME = '{name}'"

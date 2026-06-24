@@ -80,8 +80,10 @@ class RemoteServerClient(BaseClient):
                 **self.kwargs,
             )
             logger.info(f"✅ Connected to remote server: {self.host}:{self.port}/{self.database}")
-            with contextlib.suppress(Exception):
+            try:
                 self._use_catalog_database()
+            except Exception as exc:
+                logger.warning("Failed to initialize catalog database on connect: %s", exc)
 
         return self._connection
 
@@ -102,6 +104,7 @@ class RemoteServerClient(BaseClient):
 
     @property
     def mode(self) -> str:
+        """Return the client mode identifier."""
         return "RemoteServerClient"
 
     # ==================== Collection Management (framework) ====================
@@ -197,6 +200,7 @@ class RemoteServerClient(BaseClient):
         return super().list_databases(limit=limit, offset=offset, tenant=tenant)
 
     def _database_tenant(self, tenant: str) -> str | None:
+        """Return the tenant associated with the active database."""
         if tenant != self.tenant and tenant != DEFAULT_TENANT:
             logger.warning(
                 f"Specified tenant '{tenant}' differs from client tenant '{self.tenant}', using client tenant"
@@ -211,7 +215,9 @@ class RemoteServerClient(BaseClient):
         namespace_name: str,
         **kwargs,
     ) -> None:
+        """Prewarm the namespace logical table to reduce first-query latency."""
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
+        self._use_catalog_database()
         self._set_session_ns_context(
             collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
         )
@@ -219,5 +225,6 @@ class RemoteServerClient(BaseClient):
         self._execute(sql)
 
     def __repr__(self):
+        """Return the developer-readable representation."""
         status = "connected" if self.is_connected() else "disconnected"
         return f"<RemoteServerClient {self.full_user}@{self.host}:{self.port}/{self.database} status={status}>"

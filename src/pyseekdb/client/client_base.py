@@ -71,6 +71,7 @@ from .types import _NOT_PROVIDED, _NotProvided  # noqa: E402, F401
 
 
 def _extract_collection_id_from_sdk_row(row: Any) -> str:
+    """Extract the collection_id from an sdk_collections row (dict/tuple/scalar)."""
     if isinstance(row, dict):
         collection_id = row.get("COLLECTION_ID") or row.get("collection_id") or ""
     elif isinstance(row, (tuple, list)):
@@ -81,6 +82,7 @@ def _extract_collection_id_from_sdk_row(row: Any) -> str:
 
 
 def _is_collection_conflict_error(exc: BaseException) -> bool:
+    """Whether the exception (or its cause chain) indicates a collection/table already exists."""
     current: BaseException | None = exc
     while current is not None:
         message = str(current).lower()
@@ -93,6 +95,7 @@ def _is_collection_conflict_error(exc: BaseException) -> bool:
 
 
 def _is_namespace_catalog_conflict_error(exc: BaseException) -> bool:
+    """Whether the exception indicates a duplicate sdk_namespaces/sdk_ltables unique-key conflict (1062)."""
     current: BaseException | None = exc
     while current is not None:
         message = str(current).lower()
@@ -112,6 +115,7 @@ def _is_namespace_catalog_conflict_error(exc: BaseException) -> bool:
 
 
 def _is_sdk_collection_catalog_conflict_error(exc: BaseException) -> bool:
+    """Whether the exception indicates a duplicate sdk_collections collection_name conflict (1062)."""
     current: BaseException | None = exc
     while current is not None:
         message = str(current).lower()
@@ -132,6 +136,7 @@ def _is_sdk_collection_catalog_conflict_error(exc: BaseException) -> bool:
 
 
 def _extract_hnsw_config(config: ConfigurationParam) -> HNSWConfiguration | None:
+    """Return the HNSW config from a Configuration/HNSWConfiguration, or None."""
     if config is None:
         return None
     elif isinstance(config, HNSWConfiguration):
@@ -145,6 +150,7 @@ def _extract_hnsw_config(config: ConfigurationParam) -> HNSWConfiguration | None
 def _extract_fulltext_config(
     config: ConfigurationParam,
 ) -> FulltextIndexConfig | None:
+    """Return the fulltext index config from a Configuration, or None."""
     if config is None:
         return None
     elif isinstance(config, HNSWConfiguration):
@@ -188,7 +194,14 @@ def _validate_collection_name(name: str) -> None:
         )
 
 
-from .validators import _MAX_N_RESULTS, _MAX_NAMESPACE_BATCH_SIZE, _validate_namespace_name, _validate_record_ids  # noqa: F401
+from .validators import (  # noqa: F401
+    _MAX_N_RESULTS,
+    _MAX_NAMESPACE_BATCH_SIZE,
+    _quote_sql_identifier,
+    _validate_database_name,
+    _validate_namespace_name,
+    _validate_record_ids,
+)
 
 _DEFAULT_PARTITION_COUNT = 1000
 # Unquoted id for WHERE/CASE; plain JSON_EXTRACT returns a quoted JSON string and
@@ -197,6 +210,7 @@ _NS_DATA_CONTENT_ID_EXPR = "JSON_UNQUOTE(JSON_EXTRACT(data_content, '$.id'))"
 
 
 def _build_default_ltable_schema() -> dict:
+    """Return the default logical-table schema (metadata/content/embedding columns and indexes)."""
     return {
         "col_info": [
             {"col_idx": 1, "col_name": "metadata",  "col_type": "JSON"},
@@ -282,6 +296,7 @@ def _get_vector_index_sql(hnsw_config: HNSWConfiguration) -> str:
 
 
 def _get_ivf_vector_index_sql(ivf_config: "IVFConfiguration") -> str:
+    """Build the IVF vector index DDL fragment from an IVFConfiguration."""
     property_parts = []
     if ivf_config.properties:
         for k, v in ivf_config.properties.items():
@@ -289,7 +304,7 @@ def _get_ivf_vector_index_sql(ivf_config: "IVFConfiguration") -> str:
                 property_parts.append(f"{k}='{v}'")
             else:
                 property_parts.append(f"{k}={v}")
-    if ivf_config.centroids_fresh_mode:
+    if ivf_config.centroids_fresh_mode is not None:
         property_parts.append(f"centroids_fresh_mode={ivf_config.centroids_fresh_mode}")
     property_str = ", ".join(property_parts)
     properties_str = f", {property_str}" if property_str else ""
@@ -432,6 +447,7 @@ class _CollectionMeta:
 
     @staticmethod
     def from_row(row: Any) -> "_CollectionMeta":
+        """Construct a _CollectionMeta from a catalog row (dict for server, tuple for embedded)."""
         if isinstance(row, dict):
             # Server client returns dict, get the first value
             collection_id = row["COLLECTION_ID"]
@@ -467,6 +483,7 @@ class BaseClient(BaseConnection, AdminAPI):
     # ==================== Database Type Detection ====================
 
     def _validate_ob_database_type(self) -> None:
+        """Validate that the backend is OceanBase and meets the minimum version for namespaces."""
         db_type, version = self.detect_db_type_and_version()
         if db_type.lower() != "oceanbase":
             raise ValueError("use_namespace=True is only supported on OceanBase")
@@ -477,6 +494,7 @@ class BaseClient(BaseConnection, AdminAPI):
             )
 
     def _is_shared_storage_mode(self) -> bool:
+        """Return whether the OceanBase deployment runs in shared-storage mode."""
         cached = getattr(self, "_shared_storage", None)
         if cached is not None:
             return cached
@@ -588,6 +606,7 @@ class BaseClient(BaseConnection, AdminAPI):
 
         # Truncate potentially verbose or sensitive database responses in error message
         def _truncate(val, length=20):
+            """Truncate a value to a short string for logging."""
             if val is None:
                 return "None"
             val_str = str(val)
@@ -605,9 +624,11 @@ class BaseClient(BaseConnection, AdminAPI):
         return None
 
     def _database_context(self, tenant: str | None) -> str:
+        """Yield a context with the active database selected for the connection."""
         return f" in tenant: {tenant}" if tenant else ""
 
     def _parse_schema_row(self, row: Any) -> tuple[str | None, str | None, str | None]:
+        """Parse a raw catalog row into a schema descriptor."""
         if isinstance(row, dict):
             return (
                 row.get("SCHEMA_NAME"),
@@ -764,6 +785,7 @@ class BaseClient(BaseConnection, AdminAPI):
     ) -> Schema:
         # Handle embedding function first
         # If not provided (sentinel), use default embedding function
+        """Normalize and validate schema parameters before creating a collection."""
         if embedding_function is _NOT_PROVIDED:
             embedding_function = get_default_embedding_function()
 
@@ -1023,6 +1045,7 @@ class BaseClient(BaseConnection, AdminAPI):
         )
 
     def _create_namespace_collection(self, name: str, schema: Schema, partition_count: int | None = None, **kwargs) -> "Collection":
+        """Create a namespace-enabled collection and its catalog/physical tables."""
         dense_embedding_function = schema.vector_index.embedding_function
         ivf_config = schema.vector_index.ivf
         hnsw_config = schema.vector_index.hnsw
@@ -1151,6 +1174,7 @@ class BaseClient(BaseConnection, AdminAPI):
             ) from e
 
     def _create_sdk_collections_if_not_exists(self) -> None:
+        """Create the sdk_collections catalog table if it does not already exist."""
         try:
             self._use_catalog_database()
             sdk_coll = self._qtable(CollectionNames.sdk_collections_table_name())
@@ -1177,6 +1201,7 @@ class BaseClient(BaseConnection, AdminAPI):
         embedding_function,
         sparse_vector_index_config: SparseVectorIndexConfig | None = None,
     ) -> dict[str, str]:
+        """Insert collection metadata into sdk_collections, resolving unique-key conflicts idempotently."""
         try:
             results = {}
             settings = {"version": 2}
@@ -1230,6 +1255,7 @@ class BaseClient(BaseConnection, AdminAPI):
             raise ValueError(f"Failed to create collection metadata: {e}") from e
 
     def _create_collection_meta_v1(self, collection_name: str) -> str:
+        """Insert collection metadata using the legacy v1 catalog layout."""
         try:
             table_name = CollectionNames.table_name(collection_name)
             return table_name  # noqa: TRY300
@@ -1243,17 +1269,21 @@ class BaseClient(BaseConnection, AdminAPI):
         db = getattr(self, "database", None)
         if not db:
             raise ValueError("client database is not configured")
+        _validate_database_name(db)
         return db
 
     def _qtable(self, table: str) -> str:
         """Fully-qualified catalog table: `{database}`.`{table}`."""
-        return f"`{self._catalog_database()}`.`{table}`"
+        db = _quote_sql_identifier(self._catalog_database())
+        table_quoted = _quote_sql_identifier(table)
+        return f"{db}.{table_quoted}"
 
     def _use_catalog_database(self) -> None:
         """Align session with pymysql database= so PL (DROP_NAMESPACE) uses the same DB."""
-        self._execute(f"USE `{self._catalog_database()}`")
+        self._execute(f"USE {_quote_sql_identifier(self._catalog_database())}")
 
     def _ensure_namespace_catalogs(self) -> None:
+        """Create the sdk_namespaces and sdk_ltables catalog tables and their unique indexes."""
         self._use_catalog_database()
         ns_namespaces_q = self._qtable(NamespaceCollectionNames.sdk_namespaces_table())
         ns_ltables_q = self._qtable(NamespaceCollectionNames.sdk_ltables_table())
@@ -1310,12 +1340,14 @@ class BaseClient(BaseConnection, AdminAPI):
             )
 
     def _rollback_connection_if_supported(self) -> None:
+        """Roll back the current connection transaction if the backend supports it."""
         conn_getter = getattr(self, "_ensure_connection", None)
         if conn_getter is not None:
             with contextlib.suppress(Exception):
                 conn_getter().rollback()
 
     def _create_ns_collection_meta(self, collection_name: str, settings: dict) -> dict:
+        """Insert namespace collection metadata, resolving unique-key conflicts idempotently."""
         self._create_sdk_collections_if_not_exists()
         settings_str = escape_string(json.dumps(settings))
         collection_name_escaped = escape_string(collection_name)
@@ -1343,6 +1375,7 @@ class BaseClient(BaseConnection, AdminAPI):
         return {"collection_id": collection_id, "collection_name": collection_name}
 
     def _get_ns_collection_meta(self, collection_name: str) -> dict | None:
+        """Fetch namespace collection metadata from the catalog."""
         collection_name_escaped = escape_string(collection_name)
         try:
             rows = self._execute(
@@ -1374,6 +1407,7 @@ class BaseClient(BaseConnection, AdminAPI):
         }
 
     def _has_ns_collection(self, collection_name: str) -> bool:
+        """Return whether a namespace collection with the given name exists."""
         try:
             return self._get_ns_collection_meta(collection_name) is not None
         except Exception:
@@ -1393,6 +1427,7 @@ class BaseClient(BaseConnection, AdminAPI):
         return bool(rows)
 
     def _delete_ns_collection_meta(self, collection_name: str) -> None:
+        """Delete namespace collection metadata from the catalog."""
         meta = self._get_ns_collection_meta(collection_name)
         if meta is None:
             raise ValueError(f"Namespace collection '{collection_name}' not found")
@@ -1429,6 +1464,7 @@ class BaseClient(BaseConnection, AdminAPI):
         partition_count: int = _DEFAULT_PARTITION_COUNT,
         cleanup_on_error: bool = True,
     ) -> None:
+        """Create the physical tables backing a namespace collection."""
         tg_name = NamespaceCollectionNames.tablegroup_name(collection_id)
         data_table = NamespaceCollectionNames.data_table_name(collection_id)
         kv_table = NamespaceCollectionNames.kv_data_table_name(collection_id)
@@ -1500,6 +1536,7 @@ class BaseClient(BaseConnection, AdminAPI):
             raise
 
     def _cleanup_namespace_physical_tables(self, collection_id: str) -> None:
+        """Drop the physical tables backing a namespace collection."""
         for suffix_fn in [
             NamespaceCollectionNames.data_table_name,
             NamespaceCollectionNames.logic_schema_table_name,
@@ -1586,6 +1623,7 @@ class BaseClient(BaseConnection, AdminAPI):
     def _cache_namespace_ltable_id(
         self, collection_id: str, namespace_id: int, ltable_id: int
     ) -> None:
+        """Cache the resolved logical-table id for a namespace."""
         key = (str(collection_id), int(namespace_id))
         cache = getattr(self, "_ns_ltable_id_cache", None)
         if cache is None:
@@ -1599,6 +1637,7 @@ class BaseClient(BaseConnection, AdminAPI):
         namespace_id: int | None = None,
         ltable_id: int | None = None,
     ) -> None:
+        """Set session variables identifying the active namespace context."""
         if collection_id is not None:
             self._execute(f"SET @collection_id = '{escape_string(str(collection_id))}'")
         if namespace_id is not None:
@@ -1607,6 +1646,7 @@ class BaseClient(BaseConnection, AdminAPI):
             self._execute(f"SET @ltable_id = {int(ltable_id)}")
 
     def _fetch_ns_namespace_id(self, collection_id: str, namespace_name: str) -> int:
+        """Fetch the namespace id for a collection/namespace pair from the catalog."""
         namespace_name_escaped = escape_string(namespace_name)
         collection_id_escaped = escape_string(collection_id)
         ns_table = self._qtable(NamespaceCollectionNames.sdk_namespaces_table())
@@ -1626,6 +1666,7 @@ class BaseClient(BaseConnection, AdminAPI):
         namespace_id: int,
         ltable_name: str = "default",
     ) -> int:
+        """Fetch the logical-table id for a namespace from the catalog."""
         collection_id_escaped = escape_string(collection_id)
         ltable_name_escaped = escape_string(ltable_name)
         lt_table = self._qtable(NamespaceCollectionNames.sdk_ltables_table())
@@ -1648,6 +1689,7 @@ class BaseClient(BaseConnection, AdminAPI):
         *,
         idempotent: bool,
     ) -> int:
+        """Insert a row into the sdk_namespaces catalog table."""
         namespace_name_escaped = escape_string(namespace_name)
         collection_id_escaped = escape_string(collection_id)
         ns_table = self._qtable(NamespaceCollectionNames.sdk_namespaces_table())
@@ -1671,6 +1713,7 @@ class BaseClient(BaseConnection, AdminAPI):
         idempotent: bool,
         ltable_name: str = "default",
     ) -> int:
+        """Insert a row into the sdk_ltables catalog table."""
         collection_id_escaped = escape_string(collection_id)
         ltable_name_escaped = escape_string(ltable_name)
         lt_table = self._qtable(NamespaceCollectionNames.sdk_ltables_table())
@@ -1694,6 +1737,7 @@ class BaseClient(BaseConnection, AdminAPI):
         namespace_id: int,
         ltable_id: int,
     ) -> dict:
+        """Finalize namespace metadata after catalog rows and physical tables are created."""
         self._cache_namespace_ltable_id(collection_id, namespace_id, ltable_id)
         schema_table = self._qtable(
             NamespaceCollectionNames.logic_schema_table_name(collection_id)
@@ -1708,6 +1752,7 @@ class BaseClient(BaseConnection, AdminAPI):
         return {"namespace_id": str(namespace_id), "namespace_name": namespace_name, "ltable_id": str(ltable_id)}
 
     def _create_ns_namespace_meta(self, collection_id: str, namespace_name: str) -> dict:
+        """Create namespace metadata, resolving unique-key conflicts idempotently."""
         if self._get_ns_namespace_meta(collection_id, namespace_name) is not None:
             raise ValueError(f"Namespace '{namespace_name}' already exists")
         try:
@@ -1728,6 +1773,7 @@ class BaseClient(BaseConnection, AdminAPI):
         return self._finalize_ns_namespace_meta(collection_id, namespace_name, ns_id, lt_id)
 
     def _get_or_create_ns_namespace_meta(self, collection_id: str, namespace_name: str) -> dict:
+        """Get existing namespace metadata or create it if absent."""
         meta = self._get_ns_namespace_meta(collection_id, namespace_name)
         if meta is not None:
             if meta.get("ltable_id") is not None:
@@ -1747,6 +1793,7 @@ class BaseClient(BaseConnection, AdminAPI):
         return self._finalize_ns_namespace_meta(collection_id, namespace_name, ns_id, lt_id)
 
     def _get_ns_namespace_meta(self, collection_id: str, namespace_name: str) -> dict | None:
+        """Fetch namespace metadata from the catalog."""
         namespace_name_escaped = escape_string(namespace_name)
         collection_id_escaped = escape_string(collection_id)
         ns_table = self._qtable(NamespaceCollectionNames.sdk_namespaces_table())
@@ -1783,6 +1830,7 @@ class BaseClient(BaseConnection, AdminAPI):
         return meta
 
     def _has_ns_namespace(self, collection_id: str, namespace_name: str) -> bool:
+        """Return whether a namespace with the given name exists."""
         return self._get_ns_namespace_meta(collection_id, namespace_name) is not None
 
     def _ns_namespace_exists_by_id(self, collection_id: str, namespace_id: str) -> bool:
@@ -1804,6 +1852,7 @@ class BaseClient(BaseConnection, AdminAPI):
         return bool(rows)
 
     def _delete_ns_namespace_meta(self, collection_id: str, namespace_name: str) -> None:
+        """Delete namespace metadata from the catalog."""
         meta = self._get_ns_namespace_meta(collection_id, namespace_name)
         if meta is None:
             raise ValueError(f"Namespace '{namespace_name}' not found")
@@ -1821,6 +1870,7 @@ class BaseClient(BaseConnection, AdminAPI):
         )
 
     def _list_ns_namespaces(self, collection_id: str) -> list[dict]:
+        """List namespaces registered for a collection."""
         collection_id_escaped = escape_string(collection_id)
         rows = self._execute(
             f"SELECT namespace_id, namespace_name FROM {self._qtable(NamespaceCollectionNames.sdk_namespaces_table())} "
@@ -1837,6 +1887,7 @@ class BaseClient(BaseConnection, AdminAPI):
         return results
 
     def _get_ns_namespace_id(self, collection_id: str, namespace_name: str) -> str:
+        """Resolve the namespace id for a collection/namespace pair."""
         meta = self._get_ns_namespace_meta(collection_id, namespace_name)
         if meta is None:
             raise ValueError(f"Namespace '{namespace_name}' not found in collection {collection_id}")
@@ -1845,6 +1896,7 @@ class BaseClient(BaseConnection, AdminAPI):
     # ==================== End Namespace Catalog Methods ====================
 
     def get_collection(self, name: str, embedding_function: EmbeddingFunctionParam = _NOT_PROVIDED) -> "Collection":
+        """Get an existing collection by name."""
         ns_meta = None
         try:
             ns_meta = self._get_ns_collection_meta(name)
@@ -1860,6 +1912,7 @@ class BaseClient(BaseConnection, AdminAPI):
         return collection
 
     def _build_ns_collection_from_meta(self, meta: dict, embedding_function=_NOT_PROVIDED) -> "Collection":
+        """Build a namespace Collection facade from catalog metadata."""
         settings = meta.get("settings", {})
         dimension = settings.get("dimension")
         distance = settings.get("distance", DEFAULT_DISTANCE_METRIC)
@@ -1987,6 +2040,7 @@ class BaseClient(BaseConnection, AdminAPI):
         return metadata
 
     def _resolve_embedding_function(self, settings: str | None) -> EmbeddingFunction[EmbeddingDocuments]:
+        """Resolve the embedding function to use for a collection."""
         if not settings:
             return None
         settings_json = json.loads(settings)
@@ -2070,6 +2124,7 @@ class BaseClient(BaseConnection, AdminAPI):
             return embedding_function
 
     def _get_collection_v2(self, name: str, embedding_function: EmbeddingFunctionParam = _NOT_PROVIDED) -> "Collection":
+        """Fetch a collection using the v2 catalog layout."""
         collection_meta = self._resolve_collection_metadata_from_sdk_collections(name)
         if not collection_meta or not collection_meta.collection_id:
             raise ValueError(f"Collection '{name}' does not exist")
@@ -2201,6 +2256,7 @@ class BaseClient(BaseConnection, AdminAPI):
         return collections
 
     def _list_ns_collections(self) -> list["Collection"]:
+        """List namespace-enabled collections."""
         result = []
         try:
             sdk_table = CollectionNames.sdk_collections_table_name()
@@ -2240,6 +2296,7 @@ class BaseClient(BaseConnection, AdminAPI):
         return result
 
     def _list_collections_v2(self) -> list["Collection"]:
+        """List collections using the v2 catalog layout."""
         collections = []
         try:
             # Detect if the sdk_collections table exists before querying it
@@ -2374,6 +2431,7 @@ class BaseClient(BaseConnection, AdminAPI):
         return self._has_ns_collection(name) or self._has_collection_v2(name) or self._has_collection_v1(name)
 
     def _collection_table_exists(self, table_name: str) -> bool:
+        """Return whether the physical table for a collection exists."""
         try:
             table_info = self._execute(f"DESCRIBE `{table_name}`")
             return table_info is not None and len(table_info) > 0
@@ -2381,6 +2439,7 @@ class BaseClient(BaseConnection, AdminAPI):
             return False
 
     def _has_collection_v2(self, name: str) -> bool:
+        """Return whether a collection exists using the v2 catalog layout."""
         try:
             name_escaped = escape_string(name)
             query_sql = (
@@ -2483,8 +2542,42 @@ class BaseClient(BaseConnection, AdminAPI):
             )
         except Exception as exc:
             if _is_collection_conflict_error(exc):
-                return self.get_collection(name, embedding_function=embedding_function)
+                return self._get_or_resume_existing_collection(
+                    name,
+                    schema=schema,
+                    configuration=configuration,
+                    embedding_function=embedding_function,
+                    use_namespace=use_namespace,
+                    **kwargs,
+                )
             raise
+
+    def _get_or_resume_existing_collection(
+        self,
+        name: str,
+        *,
+        schema: Schema | None,
+        configuration: ConfigurationParam,
+        embedding_function: EmbeddingFunctionParam,
+        use_namespace: bool,
+        **kwargs,
+    ) -> "Collection":
+        """Return an existing collection or resume an incomplete namespace-enabled one."""
+        if use_namespace:
+            if self._get_ns_collection_meta(name) is None:
+                raise ValueError(
+                    f"Collection '{name}' conflicted during create but namespace metadata is missing"
+                )
+            if self._is_incomplete_ns_collection(name):
+                return self.create_collection(
+                    name=name,
+                    schema=schema,
+                    configuration=configuration,
+                    embedding_function=embedding_function,
+                    use_namespace=use_namespace,
+                    **kwargs,
+                )
+        return self.get_collection(name, embedding_function=embedding_function)
 
     def _get_collection_table_name(self, collection_id: str | None, collection_name: str) -> str:
         """
@@ -2495,18 +2588,21 @@ class BaseClient(BaseConnection, AdminAPI):
         return CollectionNames.table_name(collection_name)
 
     def _fork_table_enabled(self) -> bool:
+        """Return whether table fork is enabled on the backend."""
         db_type, version = self.detect_db_type_and_version()
         version_110 = Version("1.1.0.0")
         logger.debug(f"db_type: {db_type}, version: {version}")
         return db_type.lower() == "seekdb" and version >= version_110
 
     def _fork_database_enabled(self) -> bool:
+        """Return whether database fork is enabled on the backend."""
         db_type, version = self.detect_db_type_and_version()
         version_120 = Version("1.2.0.0")
         logger.debug(f"db_type: {db_type}, version: {version}")
         return db_type.lower() == "seekdb" and version >= version_120
 
     def _refresh_enabled(self) -> bool:
+        """Return whether index refresh is enabled on the backend."""
         db_type, version = self.detect_db_type_and_version()
         version_130 = Version("1.3.0.0")
         logger.debug(f"db_type: {db_type}, version: {version}")
@@ -2525,6 +2621,7 @@ class BaseClient(BaseConnection, AdminAPI):
         self._execute("CALL dbms_index_manager.refresh();")
 
     def _get_collection_id(self, collection_name: str) -> str:
+        """Resolve the collection id for a collection name."""
         collection_name_escaped = escape_string(collection_name)
         collection_id_query_sql = (
             f"SELECT collection_id FROM {self._qtable(CollectionNames.sdk_collections_table_name())} "
@@ -3622,12 +3719,14 @@ class BaseClient(BaseConnection, AdminAPI):
         return True
 
     def _should_fetch_results(self, cursor: Any, sql: str) -> bool:
+        """Return whether the given SQL statement is expected to yield result rows."""
         description = getattr(cursor, "description", None)
         if description is not None:
             return True
         return is_query_sql(sql)
 
     def _execute(self, sql: str) -> Any:
+        """Execute a SQL statement against the connection and return any result rows."""
         if os.environ.get("PYSEEKDB_PRINT_SQL", "").lower() in ("1", "true", "yes"):
             print(f"[pyseekdb SQL] {sql}", flush=True)
         conn = self._ensure_connection()
@@ -4499,10 +4598,12 @@ class BaseClient(BaseConnection, AdminAPI):
             return None
 
         def _with_boost(expr: dict[str, Any] | None) -> dict[str, Any] | None:
+            """Apply field boosting to a document query expression."""
             if boost is None or not expr:
                 return expr
 
             def _apply_boost(target: Any) -> None:
+                """Apply a boost factor to a single field expression."""
                 if not isinstance(target, dict):
                     return
                 if "query_string" in target and isinstance(target["query_string"], dict):
@@ -4761,6 +4862,7 @@ class BaseClient(BaseConnection, AdminAPI):
         embedding_function = kwargs.get("embedding_function")
 
         def _normalize_vectors(raw_embeddings: Any) -> list[list[float]]:
+            """Normalize input vectors to a consistent list-of-floats form."""
             if raw_embeddings is None:
                 return []
             if isinstance(raw_embeddings, list) and raw_embeddings and isinstance(raw_embeddings[0], list):
@@ -5043,6 +5145,7 @@ class BaseClient(BaseConnection, AdminAPI):
 
     @staticmethod
     def _rewrite_where_for_ns(where: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Rewrite a WHERE clause to target namespace-scoped columns."""
         if where is None:
             return None
         rewritten = {}
@@ -5062,6 +5165,7 @@ class BaseClient(BaseConnection, AdminAPI):
         namespace_id: int,
         ltable_id: int,
     ) -> tuple[str, list[Any]]:
+        """Append the namespace id filter to a WHERE clause."""
         ns_cond = f"namespace_id = {namespace_id} AND ltable_id = {ltable_id}"
         if not where_clause:
             return f"WHERE {ns_cond}", params
@@ -5077,6 +5181,7 @@ class BaseClient(BaseConnection, AdminAPI):
         ltable_id: int,
         record_id: str,
     ) -> int:
+        """Count namespace records matching the given id."""
         id_expr = _NS_DATA_CONTENT_ID_EXPR
         sql = (
             f"SELECT COUNT(*) AS cnt FROM `{table_name}` "
@@ -5102,6 +5207,7 @@ class BaseClient(BaseConnection, AdminAPI):
         ltable_id: int,
         record_id: str,
     ) -> None:
+        """Delete namespace records matching the given id."""
         id_expr = _NS_DATA_CONTENT_ID_EXPR
         sql = (
             f"DELETE FROM `{table_name}` "
@@ -5183,6 +5289,7 @@ class BaseClient(BaseConnection, AdminAPI):
         embedding_function: EmbeddingFunction[EmbeddingDocuments] | None = None,
         **kwargs,
     ) -> None:
+        """Add records to a namespace collection."""
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._set_session_ns_context(
             collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
@@ -5218,12 +5325,15 @@ class BaseClient(BaseConnection, AdminAPI):
                     "  1. Provide embeddings directly when calling add(), or\n"
                     "  2. Provide embedding_function to auto-generate embeddings from documents."
                 )
+        elif metadatas:
+            pass
         else:
             raise ValueError(
-                "Neither embeddings nor documents provided. "
-                "Please provide either:\n"
-                "  1. embeddings directly, or\n"
-                "  2. documents with embedding_function to generate embeddings."
+                "Neither embeddings, documents, nor metadatas provided. "
+                "Please provide at least one of:\n"
+                "  1. embeddings directly,\n"
+                "  2. documents with embedding_function to generate embeddings, or\n"
+                "  3. metadatas for metadata-only add."
             )
 
         num_items = len(ids)
@@ -5274,6 +5384,7 @@ class BaseClient(BaseConnection, AdminAPI):
         embedding_function: EmbeddingFunction[EmbeddingDocuments] | None = None,
         **kwargs,
     ) -> None:
+        """Update existing records in a namespace collection."""
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._set_session_ns_context(
             collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
@@ -5419,6 +5530,7 @@ class BaseClient(BaseConnection, AdminAPI):
         embedding_function: EmbeddingFunction[EmbeddingDocuments] | None = None,
         **kwargs,
     ) -> None:
+        """Insert or update records in a namespace collection."""
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._set_session_ns_context(
             collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
@@ -5520,6 +5632,7 @@ class BaseClient(BaseConnection, AdminAPI):
         where_document: dict[str, Any] | None = None,
         **kwargs,
     ) -> None:
+        """Delete records from a namespace collection."""
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._set_session_ns_context(
             collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
@@ -5586,6 +5699,7 @@ class BaseClient(BaseConnection, AdminAPI):
         include: list[str] | None = None,
         **kwargs,
     ) -> dict[str, Any]:
+        """Run a vector query against a namespace collection."""
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._set_session_ns_context(
             collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
@@ -5685,6 +5799,7 @@ class BaseClient(BaseConnection, AdminAPI):
         include: list[str] | None = None,
         **kwargs,
     ) -> dict[str, Any]:
+        """Fetch records from a namespace collection by id/where/pagination."""
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._set_session_ns_context(
             collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
@@ -5730,6 +5845,8 @@ class BaseClient(BaseConnection, AdminAPI):
         where_str, params = self._append_namespace_filter(user_where, params, ns_id, ltable_id)
         select_clause = ", ".join(select_parts)
         sql = f"SELECT {select_clause} FROM `{table_name}` {where_str}"
+        if limit is None and offset is not None:
+            limit = 100
         if limit is not None:
             sql += f" LIMIT {int(limit)}"
             if offset is not None:
@@ -5800,6 +5917,7 @@ class BaseClient(BaseConnection, AdminAPI):
         namespace_name: str,
         **kwargs,
     ) -> int:
+        """Count records in a namespace collection."""
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._set_session_ns_context(
             collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
@@ -5829,6 +5947,7 @@ class BaseClient(BaseConnection, AdminAPI):
         limit: int = 10,
         **kwargs,
     ) -> dict[str, Any]:
+        """Return a small sample of records from a namespace collection."""
         return self._namespace_get(
             collection_id=collection_id,
             collection_name=collection_name,
@@ -5840,12 +5959,14 @@ class BaseClient(BaseConnection, AdminAPI):
         )
 
     def _adapt_search_parm_for_ns(self, search_parm: dict[str, Any], ns_id: int, lt_id: int) -> dict[str, Any]:
+        """Adapt search parameters to the namespace-scoped table layout."""
         ns_filter = [
             {"term": {"namespace_id": ns_id}},
             {"term": {"ltable_id": int(lt_id)}},
         ]
 
         def _rewrite_field_refs(obj):
+            """Rewrite field references to their namespace-scoped equivalents."""
             if isinstance(obj, dict):
                 new_dict = {}
                 for k, v in obj.items():
@@ -5879,6 +6000,7 @@ class BaseClient(BaseConnection, AdminAPI):
             search_parm["_source"] = new_source
 
         def _inject_filter_into_knn(node):
+            """Inject the namespace filter into a KNN search expression."""
             if isinstance(node, dict):
                 if "filter" in node:
                     existing = node["filter"]
@@ -5898,6 +6020,7 @@ class BaseClient(BaseConnection, AdminAPI):
         _scoring_leaf_keys = {"query_string", "match", "multi_match", "match_phrase"}
 
         def _inject_filter_into_query(node):
+            """Inject the namespace filter into a query expression."""
             if not isinstance(node, dict):
                 return node
             if "bool" in node:
@@ -5949,6 +6072,7 @@ class BaseClient(BaseConnection, AdminAPI):
         query_hint: QueryHint | None = None,
         **kwargs,
     ) -> dict[str, Any]:
+        """Run a hybrid (vector + fulltext) search against a namespace collection."""
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._set_session_ns_context(
             collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
@@ -5998,6 +6122,7 @@ class BaseClient(BaseConnection, AdminAPI):
     def _transform_ns_hybrid_result(
         self, result_rows: list[dict[str, Any]], include: list[str] | None
     ) -> dict[str, Any]:
+        """Transform raw hybrid-search rows into the public result shape."""
         if not result_rows:
             return {
                 "ids": [[]], "distances": [[]], "metadatas": [[]],
@@ -6074,4 +6199,5 @@ class BaseClient(BaseConnection, AdminAPI):
         namespace_name: str,
         **kwargs,
     ) -> None:
+        """Prewarm the namespace logical table to reduce first-query latency."""
         raise NotImplementedError("prewarm is not supported in this client mode")

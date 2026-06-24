@@ -50,7 +50,7 @@ def test_multi_client_concurrent_upsert_same_new_id_should_keep_single_record(
 
         def _upsert_once(target_ns, idx: int) -> None:
             try:
-                barrier.wait()
+                barrier.wait(timeout=30)
                 target_ns.upsert(
                     ids="same_new_id",
                     embeddings=[1.0, 2.0, 3.0],
@@ -67,7 +67,8 @@ def test_multi_client_concurrent_upsert_same_new_id_should_keep_single_record(
         for thread in threads:
             thread.start()
         for thread in threads:
-            thread.join()
+            thread.join(timeout=120)
+        assert all(not thread.is_alive() for thread in threads), "upsert worker thread timed out"
 
         assert errors == []
         result = ns.get(ids="same_new_id", include=["documents", "metadatas"])

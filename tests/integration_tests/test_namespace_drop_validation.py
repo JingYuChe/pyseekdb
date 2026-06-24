@@ -729,8 +729,10 @@ class TestDropNamespaceCatalogValidation:
 
             ta = threading.Thread(target=_worker, args=("A", client_a))
             tb = threading.Thread(target=_worker, args=("B", client_b))
-            ta.start(); tb.start()
-            ta.join(timeout=30); tb.join(timeout=30)
+            ta.start()
+            tb.start()
+            ta.join(timeout=30)
+            tb.join(timeout=30)
 
             # Both calls must succeed (one does the work, the other no-ops).
             assert results.get("A") == "ok", f"A failed: {results.get('A')!r}"
