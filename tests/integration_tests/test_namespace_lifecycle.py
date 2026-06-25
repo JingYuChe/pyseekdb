@@ -149,6 +149,27 @@ class TestNamespaceLifecycle:
         finally:
             db_client.delete_collection(name=collection.name)
 
+    def test_create_duplicate_namespace_raises_friendly_error(self, db_client):
+        """Duplicate namespace creation should surface a clear SDK error."""
+        collection = self._create_ns_collection(db_client)
+        try:
+            collection.create_namespace("dup_ns")
+            with pytest.raises(ValueError, match="already exists"):
+                collection.create_namespace("dup_ns")
+        finally:
+            db_client.delete_collection(name=collection.name)
+
+    def test_prewarm_after_namespace_deleted_raises_friendly_error(self, db_client):
+        """Prewarm on a deleted namespace should not leak raw kernel error codes."""
+        collection = self._create_ns_collection(db_client)
+        ns = collection.create_namespace("prewarm_del")
+        try:
+            collection.delete_namespace("prewarm_del")
+            with pytest.raises(ValueError, match="no longer exists|being dropped"):
+                ns.prewarm()
+        finally:
+            db_client.delete_collection(name=collection.name)
+
     def test_delete_collection_cleans_namespaces(self, db_client):
         """Test delete collection cleans namespaces."""
         collection = self._create_ns_collection(db_client)

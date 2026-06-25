@@ -61,6 +61,11 @@ class Namespace:
 
     def _guard_exists(self) -> None:
         """Raise if this namespace or its collection was deleted."""
+        if not self._client._ns_collection_exists_by_id(self._collection.id):
+            raise ValueError(
+                f"Collection '{self._collection.name}' no longer exists (it may have been deleted). "
+                "Namespace operations are not allowed on a deleted collection."
+            )
         if not self._client._ns_namespace_exists_by_id(self._collection.id, self._namespace_id):
             raise ValueError(
                 f"Namespace '{self._name}' no longer exists (it or its collection may have been deleted). "

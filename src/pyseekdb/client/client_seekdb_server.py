@@ -13,6 +13,7 @@ from pymysql.cursors import DictCursor
 from .admin_client import DEFAULT_TENANT
 from .client_base import BaseClient
 from .database import Database
+from .kernel_errors import namespace_kernel_error_guard
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +208,7 @@ class RemoteServerClient(BaseClient):
             )
         return self.tenant
 
+    @namespace_kernel_error_guard
     def _namespace_prewarm(
         self,
         collection_id: str | None,

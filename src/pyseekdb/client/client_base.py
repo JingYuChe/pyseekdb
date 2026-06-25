@@ -17,6 +17,7 @@ from typing import Any
 
 from pymysql.converters import escape_string
 
+from .kernel_errors import maybe_reraise_friendly_kernel_error, namespace_kernel_error_guard
 from .admin_client import DEFAULT_TENANT, AdminAPI
 from .base_connection import BaseConnection
 from .collection import Collection
@@ -1830,10 +1831,9 @@ class BaseClient(BaseConnection, AdminAPI):
         except Exception as exc:
             if _is_namespace_catalog_conflict_error(exc):
                 self._rollback_connection_if_supported()
-                if self._get_ns_namespace_meta(collection_id, namespace_name) is not None:
-                    raise ValueError(
-                        f"Namespace '{namespace_name}' already exists"
-                    ) from exc
+                raise ValueError(
+                    f"Namespace '{namespace_name}' already exists"
+                ) from exc
             raise
         return self._finalize_ns_namespace_meta(collection_id, namespace_name, ns_id, lt_id)
 
@@ -3540,18 +3540,18 @@ class BaseClient(BaseConnection, AdminAPI):
         """
         if os.environ.get("PYSEEKDB_PRINT_SQL", "").lower() in ("1", "true", "yes"):
             print(f"[pyseekdb SQL] {sql}  -- params={params}", flush=True)
-        if use_context_manager:
-            with conn.cursor() as cursor:
-                cursor.execute(sql, params)
-                if not self._should_fetch_results(cursor, sql):
-                    return []
-                rows = cursor.fetchall()
-                # Normalize rows
-                normalized_rows = []
-                for row in rows:
-                    normalized_rows.append(self._normalize_row(row, cursor.description))
-                return normalized_rows
-        else:
+        try:
+            if use_context_manager:
+                with conn.cursor() as cursor:
+                    cursor.execute(sql, params)
+                    if not self._should_fetch_results(cursor, sql):
+                        return []
+                    rows = cursor.fetchall()
+                    # Normalize rows
+                    normalized_rows = []
+                    for row in rows:
+                        normalized_rows.append(self._normalize_row(row, cursor.description))
+                    return normalized_rows
             cursor = conn.cursor()
             try:
                 cursor.execute(sql, params)
@@ -3565,6 +3565,9 @@ class BaseClient(BaseConnection, AdminAPI):
                 return normalized_rows
             finally:
                 cursor.close()
+        except Exception as exc:
+            maybe_reraise_friendly_kernel_error(exc)
+            raise
 
     def _build_select_clause(self, include_fields: dict[str, bool]) -> str:
         """
@@ -3800,21 +3803,25 @@ class BaseClient(BaseConnection, AdminAPI):
         conn = self._ensure_connection()
         use_context_manager = self._use_context_manager_for_cursor()
 
-        if use_context_manager:
-            with conn.cursor() as cursor:
+        try:
+            if use_context_manager:
+                with conn.cursor() as cursor:
+                    cursor.execute(sql)
+                    if self._should_fetch_results(cursor, sql):
+                        return cursor.fetchall()
+                    return None
+
+            cursor = conn.cursor()
+            try:
                 cursor.execute(sql)
                 if self._should_fetch_results(cursor, sql):
                     return cursor.fetchall()
                 return None
-
-        cursor = conn.cursor()
-        try:
-            cursor.execute(sql)
-            if self._should_fetch_results(cursor, sql):
-                return cursor.fetchall()
-            return None
-        finally:
-            cursor.close()
+            finally:
+                cursor.close()
+        except Exception as exc:
+            maybe_reraise_friendly_kernel_error(exc)
+            raise
 
     # -------------------- DQL Operations (Common Implementation) --------------------
 
@@ -5348,6 +5355,7 @@ class BaseClient(BaseConnection, AdminAPI):
                     f"Failed to reconcile duplicate namespace rows for record_id={record_id!r}"
                 )
 
+    @namespace_kernel_error_guard
     def _namespace_add(  # noqa: C901
         self,
         collection_id: str | None,
@@ -5443,6 +5451,7 @@ class BaseClient(BaseConnection, AdminAPI):
         sql = f"INSERT INTO `{table_name}` ({columns}) VALUES {','.join(values_list)}"
         self._execute(sql)
 
+    @namespace_kernel_error_guard
     def _namespace_update(
         self,
         collection_id: str | None,
@@ -5589,6 +5598,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 finally:
                     cursor.close()
 
+    @namespace_kernel_error_guard
     def _namespace_upsert(
         self,
         collection_id: str | None,
@@ -5693,6 +5703,7 @@ class BaseClient(BaseConnection, AdminAPI):
             **kwargs,
         )
 
+    @namespace_kernel_error_guard
     def _namespace_delete(
         self,
         collection_id: str | None,
@@ -5757,6 +5768,7 @@ class BaseClient(BaseConnection, AdminAPI):
         else:
             self._execute(sql)
 
+    @namespace_kernel_error_guard
     def _namespace_query(  # noqa: C901
         self,
         collection_id: str | None,
@@ -5857,6 +5869,7 @@ class BaseClient(BaseConnection, AdminAPI):
             result["embeddings"] = all_embeddings
         return result
 
+    @namespace_kernel_error_guard
     def _namespace_get(  # noqa: C901
         self,
         collection_id: str | None,
@@ -5981,6 +5994,7 @@ class BaseClient(BaseConnection, AdminAPI):
             result["embeddings"] = result_embeddings
         return result
 
+    @namespace_kernel_error_guard
     def _namespace_count(
         self,
         collection_id: str | None,
@@ -6010,6 +6024,7 @@ class BaseClient(BaseConnection, AdminAPI):
             return row[0] if len(row) > 0 else 0
         return int(row) if row else 0
 
+    @namespace_kernel_error_guard
     def _namespace_peek(
         self,
         collection_id: str | None,
@@ -6130,6 +6145,7 @@ class BaseClient(BaseConnection, AdminAPI):
 
         return search_parm
 
+    @namespace_kernel_error_guard
     def _namespace_hybrid_search(
         self,
         collection_id: str | None,

@@ -60,6 +60,8 @@ class TestNamespaceDML:
                 ns.query(query_embeddings=[1.0, 2.0, 3.0], n_results=1)
             with pytest.raises(ValueError, match="no longer exists"):
                 ns.count()
+            with pytest.raises(ValueError, match="no longer exists"):
+                ns.prewarm()
         finally:
             cleanup(db_client, collection)
 
@@ -69,9 +71,9 @@ class TestNamespaceDML:
         ns = _create_namespace(collection, "dml_ns")
         ns.add(ids="d1", embeddings=[1.0, 2.0, 3.0])
         db_client.delete_collection(name=collection.name)
-        with pytest.raises(ValueError, match="no longer exists"):
+        with pytest.raises(ValueError, match="no longer exists|does not exist"):
             ns.add(ids="d2", embeddings=[4.0, 5.0, 6.0])
-        with pytest.raises(ValueError, match="no longer exists"):
+        with pytest.raises(ValueError, match="no longer exists|does not exist"):
             ns.query(query_embeddings=[1.0, 2.0, 3.0], n_results=1)
 
     def test_add_batch(self, db_client):
