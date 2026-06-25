@@ -21,6 +21,7 @@ from pyseekdb.client.client_base import BaseClient  # noqa: E402
 from pyseekdb.client.collection import Collection  # noqa: E402
 from pyseekdb.client.configuration import HNSWConfiguration, IVFIndexType, VectorIndexConfig  # noqa: E402
 from pyseekdb.client.namespace import Namespace  # noqa: E402
+from pyseekdb.client.validators import _validate_n_results  # noqa: E402
 
 
 # ==================== IVFConfiguration Tests ====================
@@ -1121,6 +1122,15 @@ class TestBrokenNsCollectionPurge:
         c._purge_broken_ns_collection_if_incomplete.assert_called_once_with(
             collection_name="coll", meta=meta
         )
+
+
+class TestValidateNResults:
+
+    def test_rejects_boolean_values(self):
+        with pytest.raises(ValueError, match="n_results must be an integer"):
+            _validate_n_results(True)
+        with pytest.raises(ValueError, match="n_results must be an integer"):
+            _validate_n_results(False)
 
 
 # ==================== UseNamespace Validation Tests ====================

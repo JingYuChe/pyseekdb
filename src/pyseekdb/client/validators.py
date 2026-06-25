@@ -50,7 +50,7 @@ def _quote_sql_identifier(identifier: str) -> str:
 
 def _validate_n_results(n_results: int, *, max_results: int = _MAX_N_RESULTS) -> None:
     """Validate ``n_results`` is a positive integer within the engine limit."""
-    if not isinstance(n_results, int) or n_results < 1:
+    if isinstance(n_results, bool) or not isinstance(n_results, int) or n_results < 1:
         raise ValueError(f"n_results must be an integer >= 1, got {n_results!r}")
     if n_results > max_results:
         raise ValueError(
