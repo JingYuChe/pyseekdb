@@ -24,6 +24,7 @@ from namespace_dml_helpers import (
 
 
 def _create_namespace(collection, name: str):
+    """Create namespace."""
     ns = collection.create_namespace(name)
     ns.prewarm()
     return ns
@@ -33,6 +34,7 @@ class TestNamespaceDML:
     """Small-scale DML smoke tests."""
 
     def test_add_single(self, db_client):
+        """Test add single."""
         collection = create_ns_collection(db_client, suffix="_add1")
         ns = _create_namespace(collection,"dml_ns")
         try:
@@ -44,6 +46,7 @@ class TestNamespaceDML:
             cleanup(db_client, collection)
 
     def test_ops_blocked_after_namespace_deleted(self, db_client):
+        """Test ops blocked after namespace deleted."""
         collection = create_ns_collection(db_client, suffix="_delns")
         ns = _create_namespace(collection, "dml_ns")
         try:
@@ -61,6 +64,7 @@ class TestNamespaceDML:
             cleanup(db_client, collection)
 
     def test_ops_blocked_after_collection_deleted(self, db_client):
+        """Test ops blocked after collection deleted."""
         collection = create_ns_collection(db_client, suffix="_delcoll")
         ns = _create_namespace(collection, "dml_ns")
         ns.add(ids="d1", embeddings=[1.0, 2.0, 3.0])
@@ -71,6 +75,7 @@ class TestNamespaceDML:
             ns.query(query_embeddings=[1.0, 2.0, 3.0], n_results=1)
 
     def test_add_batch(self, db_client):
+        """Test add batch."""
         collection = create_ns_collection(db_client, suffix="_addb")
         ns = _create_namespace(collection,"dml_ns")
         try:
@@ -86,6 +91,7 @@ class TestNamespaceDML:
             cleanup(db_client, collection)
 
     def test_get_by_id(self, db_client):
+        """Test get by id."""
         collection = create_ns_collection(db_client, suffix="_getid")
         ns = _create_namespace(collection,"dml_ns")
         try:
@@ -103,6 +109,7 @@ class TestNamespaceDML:
             cleanup(db_client, collection)
 
     def test_get_with_limit(self, db_client):
+        """Test get with limit."""
         collection = create_ns_collection(db_client, suffix="_getlim")
         ns = _create_namespace(collection,"dml_ns")
         try:
@@ -116,6 +123,7 @@ class TestNamespaceDML:
             cleanup(db_client, collection)
 
     def test_update_metadata(self, db_client):
+        """Test update metadata."""
         collection = create_ns_collection(db_client, suffix="_upd")
         ns = _create_namespace(collection,"dml_ns")
         try:
@@ -127,6 +135,7 @@ class TestNamespaceDML:
             cleanup(db_client, collection)
 
     def test_update_document_and_embedding(self, db_client):
+        """Test update document and embedding."""
         collection = create_ns_collection(db_client, suffix="_upddoc")
         ns = _create_namespace(collection,"dml_ns")
         try:
@@ -138,6 +147,7 @@ class TestNamespaceDML:
             cleanup(db_client, collection)
 
     def test_upsert_existing(self, db_client):
+        """Test upsert existing."""
         collection = create_ns_collection(db_client, suffix="_upsex")
         ns = _create_namespace(collection,"dml_ns")
         try:
@@ -149,6 +159,7 @@ class TestNamespaceDML:
             cleanup(db_client, collection)
 
     def test_upsert_new(self, db_client):
+        """Test upsert new."""
         collection = create_ns_collection(db_client, suffix="_upsnew")
         ns = _create_namespace(collection,"dml_ns")
         try:
@@ -160,6 +171,7 @@ class TestNamespaceDML:
             cleanup(db_client, collection)
 
     def test_delete_by_ids(self, db_client):
+        """Test delete by ids."""
         collection = create_ns_collection(db_client, suffix="_del")
         ns = _create_namespace(collection,"dml_ns")
         try:
@@ -179,6 +191,7 @@ class TestNamespaceDMLCountPeekAtScale:
 
     @pytest.fixture
     def large_ns(self, db_client):
+        """Large ns."""
         collection = create_ns_collection(db_client, suffix="_large_cp")
         ns = _create_namespace(collection,"large_ns")
         corpus = build_large_dml_corpus(LARGE_DML_CORPUS_SIZE, id_prefix="large")
@@ -187,6 +200,7 @@ class TestNamespaceDMLCountPeekAtScale:
         cleanup(db_client, collection)
 
     def test_count_empty_namespace(self, db_client):
+        """Test count empty namespace."""
         collection = create_ns_collection(db_client, suffix="_cnt_empty")
         ns = _create_namespace(collection,"empty_ns")
         try:
@@ -195,10 +209,12 @@ class TestNamespaceDMLCountPeekAtScale:
             cleanup(db_client, collection)
 
     def test_count_after_bulk_load_1000(self, large_ns):
+        """Test count after bulk load 1000."""
         _, ns, corpus = large_ns
         assert ns.count() == len(corpus) == LARGE_DML_CORPUS_SIZE
 
     def test_count_after_partial_delete(self, large_ns):
+        """Test count after partial delete."""
         _, ns, corpus = large_ns
         to_delete = [corpus[i].doc_id for i in range(100)]
         ns.delete(ids=to_delete)
@@ -207,6 +223,7 @@ class TestNamespaceDMLCountPeekAtScale:
         assert len(ns.get(ids=corpus[500].doc_id)["ids"]) == 1
 
     def test_peek_empty_namespace(self, db_client):
+        """Test peek empty namespace."""
         collection = create_ns_collection(db_client, suffix="_peek_empty")
         ns = _create_namespace(collection,"peek_empty")
         try:
@@ -239,12 +256,14 @@ class TestNamespaceDMLCountPeekAtScale:
         ],
     )
     def test_peek_limit_boundaries(self, large_ns, limit, expected_len):
+        """Test peek limit boundaries."""
         _, ns, corpus = large_ns
         allowed = corpus_id_set(corpus)
         result = ns.peek(limit=limit)
         assert_peek_result(result, expected_len=expected_len, allowed_ids=allowed)
 
     def test_peek_default_limit_is_10(self, large_ns):
+        """Test peek default limit is 10."""
         _, ns, corpus = large_ns
         result = ns.peek()
         assert_peek_result(
@@ -262,6 +281,7 @@ class TestNamespaceDMLCountPeekMultiNs:
 
     @pytest.fixture
     def dual_ns_ctx(self, db_client):
+        """Dual ns ctx."""
         collection = create_ns_collection(db_client, suffix="_dual_cp")
         ns_a = _create_namespace(collection,"ns_alpha")
         ns_b = _create_namespace(collection,"ns_beta")
@@ -286,6 +306,7 @@ class TestNamespaceDMLCountPeekMultiNs:
         cleanup(db_client, collection)
 
     def test_count_isolated_per_namespace(self, dual_ns_ctx):
+        """Test count isolated per namespace."""
         assert dual_ns_ctx["ns_a"].count() == self.NS_A_SIZE
         assert dual_ns_ctx["ns_b"].count() == self.NS_B_SIZE
 
@@ -295,6 +316,7 @@ class TestNamespaceDMLCountPeekMultiNs:
         ids=["lim_1", "lim_10", "lim_100", "lim_800", "lim_1000", "lim_over_alpha"],
     )
     def test_peek_alpha_boundaries(self, dual_ns_ctx, limit, expected_len):
+        """Test peek alpha boundaries."""
         result = dual_ns_ctx["ns_a"].peek(limit=limit)
         assert_peek_result(
             result,
@@ -309,6 +331,7 @@ class TestNamespaceDMLCountPeekMultiNs:
         ids=["lim_1", "lim_10", "lim_500", "lim_800", "lim_over_beta", "lim_far_over"],
     )
     def test_peek_beta_boundaries(self, dual_ns_ctx, limit, expected_len):
+        """Test peek beta boundaries."""
         result = dual_ns_ctx["ns_b"].peek(limit=limit)
         assert_peek_result(
             result,
@@ -318,6 +341,7 @@ class TestNamespaceDMLCountPeekMultiNs:
         )
 
     def test_peek_does_not_leak_across_namespaces(self, dual_ns_ctx):
+        """Test peek does not leak across namespaces."""
         peek_a = dual_ns_ctx["ns_a"].peek(limit=50)
         peek_b = dual_ns_ctx["ns_b"].peek(limit=50)
         assert_peek_result(
@@ -336,6 +360,7 @@ class TestNamespaceDMLCountPeekMultiNs:
         assert set(peek_b["ids"]).isdisjoint(dual_ns_ctx["ids_a"])
 
     def test_delete_in_one_namespace_only_affects_its_count(self, dual_ns_ctx):
+        """Test delete in one namespace only affects its count."""
         ns_a = dual_ns_ctx["ns_a"]
         ns_b = dual_ns_ctx["ns_b"]
         corpus_a = dual_ns_ctx["corpus_a"]
@@ -364,6 +389,7 @@ class TestNamespaceDMLFullCycle:
     """End-to-end DML cycle (small scale, verified by get)."""
 
     def test_full_dml_cycle_verified_by_get(self, db_client):
+        """Test full dml cycle verified by get."""
         collection = create_ns_collection(db_client, suffix="_cycle")
         ns = _create_namespace(collection,"cycle_ns")
         doc_id = "cycle_doc"
@@ -417,6 +443,7 @@ class TestNamespaceDMLFullCycle:
             cleanup(db_client, collection)
 
     def test_batch_add_then_get_each(self, db_client):
+        """Test batch add then get each."""
         collection = create_ns_collection(db_client, suffix="_batch")
         ns = _create_namespace(collection,"batch_ns")
         try:

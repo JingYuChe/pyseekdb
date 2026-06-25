@@ -29,6 +29,7 @@ from pyseekdb.client.schema import Schema
 
 
 def _schema_fts_only() -> Schema:
+    """Schema fts only."""
     return Schema(
         vector_index=VectorIndexConfig(embedding_function=None),
         fulltext_index=FulltextIndexConfig(analyzer="ik"),
@@ -36,6 +37,7 @@ def _schema_fts_only() -> Schema:
 
 
 def _schema_vector_only() -> Schema:
+    """Schema vector only."""
     return Schema(
         vector_index=VectorIndexConfig(
             ivf=IVFConfiguration(dimension=3, distance="l2", centroids_fresh_mode="spfresh"),
@@ -45,16 +47,19 @@ def _schema_vector_only() -> Schema:
 
 
 def _schema_search_only() -> Schema:
+    """Schema search only."""
     return Schema(vector_index=VectorIndexConfig(embedding_function=None))
 
 
 def _index_names(client: Any, collection_id: str) -> set[str]:
+    """Index names."""
     table = NamespaceCollectionNames.data_table_name(collection_id)
     rows = client._server._execute(f"SHOW INDEX FROM `{table}`")
     return {(r.get("Key_name") if isinstance(r, dict) else r[2]) for r in (rows or [])}
 
 
 def _collection_settings(client: Any, collection_id: str) -> dict:
+    """Collection settings."""
     rows = client._server._execute(
         f"SELECT settings FROM sdk_collections WHERE collection_id = '{collection_id}'"
     )
@@ -63,6 +68,7 @@ def _collection_settings(client: Any, collection_id: str) -> dict:
 
 
 def _create_collection(client: Any, label: str, schema: Schema) -> Any:
+    """Create collection."""
     name = f"test_ns_opt_idx_{label}_{int(time.time() * 1000)}"
     return client.create_collection(
         name=name, schema=schema, use_namespace=True,
@@ -71,12 +77,14 @@ def _create_collection(client: Any, label: str, schema: Schema) -> Any:
 
 
 def _unit_vector(dimension: int, axis: int = 0) -> list[float]:
+    """Unit vector."""
     vec = [0.0] * dimension
     vec[axis % dimension] = 1.0
     return vec
 
 
 def _seed_namespace(ns: Any, dimension: int) -> None:
+    """Seed namespace."""
     ns.add(
         ids=["d1", "d2"],
         embeddings=[_unit_vector(dimension, 0), _unit_vector(dimension, 1)],
@@ -89,6 +97,7 @@ class TestNamespaceOptionalIndexes:
     """DDL + query matrix for optional VECTOR / FULLTEXT indexes."""
 
     def test_fts_only_indexes_and_queries(self, db_client):
+        """Test fts only indexes and queries."""
         collection = _create_collection(db_client, "fts_only", _schema_fts_only())
         try:
             keys = _index_names(db_client, collection.id)
@@ -119,6 +128,7 @@ class TestNamespaceOptionalIndexes:
             db_client.delete_collection(name=collection.name)
 
     def test_vector_only_indexes_and_queries(self, db_client):
+        """Test vector only indexes and queries."""
         collection = _create_collection(db_client, "vec_only", _schema_vector_only())
         try:
             keys = _index_names(db_client, collection.id)
@@ -149,6 +159,7 @@ class TestNamespaceOptionalIndexes:
             db_client.delete_collection(name=collection.name)
 
     def test_search_only_indexes_and_queries(self, db_client):
+        """Test search only indexes and queries."""
         collection = _create_collection(db_client, "search_only", _schema_search_only())
         try:
             keys = _index_names(db_client, collection.id)

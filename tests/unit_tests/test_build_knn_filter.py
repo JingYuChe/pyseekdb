@@ -7,6 +7,7 @@ import pytest
 
 @pytest.fixture()
 def client():
+    """Client."""
     from pyseekdb.client.client_base import BaseClient
 
     with patch.multiple(BaseClient, __abstractmethods__=set()):
@@ -15,7 +16,9 @@ def client():
 
 
 class TestBuildKnnFilterNe:
+    """TestBuildKnnFilterNe class."""
     def test_ne_hoists_must_not_in_knn_filter(self, client):
+        """Test ne hoists must not in knn filter."""
         with patch.object(
             client,
             "_build_metadata_filter_for_search_parm",

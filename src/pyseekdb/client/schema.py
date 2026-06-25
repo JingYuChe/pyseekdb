@@ -88,6 +88,7 @@ class Schema:
         sparse_vector_index: SparseVectorIndexConfig | None = None,
         fulltext_index: FulltextIndexConfig | None = None,
     ):
+        """Init."""
         if isinstance(vector_index, VectorIndexConfig):
             self.vector_index = vector_index
         elif isinstance(vector_index, HNSWConfiguration):
@@ -149,6 +150,7 @@ class Schema:
         return self
 
     def __repr__(self) -> str:
+        """Repr."""
         parts = []
         if self.vector_index is not None:
             parts.append(f"vector_index={self.vector_index}")

@@ -17,7 +17,9 @@ from pyseekdb.client.schema import Schema
 
 class TestNamespacePrewarm:
 
+    """TestNamespacePrewarm class."""
     def _create_ns_collection_and_namespace(self, client):
+        """Create ns collection and namespace."""
         from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT
 
         name = f"test_ns_pw_{int(time.time() * 1000)}"
@@ -35,6 +37,7 @@ class TestNamespacePrewarm:
         return collection, namespace
 
     def _query_hot_table(self, client, collection, namespace_id):
+        """Query hot table."""
         coll_id = collection.id
         hot_table = NamespaceCollectionNames.hot_table_name(coll_id)
         rows = client._server._execute(

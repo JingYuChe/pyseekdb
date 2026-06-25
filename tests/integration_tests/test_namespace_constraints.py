@@ -20,6 +20,7 @@ from pyseekdb.client.version import Version
 
 
 def _make_schema(ivf_type: str) -> Schema:
+    """Make schema."""
     return Schema(
         vector_index=VectorIndexConfig(
             ivf=IVFConfiguration(dimension=3, distance="cosine", type=ivf_type, centroids_fresh_mode="spfresh"),
@@ -29,10 +30,12 @@ def _make_schema(ivf_type: str) -> Schema:
 
 
 def _unique_name(suffix: str) -> str:
+    """Unique name."""
     return f"test_ns_constraint_{int(time.time() * 1000)}{suffix}"
 
 
 class TestNamespaceIvfTypeConstraint:
+    """TestNamespaceIvfTypeConstraint class."""
     @pytest.mark.parametrize("ivf_type", ["ivf_pq", "ivf_sq8"])
     def test_non_ivf_flat_rejected(self, oceanbase_client, ivf_type):
         """Non-ivf_flat IVF types must be rejected at the SDK layer."""
@@ -59,6 +62,7 @@ class TestNamespaceIvfTypeConstraint:
 
 
 class TestNamespaceMinVersionConstraint:
+    """TestNamespaceMinVersionConstraint class."""
     def test_connected_ob_meets_min_version(self, oceanbase_client):
         """The kernel under test must already be >= 4.6.1, and creation succeeds."""
         db_type, version = oceanbase_client._server.detect_db_type_and_version()
@@ -95,4 +99,5 @@ class TestNamespaceMinVersionConstraint:
         assert not oceanbase_client.has_collection(name)
 
     def test_min_version_constant(self):
+        """Test min version constant."""
         assert NAMESPACE_MIN_OB_VERSION == Version("4.6.1.0")

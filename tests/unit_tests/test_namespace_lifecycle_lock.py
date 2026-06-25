@@ -14,7 +14,9 @@ from pyseekdb.client.client_base import BaseClient  # noqa: E402
 
 
 class TestNamespaceLifecycleWithoutGetLock:
+    """TestNamespaceLifecycleWithoutGetLock class."""
     def test_has_namespace_queries_catalog_directly(self):
+        """Test has namespace queries catalog directly."""
         client = MagicMock(spec=BaseClient)
         client._get_ns_namespace_meta.return_value = None
 
@@ -22,6 +24,7 @@ class TestNamespaceLifecycleWithoutGetLock:
         client._get_ns_namespace_meta.assert_called_once_with("cid", "ns1")
 
     def test_create_namespace_raises_when_catalog_row_exists(self):
+        """Test create namespace raises when catalog row exists."""
         client = MagicMock(spec=BaseClient)
         client._get_ns_namespace_meta.return_value = {
             "namespace_id": "42",

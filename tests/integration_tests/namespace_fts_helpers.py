@@ -37,6 +37,7 @@ INDEX_SETTLE_SECONDS = 3
 
 @dataclass(frozen=True)
 class CorpusRecord:
+    """CorpusRecord class."""
     doc_id: str
     document: str
     embedding: list[float]
@@ -46,6 +47,7 @@ class CorpusRecord:
 
 @dataclass(frozen=True)
 class FtsQueryCase:
+    """FtsQueryCase class."""
     name: str
     where_document: dict[str, Any] | str
     n_results: int
@@ -54,6 +56,7 @@ class FtsQueryCase:
 
 
 def ns_schema(distance: VectorDistanceMetric = "l2") -> Schema:
+    """Ns schema."""
     return Schema(
         vector_index=VectorIndexConfig(
             ivf=IVFConfiguration(dimension=3, distance=distance, centroids_fresh_mode="spfresh"),
@@ -86,6 +89,7 @@ def build_large_fts_corpus(size: int = CORPUS_SIZE) -> list[CorpusRecord]:
         embedding: list[float] | None = None,
         extra_meta: dict[str, Any] | None = None,
     ) -> None:
+        """Add."""
         idx = len(records)
         meta = {"rel_hint": rel_hint, "seq": idx}
         if extra_meta:
@@ -169,6 +173,7 @@ def build_large_fts_corpus(size: int = CORPUS_SIZE) -> list[CorpusRecord]:
 
 
 def _embedding_for_index(index: int) -> list[float]:
+    """Embedding for index."""
     return [
         float((index + 1) % 7) / 7.0,
         float((index + 2) % 5) / 5.0,
@@ -177,6 +182,7 @@ def _embedding_for_index(index: int) -> list[float]:
 
 
 def doc_matches_where_document(document: str, where_document: dict[str, Any] | str) -> bool:
+    """Doc matches where document."""
     text = document.lower()
     if isinstance(where_document, str):
         return where_document.lower() in text
@@ -237,6 +243,7 @@ def corpus_matches_fts(
     where_document: dict[str, Any] | str,
     where: dict[str, Any] | None = None,
 ) -> bool:
+    """Corpus matches fts."""
     if not doc_matches_where_document(record.document, where_document):
         return False
     if where is not None and not doc_matches_where_metadata(record.metadata, where):
@@ -282,6 +289,7 @@ def expected_best_id(
     where_document: dict[str, Any] | str,
     where: dict[str, Any] | None = None,
 ) -> str:
+    """Expected best id."""
     matched = [
         (rec.doc_id, effective_rel_hint(rec, where_document))
         for rec in corpus
@@ -338,6 +346,7 @@ def assert_hybrid_fulltext_result(
     where: dict[str, Any] | None = None,
     check_ranking: bool = True,
 ) -> None:
+    """Assert hybrid fulltext result."""
     assert result is not None
     assert "ids" in result and result["ids"]
     ids = result["ids"][0]
@@ -497,6 +506,7 @@ HYBRID_SEARCH_FTS_CASES: list[FtsQueryCase] = [
 
 
 def get_fts_case(name: str) -> FtsQueryCase:
+    """Get fts case."""
     for case in HYBRID_SEARCH_FTS_CASES:
         if case.name == name:
             return case
@@ -553,11 +563,13 @@ def setup_large_fts_namespace(db_client: Any, *, namespace_name: str = "ns_hs_ft
 
 
 def teardown_large_fts_collection(db_client: Any, collection: Any) -> None:
+    """Teardown large fts collection."""
     with contextlib.suppress(Exception):
         db_client.delete_collection(name=collection.name)
 
 
 def teardown_large_fts_namespace(db_client: Any, collection: Any) -> None:
+    """Teardown large fts namespace."""
     teardown_large_fts_collection(db_client, collection)
 
 
@@ -574,6 +586,7 @@ def _create_multi_coll_multi_ns_layout(
     name_prefix: str,
     distance: VectorDistanceMetric = "l2",
 ) -> dict[str, Any]:
+    """Create multi coll multi ns layout."""
     ts = int(time.time() * 1000)
     coll_1 = db_client.create_collection(
         name=f"{name_prefix}_{distance}_{ts}_c1",
@@ -683,6 +696,7 @@ def setup_multi_coll_multi_ns_fts_single_loaded(
 
 
 def teardown_multi_coll_multi_ns_fts(db_client: Any, ctx: dict[str, Any]) -> None:
+    """Teardown multi coll multi ns fts."""
     for coll_key in ("coll_1", "coll_2", "collection"):
         collection = ctx.get(coll_key)
         if collection is not None:
@@ -734,6 +748,7 @@ def run_hybrid_search_fts_case(
     corpus: list[CorpusRecord],
     case: FtsQueryCase,
 ) -> dict[str, Any]:
+    """Run hybrid search fts case."""
     query: dict[str, Any] = {
         "where_document": case.where_document,
         "n_results": case.n_results,
@@ -761,6 +776,7 @@ def assert_not_contains_no_token_leak(
     result: dict[str, Any],
     forbidden_token: str,
 ) -> None:
+    """Assert not contains no token leak."""
     result_ids = set(result["ids"][0])
     forbidden_ids = {
         rec.doc_id

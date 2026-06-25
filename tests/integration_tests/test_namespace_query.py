@@ -15,7 +15,9 @@ from pyseekdb.client.schema import Schema
 
 class TestNamespaceQuery:
 
+    """TestNamespaceQuery class."""
     def _setup(self, client, suffix=""):
+        """Setup."""
         name = f"test_ns_q_{int(time.time() * 1000)}{suffix}"
         schema = Schema(
             vector_index=VectorIndexConfig(
@@ -31,6 +33,7 @@ class TestNamespaceQuery:
         return collection
 
     def _insert_data(self, ns):
+        """Insert data."""
         ns.add(
             ids=["q1", "q2", "q3", "q4", "q5"],
             embeddings=[
@@ -57,6 +60,7 @@ class TestNamespaceQuery:
         )
 
     def test_basic_vector_query(self, db_client):
+        """Test basic vector query."""
         collection = self._setup(db_client)
         ns = collection.create_namespace("qns")
         try:
@@ -70,6 +74,7 @@ class TestNamespaceQuery:
             db_client.delete_collection(name=collection.name)
 
     def test_query_with_metadata_filter(self, db_client):
+        """Test query with metadata filter."""
         collection = self._setup(db_client)
         ns = collection.create_namespace("qns_meta")
         try:
@@ -88,6 +93,7 @@ class TestNamespaceQuery:
             db_client.delete_collection(name=collection.name)
 
     def test_query_with_score_filter(self, db_client):
+        """Test query with score filter."""
         collection = self._setup(db_client)
         ns = collection.create_namespace("qns_score")
         try:
@@ -103,6 +109,7 @@ class TestNamespaceQuery:
             db_client.delete_collection(name=collection.name)
 
     def test_query_with_include(self, db_client):
+        """Test query with include."""
         collection = self._setup(db_client)
         ns = collection.create_namespace("qns_inc")
         try:
@@ -120,6 +127,7 @@ class TestNamespaceQuery:
             db_client.delete_collection(name=collection.name)
 
     def test_query_include_embeddings(self, db_client):
+        """Test query include embeddings."""
         collection = self._setup(db_client)
         ns = collection.create_namespace("qns_emb")
         try:
@@ -136,6 +144,7 @@ class TestNamespaceQuery:
             db_client.delete_collection(name=collection.name)
 
     def test_multi_namespace_isolation(self, db_client):
+        """Test multi namespace isolation."""
         collection = self._setup(db_client, suffix="_iso")
         ns_a = collection.create_namespace("tenant_a")
         ns_b = collection.create_namespace("tenant_b")
@@ -167,6 +176,7 @@ class TestNamespaceQuery:
             db_client.delete_collection(name=collection.name)
 
     def test_same_id_different_namespaces(self, db_client):
+        """Test same id different namespaces."""
         collection = self._setup(db_client, suffix="_sameid")
         ns_x = collection.create_namespace("ns_x")
         ns_y = collection.create_namespace("ns_y")
@@ -188,6 +198,7 @@ class TestNamespaceQuery:
     # ==================== hybrid_search tests ====================
 
     def test_hybrid_search_fulltext_only(self, db_client):
+        """Test hybrid search fulltext only."""
         collection = self._setup(db_client)
         ns = collection.create_namespace("qns_hs_ft")
         try:
@@ -210,6 +221,7 @@ class TestNamespaceQuery:
             db_client.delete_collection(name=collection.name)
 
     def test_hybrid_search_vector_only(self, db_client):
+        """Test hybrid search vector only."""
         collection = self._setup(db_client)
         ns = collection.create_namespace("qns_hs_vec")
         try:
@@ -231,6 +243,7 @@ class TestNamespaceQuery:
             db_client.delete_collection(name=collection.name)
 
     def test_hybrid_search_combined(self, db_client):
+        """Test hybrid search combined."""
         collection = self._setup(db_client)
         ns = collection.create_namespace("qns_hs_comb")
         try:
@@ -251,6 +264,7 @@ class TestNamespaceQuery:
             db_client.delete_collection(name=collection.name)
 
     def test_hybrid_search_namespace_isolation(self, db_client):
+        """Test hybrid search namespace isolation."""
         collection = self._setup(db_client, suffix="_hs_iso")
         ns_a = collection.create_namespace("hs_tenant_a")
         ns_b = collection.create_namespace("hs_tenant_b")

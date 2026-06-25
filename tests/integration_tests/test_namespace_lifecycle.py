@@ -18,7 +18,9 @@ from pyseekdb.client.schema import Schema
 
 class TestNamespaceLifecycle:
 
+    """TestNamespaceLifecycle class."""
     def _create_ns_collection(self, client, suffix=""):
+        """Create ns collection."""
         name = f"test_ns_lc_{int(time.time() * 1000)}{suffix}"
         schema = Schema(
             vector_index=VectorIndexConfig(
@@ -33,6 +35,7 @@ class TestNamespaceLifecycle:
         return collection
 
     def test_create_namespace_collection(self, db_client):
+        """Test create namespace collection."""
         collection = self._create_ns_collection(db_client)
         try:
             assert collection.use_namespace is True
@@ -42,6 +45,7 @@ class TestNamespaceLifecycle:
             db_client.delete_collection(name=collection.name)
 
     def test_get_collection_preserves_namespace_flag(self, db_client):
+        """Test get collection preserves namespace flag."""
         collection = self._create_ns_collection(db_client)
         try:
             retrieved = db_client.get_collection(collection.name)
@@ -51,6 +55,7 @@ class TestNamespaceLifecycle:
             db_client.delete_collection(name=collection.name)
 
     def test_get_collection_restores_embedding_function(self, db_client):
+        """Test get collection restores embedding function."""
         from pyseekdb import DefaultEmbeddingFunction
 
         ef = DefaultEmbeddingFunction()
@@ -74,6 +79,7 @@ class TestNamespaceLifecycle:
             db_client.delete_collection(name=name)
 
     def test_create_and_get_namespace(self, db_client):
+        """Test create and get namespace."""
         collection = self._create_ns_collection(db_client)
         try:
             ns = collection.create_namespace("ns_a")
@@ -87,6 +93,7 @@ class TestNamespaceLifecycle:
             db_client.delete_collection(name=collection.name)
 
     def test_get_or_create_namespace(self, db_client):
+        """Test get or create namespace."""
         collection = self._create_ns_collection(db_client)
         try:
             ns1 = collection.get_or_create_namespace("ns_goc")
@@ -98,6 +105,7 @@ class TestNamespaceLifecycle:
             db_client.delete_collection(name=collection.name)
 
     def test_has_namespace(self, db_client):
+        """Test has namespace."""
         collection = self._create_ns_collection(db_client)
         try:
             assert collection.has_namespace("nonexistent") is False
@@ -107,6 +115,7 @@ class TestNamespaceLifecycle:
             db_client.delete_collection(name=collection.name)
 
     def test_list_namespaces(self, db_client):
+        """Test list namespaces."""
         collection = self._create_ns_collection(db_client)
         try:
             collection.create_namespace("ns_x")
@@ -120,6 +129,7 @@ class TestNamespaceLifecycle:
             db_client.delete_collection(name=collection.name)
 
     def test_delete_namespace(self, db_client):
+        """Test delete namespace."""
         collection = self._create_ns_collection(db_client)
         try:
             collection.create_namespace("ns_del")
@@ -131,6 +141,7 @@ class TestNamespaceLifecycle:
             db_client.delete_collection(name=collection.name)
 
     def test_get_nonexistent_namespace_raises(self, db_client):
+        """Test get nonexistent namespace raises."""
         collection = self._create_ns_collection(db_client)
         try:
             with pytest.raises(ValueError):
@@ -139,6 +150,7 @@ class TestNamespaceLifecycle:
             db_client.delete_collection(name=collection.name)
 
     def test_delete_collection_cleans_namespaces(self, db_client):
+        """Test delete collection cleans namespaces."""
         collection = self._create_ns_collection(db_client)
         coll_name = collection.name
         collection.create_namespace("ns_cleanup")
@@ -228,6 +240,7 @@ class TestNamespaceLifecycle:
                 client.delete_collection(name=name)
 
     def test_namespace_ops_blocked_after_collection_deleted(self, db_client):
+        """Test namespace ops blocked after collection deleted."""
         collection = self._create_ns_collection(db_client)
         db_client.delete_collection(name=collection.name)
 
@@ -241,6 +254,7 @@ class TestNamespaceLifecycle:
             collection.has_namespace("demo")
 
     def test_collection_data_api_blocked_when_namespace_enabled(self, db_client):
+        """Test collection data api blocked when namespace enabled."""
         collection = self._create_ns_collection(db_client)
         try:
             with pytest.raises(ValueError, match="namespace enabled"):
@@ -249,6 +263,7 @@ class TestNamespaceLifecycle:
             db_client.delete_collection(name=collection.name)
 
     def test_namespace_on_non_namespace_collection_raises(self, db_client):
+        """Test namespace on non namespace collection raises."""
         name = f"test_nons_{int(time.time() * 1000)}"
         collection = db_client.create_collection(
             name=name,
@@ -269,6 +284,7 @@ class TestNamespaceLifecycle:
 
 
     def test_create_namespace_collection_with_hnsw_raises(self, db_client):
+        """Test create namespace collection with hnsw raises."""
         from pyseekdb.client.configuration import HNSWConfiguration
         name = f"test_ns_hnsw_{int(time.time() * 1000)}"
         schema = Schema(
@@ -357,6 +373,7 @@ class TestNamespaceLifecycle:
             oceanbase_client.delete_collection(name=collection.name)
 
     def test_partition_count_rejected_for_non_namespace(self, db_client):
+        """Test partition count rejected for non namespace."""
         name = f"test_nons_pc_{int(time.time() * 1000)}"
         with pytest.raises(ValueError, match="partition_count is only supported"):
             db_client.create_collection(

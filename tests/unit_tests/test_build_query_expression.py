@@ -7,6 +7,7 @@ import pytest
 
 @pytest.fixture()
 def client():
+    """Client."""
     from pyseekdb.client.client_base import BaseClient
 
     with patch.multiple(BaseClient, __abstractmethods__=set()):
@@ -15,6 +16,7 @@ def client():
 
 
 class TestBuildQueryExpressionNotContains:
+    """TestBuildQueryExpressionNotContains class."""
     def test_not_contains_with_metadata_filter_hoists_must_not(self, client):
         """$not_contains + where must not nest a must_not-only bool inside must."""
         where = {"seq": {"$gte": 43}}
@@ -65,6 +67,7 @@ class TestBuildQueryExpressionNotContains:
         assert "filter" not in expr["bool"]
 
     def test_contains_with_metadata_filter_still_uses_must(self, client):
+        """Test contains with metadata filter still uses must."""
         with patch.object(
             client,
             "_build_metadata_filter_for_search_parm",
@@ -81,6 +84,7 @@ class TestBuildQueryExpressionNotContains:
 
 
 class TestBuildQueryExpressionMetadataNe:
+    """TestBuildQueryExpressionMetadataNe class."""
     def test_ne_with_fts_hoists_must_not_from_filter(self, client):
         """$ne in where must not appear as a must_not-only bool inside filter."""
         with patch.object(
@@ -105,6 +109,7 @@ class TestBuildQueryExpressionMetadataNe:
             assert set(nested.keys()) != {"must_not"}, nested
 
     def test_ne_with_not_contains_and_positive_where(self, client):
+        """Test ne with not contains and positive where."""
         with patch.object(
             client,
             "_build_metadata_filter_for_search_parm",

@@ -1,3 +1,5 @@
+"""test namespace drop validation module."""
+
 import threading
 import time
 
@@ -24,6 +26,7 @@ BG_POLL_INTERVAL_SEC = 1.0
 
 
 def _create_namespace(collection, name: str):
+    """Create namespace."""
     ns = collection.create_namespace(name)
     ns.prewarm()
     return ns
@@ -46,6 +49,7 @@ def _make_collection(client, suffix: str = ""):
 
 
 def _execute(client, sql: str):
+    """Execute."""
     return client._server._execute(sql)
 
 
@@ -72,6 +76,7 @@ def _is_ss_mode(client) -> bool:
 
 
 def _fetch_namespace_name(client, collection_id: str, namespace_id: int):
+    """Fetch namespace name."""
     ns_table = _catalog_table(client, "sdk_namespaces")
     rows = _execute(
         client,
@@ -84,6 +89,7 @@ def _fetch_namespace_name(client, collection_id: str, namespace_id: int):
 
 
 def _count_ltables(client, collection_id: str, namespace_id: int) -> int:
+    """Count ltables."""
     lt_table = _catalog_table(client, "sdk_ltables")
     rows = _execute(
         client,
@@ -94,6 +100,7 @@ def _count_ltables(client, collection_id: str, namespace_id: int) -> int:
 
 
 def _count_logic_schema_rows(client, collection_id: str, namespace_id: int) -> int:
+    """Count logic schema rows."""
     tbl = NamespaceCollectionNames.logic_schema_table_name(collection_id)
     db = client._server.database
     rows = _execute(
@@ -104,6 +111,7 @@ def _count_logic_schema_rows(client, collection_id: str, namespace_id: int) -> i
 
 
 def _count_hot_table_rows(client, collection_id: str, namespace_id: int) -> int:
+    """Count hot table rows."""
     tbl = NamespaceCollectionNames.hot_table_name(collection_id)
     db = client._server.database
     try:
@@ -117,6 +125,7 @@ def _count_hot_table_rows(client, collection_id: str, namespace_id: int) -> int:
 
 
 def _count_logic_data_rows(client, collection_id: str, namespace_id: int, ltable_id: int | None = None) -> int:
+    """Count logic data rows."""
     tbl = NamespaceCollectionNames.data_table_name(collection_id)
     db = client._server.database
     if ltable_id is not None:
@@ -131,6 +140,7 @@ def _count_logic_data_rows(client, collection_id: str, namespace_id: int, ltable
 
 
 def _count_kv_data_rows(client, collection_id: str, namespace_id: int) -> int:
+    """Count kv data rows."""
     tbl = NamespaceCollectionNames.kv_data_table_name(collection_id)
     db = client._server.database
     try:
@@ -145,6 +155,7 @@ def _count_kv_data_rows(client, collection_id: str, namespace_id: int) -> int:
 
 def _wait_until(predicate, timeout_sec: float = BG_POLL_TIMEOUT_SEC,
                 interval_sec: float = BG_POLL_INTERVAL_SEC, desc: str = ""):
+    """Wait until."""
     deadline = time.time() + timeout_sec
     last_exc = None
     while time.time() < deadline:
@@ -176,6 +187,7 @@ def _seed_kv_data(client, collection_id: str, namespace_id: int, count: int = 5)
 
 
 def _seed_logic_data(client, collection_id: str, namespace_id: int, ltable_id: int, count: int = 3):
+    """Seed logic data."""
     tbl = NamespaceCollectionNames.data_table_name(collection_id)
     db = client._server.database
     values = []
@@ -193,6 +205,7 @@ def _seed_logic_data(client, collection_id: str, namespace_id: int, ltable_id: i
 
 
 def _fetch_ltable_id(client, collection_id: str, namespace_id: int) -> int | None:
+    """Fetch ltable id."""
     lt_table = _catalog_table(client, "sdk_ltables")
     rows = _execute(
         client,
@@ -206,6 +219,7 @@ def _fetch_ltable_id(client, collection_id: str, namespace_id: int) -> int | Non
 
 
 def _hot_table_exists(client, collection_id: str) -> bool:
+    """Hot table exists."""
     tbl = NamespaceCollectionNames.hot_table_name(collection_id)
     db = client._server.database
     try:
@@ -294,6 +308,7 @@ def _insert_active_ltable_row(
     ltable_name: str,
     ltable_id: int,
 ):
+    """Insert active ltable row."""
     lt_table = _catalog_table(client, "sdk_ltables")
     _execute(
         client,
@@ -304,6 +319,7 @@ def _insert_active_ltable_row(
 
 
 def _fetch_namespace_drop_history(client, collection_id: str, namespace_id: int):
+    """Fetch namespace drop history."""
     try:
         return _execute(
             client,
@@ -355,6 +371,7 @@ class TestDropNamespaceCatalogValidation:
     # 1. Happy path: rename + cleanup all relevant rows              #
     # ------------------------------------------------------------- #
     def test_drop_namespace_renames_and_cleans_catalog(self, oceanbase_client):
+        """Test drop namespace renames and cleans catalog."""
         client = oceanbase_client
         is_ss = _is_ss_mode(client)
         collection = _make_collection(client)
@@ -444,6 +461,7 @@ class TestDropNamespaceCatalogValidation:
             assert _count_ltables(client, coll_id, ns_id) == 0
 
             def _bg_done():
+                """Bg done."""
                 return (
                     _fetch_namespace_name(client, coll_id, ns_id) is None
                     and _count_kv_data_rows(client, coll_id, ns_id) == 0
@@ -535,6 +553,7 @@ class TestDropNamespaceCatalogValidation:
             )
 
             def _hot_and_ns_gone():
+                """Hot and ns gone."""
                 return (
                     _count_hot_table_rows(client, coll_id, ns_id) == 0
                     and _fetch_namespace_name(client, coll_id, ns_id) is None
@@ -556,6 +575,7 @@ class TestDropNamespaceCatalogValidation:
             _drop_namespace_via_pl(client, coll_id, ns_id)
 
             def _bg_done():
+                """Bg done."""
                 return _fetch_namespace_name(client, coll_id, ns_id) is None
 
             _wait_until(_bg_done, desc="namespace removed for history check")
@@ -576,6 +596,7 @@ class TestDropNamespaceCatalogValidation:
     # 2. Namespace-name rename format                                #
     # ------------------------------------------------------------- #
     def test_recyclebin_name_format(self, oceanbase_client):
+        """Test recyclebin name format."""
         client = oceanbase_client
         collection = _make_collection(client)
         try:
@@ -596,6 +617,7 @@ class TestDropNamespaceCatalogValidation:
     # 3. Multiple ltables under one namespace all get deleted        #
     # ------------------------------------------------------------- #
     def test_multiple_ltables_all_deleted(self, oceanbase_client):
+        """Test multiple ltables all deleted."""
         client = oceanbase_client
         collection = _make_collection(client)
         try:
@@ -674,6 +696,7 @@ class TestDropNamespaceCatalogValidation:
     # 5. Idempotent: second drop on the same ns is a no-op success   #
     # ------------------------------------------------------------- #
     def test_drop_namespace_is_idempotent(self, oceanbase_client):
+        """Test drop namespace is idempotent."""
         client = oceanbase_client
         collection = _make_collection(client)
         coll_id = collection.id
@@ -720,6 +743,7 @@ class TestDropNamespaceCatalogValidation:
             barrier = threading.Barrier(2)
 
             def _worker(tag, c):
+                """Worker."""
                 try:
                     barrier.wait(timeout=10)
                     _drop_namespace_via_pl(c, coll_id, ns_id)

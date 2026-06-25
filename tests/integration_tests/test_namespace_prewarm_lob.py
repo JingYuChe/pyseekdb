@@ -64,10 +64,12 @@ OB_SYS_PASSWORD = os.environ.get("OB_SYS_PASSWORD", "")
 # ==================== SQL observability helpers ====================
 
 def _exec(client, sql):
+    """Exec."""
     return client._server._execute(sql)
 
 
 def _resolve_table_id(client, table_name):
+    """Resolve table id."""
     rows = _exec(
         client,
         f"SELECT table_id FROM {ALL_TABLE_VIEW} WHERE table_name = '{table_name}'",
@@ -189,7 +191,9 @@ def _grep_lob_prewarm_log(lob_meta_tablet_ids):
 
 class _BaseLobPrewarm:
 
+    """BaseLobPrewarm class."""
     def _make_collection(self, client, name, partitions):
+        """Make collection."""
         schema = Schema(
             vector_index=VectorIndexConfig(
                 ivf=IVFConfiguration(dimension=3, distance="cosine"),
@@ -229,6 +233,7 @@ class _BaseLobPrewarm:
 
 class TestLobPrewarmStructural(_BaseLobPrewarm):
 
+    """TestLobPrewarmStructural class."""
     def test_kv_table_has_lob_meta_tablet(self, oceanbase_client):
         """Tier 1: the prewarm target (kv_data_table) owns an aux LOB-meta tablet."""
         name = f"lob_pw_struct_{int(time.time() * 1000)}"
@@ -283,9 +288,11 @@ class TestLobPrewarmStructural(_BaseLobPrewarm):
 # ==================== Tier 2 + Tier 3: real LOB caching ====================
 
 class TestLobPrewarmCaching(_BaseLobPrewarm):
+    """TestLobPrewarmCaching class."""
 
     @staticmethod
     def _total_bytes(cache):
+        """Total bytes."""
         return sum(v[1] for v in (cache or {}).values())
 
     def test_out_of_row_lob_is_prewarmed_into_cache(self, oceanbase_client):

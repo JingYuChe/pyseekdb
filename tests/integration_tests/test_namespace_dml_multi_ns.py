@@ -15,7 +15,9 @@ from namespace_dml_helpers import (
 
 class TestNamespaceDMLMultiNs:
 
+    """TestNamespaceDMLMultiNs class."""
     def test_add_isolation(self, db_client):
+        """Test add isolation."""
         collection = create_ns_collection(db_client, suffix="_mns_add")
         ns_a = collection.create_namespace("ns_a")
         ns_b = collection.create_namespace("ns_b")
@@ -33,6 +35,7 @@ class TestNamespaceDMLMultiNs:
             cleanup(db_client, collection)
 
     def test_same_id_different_namespaces(self, db_client):
+        """Test same id different namespaces."""
         collection = create_ns_collection(db_client, suffix="_mns_sameid")
         ns_x = collection.create_namespace("ns_x")
         ns_y = collection.create_namespace("ns_y")
@@ -48,6 +51,7 @@ class TestNamespaceDMLMultiNs:
             cleanup(db_client, collection)
 
     def test_update_does_not_affect_other_ns(self, db_client):
+        """Test update does not affect other ns."""
         collection = create_ns_collection(db_client, suffix="_mns_upd")
         ns_a = collection.create_namespace("ns_a")
         ns_b = collection.create_namespace("ns_b")
@@ -68,6 +72,7 @@ class TestNamespaceDMLMultiNs:
             cleanup(db_client, collection)
 
     def test_delete_only_target_ns(self, db_client):
+        """Test delete only target ns."""
         collection = create_ns_collection(db_client, suffix="_mns_del")
         ns_a = collection.create_namespace("ns_a")
         ns_b = collection.create_namespace("ns_b")
@@ -88,6 +93,7 @@ class TestNamespaceDMLMultiNs:
             cleanup(db_client, collection)
 
     def test_upsert_isolation(self, db_client):
+        """Test upsert isolation."""
         collection = create_ns_collection(db_client, suffix="_mns_ups")
         ns_a = collection.create_namespace("ns_a")
         ns_b = collection.create_namespace("ns_b")

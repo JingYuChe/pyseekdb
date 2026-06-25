@@ -30,6 +30,7 @@ FILTER_MULTI_NS_PURGE = 500
 
 @dataclass(frozen=True)
 class DmlRecord:
+    """DmlRecord class."""
     doc_id: str
     embedding: list[float]
     document: str
@@ -37,6 +38,7 @@ class DmlRecord:
 
 
 def ns_schema() -> Schema:
+    """Ns schema."""
     return Schema(
         vector_index=VectorIndexConfig(
             ivf=IVFConfiguration(dimension=3, distance="l2", centroids_fresh_mode="spfresh"),
@@ -47,6 +49,7 @@ def ns_schema() -> Schema:
 
 
 def create_ns_collection(client: Any, suffix: str = "") -> Any:
+    """Create ns collection."""
     name = f"test_ns_dml_{int(time.time() * 1000)}{suffix}"
     return client.create_collection(
         name=name, schema=ns_schema(), use_namespace=True,
@@ -55,6 +58,7 @@ def create_ns_collection(client: Any, suffix: str = "") -> Any:
 
 
 def cleanup(client: Any, *collections: Any) -> None:
+    """Cleanup."""
     for collection in collections:
         try:
             client.delete_collection(name=collection.name)
@@ -86,10 +90,12 @@ def build_large_dml_corpus(
 
 
 def corpus_id_set(corpus: list[DmlRecord]) -> set[str]:
+    """Corpus id set."""
     return {r.doc_id for r in corpus}
 
 
 def _filter_embedding(index: int) -> list[float]:
+    """Filter embedding."""
     return [
         (index % 97) / 97.0,
         ((index * 3) % 89) / 89.0,
@@ -193,6 +199,7 @@ def assert_get_where_document_count(
     substring: str | None = None,
     context: str = "",
 ) -> dict[str, Any]:
+    """Assert get where document count."""
     kwargs: dict[str, Any] = {"where_document": where_document, "include": ["documents", "metadatas"]}
     if limit is not None:
         kwargs["limit"] = limit
@@ -248,6 +255,7 @@ def assert_count_after_document_delete(
     expected_removed: int,
     pre_delete_hit_count: int,
 ) -> None:
+    """Assert count after document delete."""
     actual = ns.count()
     if actual == expected_count:
         return
@@ -279,6 +287,7 @@ def insert_dml_corpus_in_batches(
     corpus: list[DmlRecord],
     batch_size: int = DML_BATCH_SIZE,
 ) -> None:
+    """Insert dml corpus in batches."""
     for start in range(0, len(corpus), batch_size):
         chunk = corpus[start : start + batch_size]
         namespace.add(
@@ -295,6 +304,7 @@ def load_dml_corpus(
     *,
     assert_count: bool = True,
 ) -> None:
+    """Load dml corpus."""
     insert_dml_corpus_in_batches(namespace, corpus)
     if assert_count:
         expected = len(corpus)
@@ -311,6 +321,7 @@ def assert_peek_result(
     allowed_ids: set[str] | None = None,
     ns_tag: str | None = None,
 ) -> None:
+    """Assert peek result."""
     assert "ids" in result
     assert "documents" in result
     assert "metadatas" in result
@@ -335,6 +346,7 @@ def _default_include(
     embeddings: list[float] | None,
     include: list[str] | None,
 ) -> list[str] | None:
+    """Default include."""
     if include is not None:
         return include
     fields: list[str] = []
@@ -356,6 +368,7 @@ def assert_get_present(
     embeddings: list[float] | None = None,
     include: list[str] | None = None,
 ) -> dict[str, Any]:
+    """Assert get present."""
     result = ns.get(ids=doc_id, include=_default_include(documents, metadatas, embeddings, include))
     indices = [i for i, rid in enumerate(result["ids"]) if rid == doc_id]
     assert indices, f"expected doc {doc_id!r}, got {result['ids']}"
@@ -370,5 +383,6 @@ def assert_get_present(
 
 
 def assert_get_absent(ns: Any, doc_id: str) -> None:
+    """Assert get absent."""
     result = ns.get(ids=doc_id)
     assert len(result["ids"]) == 0, f"expected doc {doc_id!r} absent, got {result['ids']}"

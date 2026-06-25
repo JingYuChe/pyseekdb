@@ -17,7 +17,9 @@ from pyseekdb.client.schema import Schema
 
 class TestNamespaceSessionVars:
 
+    """TestNamespaceSessionVars class."""
     def _create_ns_collection(self, client):
+        """Create ns collection."""
         name = f"test_ns_sessvar_{int(time.time() * 1000)}"
         schema = Schema(
             vector_index=VectorIndexConfig(
@@ -31,6 +33,7 @@ class TestNamespaceSessionVars:
         )
 
     def _query_session_vars(self, client):
+        """Query session vars."""
         rows = client._server._execute(
             "SELECT @collection_id AS cid, @namespace_id AS nsid, @ltable_id AS ltid"
         )
@@ -40,6 +43,7 @@ class TestNamespaceSessionVars:
         return {"cid": row.get("cid"), "nsid": row.get("nsid"), "ltid": row.get("ltid")}
 
     def test_session_collection_id_after_create(self, db_client):
+        """Test session collection id after create."""
         collection = self._create_ns_collection(db_client)
         try:
             vars_ = self._query_session_vars(db_client)
@@ -49,6 +53,7 @@ class TestNamespaceSessionVars:
             db_client.delete_collection(name=collection.name)
 
     def test_session_ns_ids_after_create_namespace(self, db_client):
+        """Test session ns ids after create namespace."""
         collection = self._create_ns_collection(db_client)
         try:
             ns = collection.create_namespace("sess_ns")
@@ -61,6 +66,7 @@ class TestNamespaceSessionVars:
             db_client.delete_collection(name=collection.name)
 
     def test_session_ns_id_after_get_namespace(self, db_client):
+        """Test session ns id after get namespace."""
         collection = self._create_ns_collection(db_client)
         try:
             ns1 = collection.create_namespace("sess_get_ns")

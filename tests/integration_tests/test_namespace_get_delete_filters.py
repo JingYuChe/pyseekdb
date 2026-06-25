@@ -31,6 +31,7 @@ class TestNamespaceDeleteWhere:
     """P0 #1–#2: conditional delete on namespace."""
 
     def test_delete_where_metadata_tag(self, db_client):
+        """Test delete where metadata tag."""
         collection = create_ns_collection(db_client, suffix="_del_where")
         ns = collection.create_namespace("del_where_ns")
         ns.prewarm()
@@ -54,6 +55,7 @@ class TestNamespaceDeleteWhere:
             cleanup(db_client, collection)
 
     def test_delete_where_document_obsolete(self, db_client):
+        """Test delete where document obsolete."""
         collection = create_ns_collection(db_client, suffix="_del_wdoc")
         ns = collection.create_namespace("del_wdoc_ns")
         ns.prewarm()
@@ -94,6 +96,7 @@ class TestNamespaceGetWhere:
     """P0 #3–#4: conditional get on namespace."""
 
     def test_get_where_metadata_category_ai(self, db_client):
+        """Test get where metadata category ai."""
         collection = create_ns_collection(db_client, suffix="_get_where")
         ns = collection.create_namespace("get_where_ns")
         ns.prewarm()
@@ -121,6 +124,7 @@ class TestNamespaceGetWhere:
             cleanup(db_client, collection)
 
     def test_get_where_document_contains_python(self, db_client):
+        """Test get where document contains python."""
         collection = create_ns_collection(db_client, suffix="_get_wdoc")
         ns = collection.create_namespace("get_wdoc_ns")
         ns.prewarm()
@@ -153,6 +157,7 @@ class TestNamespaceFilterMultiNs:
     """P0 #5: filter delete isolated per namespace (same collection)."""
 
     def test_delete_where_only_affects_target_namespace(self, db_client):
+        """Test delete where only affects target namespace."""
         collection = create_ns_collection(db_client, suffix="_filt_mns")
         ns_a = collection.create_namespace("ns_alpha")
         ns_b = collection.create_namespace("ns_beta")
@@ -212,6 +217,7 @@ class TestNamespaceCrossNsGetWhere:
     """
 
     def test_get_where_alternates_namespaces_after_delete(self, db_client):
+        """Test get where alternates namespaces after delete."""
         collection = create_ns_collection(db_client, suffix="_cross_ns_get")
         ns_a = collection.create_namespace("cross_alpha")
         ns_b = collection.create_namespace("cross_beta")

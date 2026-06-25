@@ -15,10 +15,12 @@ from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT, cleanup, ns_sc
 
 
 def _unique_name(prefix: str) -> str:
+    """Unique name."""
     return f"{prefix}_{time.time_ns()}"
 
 
 def _new_oceanbase_client():
+    """New oceanbase client."""
     return pyseekdb.Client(
         host=os.environ.get("OB_HOST", "127.0.0.1"),
         port=int(os.environ.get("OB_PORT", "10902")),
@@ -32,6 +34,7 @@ def _new_oceanbase_client():
 def test_multi_client_concurrent_upsert_same_new_id_should_keep_single_record(
     oceanbase_client,
 ):
+    """Test multi client concurrent upsert same new id should keep single record."""
     collection = oceanbase_client.create_collection(
         name=_unique_name("test_ns_upsert_race_repro"),
         schema=ns_schema(),
@@ -49,6 +52,7 @@ def test_multi_client_concurrent_upsert_same_new_id_should_keep_single_record(
         errors: list[Exception] = []
 
         def _upsert_once(target_ns, idx: int) -> None:
+            """Upsert once."""
             try:
                 barrier.wait(timeout=30)
                 target_ns.upsert(

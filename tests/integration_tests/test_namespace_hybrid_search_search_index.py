@@ -28,6 +28,7 @@ class TestNamespaceHybridSearchSearchIndex:
 
     @pytest.fixture(autouse=True)
     def _bind_shared_collection(self, db_client: Any, request: pytest.FixtureRequest) -> None:
+        """Bind shared collection."""
         mode = request.node.callspec.params["db_client"] if request.node.callspec else "default"
         if mode not in self._shared_by_mode:
             corpus, collection = setup_large_fts_collection(db_client)
@@ -49,11 +50,13 @@ class TestNamespaceHybridSearchSearchIndex:
 
     @classmethod
     def teardown_class(cls) -> None:
+        """Teardown class."""
         for entry in cls._shared_by_mode.values():
             teardown_large_fts_collection(entry["db_client"], entry["collection"])
         cls._shared_by_mode.clear()
 
     def _run_case(self, case_name: str) -> None:
+        """Run case."""
         run_hybrid_search_index_case(
             self._namespace, self._corpus, get_search_index_case(case_name)
         )

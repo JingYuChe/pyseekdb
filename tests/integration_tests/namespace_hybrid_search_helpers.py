@@ -66,6 +66,7 @@ WHERE_NOT_BOTH_TOKENS_NUMERIC: dict[str, Any] = {
 
 @dataclass(frozen=True)
 class SearchIndexQueryCase:
+    """SearchIndexQueryCase class."""
     name: str
     where: dict[str, Any]
     n_results: int
@@ -75,6 +76,7 @@ class SearchIndexQueryCase:
 
 @dataclass(frozen=True)
 class VectorKnnCase:
+    """VectorKnnCase class."""
     name: str
     query_vector: list[float]
     n_results: int
@@ -128,14 +130,17 @@ def corpus_matches_where(record: CorpusRecord, where: dict[str, Any]) -> bool:
 
 
 def count_corpus_matches(corpus: list[CorpusRecord], where: dict[str, Any]) -> int:
+    """Count corpus matches."""
     return sum(1 for rec in corpus if corpus_matches_where(rec, where))
 
 
 def l2_squared(a: list[float], b: list[float]) -> float:
+    """L2 squared."""
     return sum((x - y) ** 2 for x, y in zip(a, b))
 
 
 def _vector_l2_norm(vec: list[float]) -> float:
+    """Vector l2 norm."""
     return math.sqrt(sum(x * x for x in vec))
 
 
@@ -234,6 +239,7 @@ def expected_knn_ids(
     *,
     distance_metric: VectorDistanceMetric = "l2",
 ) -> list[str]:
+    """Expected knn ids."""
     scored = _knn_scored_rows(
         corpus, query_vector, where, distance_metric=distance_metric
     )
@@ -251,6 +257,7 @@ def assert_hybrid_search_index_result(
     min_hits: int = 1,
     exact_match_count: int | None = None,
 ) -> None:
+    """Assert hybrid search index result."""
     assert result is not None
     assert "ids" in result and result["ids"]
     ids = result["ids"][0]
@@ -364,6 +371,7 @@ def run_hybrid_search_index_case(
     corpus: list[CorpusRecord],
     case: SearchIndexQueryCase,
 ) -> dict[str, Any]:
+    """Run hybrid search index case."""
     result = namespace.hybrid_search(
         query={"where": case.where, "n_results": case.n_results},
         n_results=case.n_results,
@@ -387,6 +395,7 @@ def run_hybrid_knn_case(
     *,
     distance_metric: VectorDistanceMetric = "l2",
 ) -> dict[str, Any]:
+    """Run hybrid knn case."""
     knn: dict[str, Any] = {
         "query_embeddings": case.query_vector,
         "n_results": case.n_results,
@@ -417,6 +426,7 @@ def run_hybrid_combined_case(
     *,
     distance_metric: VectorDistanceMetric = "l2",
 ) -> dict[str, Any]:
+    """Run hybrid combined case."""
     query: dict[str, Any] | None = None
     if case.where_document is not None or case.where is not None:
         query = {"n_results": case.n_results}
@@ -574,6 +584,7 @@ SEARCH_INDEX_CASES: list[SearchIndexQueryCase] = [
 
 
 def get_search_index_case(name: str) -> SearchIndexQueryCase:
+    """Get search index case."""
     for case in SEARCH_INDEX_CASES:
         if case.name == name:
             return case
@@ -605,6 +616,7 @@ VECTOR_KNN_CASES: list[VectorKnnCase] = [
 
 
 def get_vector_knn_case(name: str) -> VectorKnnCase:
+    """Get vector knn case."""
     for case in VECTOR_KNN_CASES:
         if case.name == name:
             return case
@@ -675,6 +687,7 @@ HYBRID_COMBINED_CASES: list[HybridCombinedCase] = [
 
 
 def get_hybrid_combined_case(name: str) -> HybridCombinedCase:
+    """Get hybrid combined case."""
     for case in HYBRID_COMBINED_CASES:
         if case.name == name:
             return case
@@ -713,6 +726,7 @@ def _default_knn(
     where: dict[str, Any] | None = None,
     knn_n_results: int | None = None,
 ) -> dict[str, Any]:
+    """Default knn."""
     return {
         "query_embeddings": KNN_QUERY_VECTOR,
         "n_results": knn_n_results or max(n_results * 2, 20),
@@ -724,6 +738,7 @@ def corpus_matches_triple_intersection(
     record: CorpusRecord,
     case: HybridTripleBranchCase,
 ) -> bool:
+    """Corpus matches triple intersection."""
     if case.where_document is not None:
         if not doc_matches_where_document(record.document, case.where_document):
             return False
@@ -741,6 +756,7 @@ def count_triple_intersection_matches(
     corpus: list[CorpusRecord],
     case: HybridTripleBranchCase,
 ) -> int:
+    """Count triple intersection matches."""
     return sum(1 for rec in corpus if corpus_matches_triple_intersection(rec, case))
 
 
@@ -749,6 +765,7 @@ def _slice_hybrid_result(
     corpus: list[CorpusRecord],
     predicate,
 ) -> dict[str, Any]:
+    """Slice hybrid result."""
     corpus_by_id = {rec.doc_id: rec for rec in corpus}
     ids = result["ids"][0]
     indices = [
@@ -771,6 +788,7 @@ def assert_hybrid_triple_branch_result(
     *,
     distance_metric: VectorDistanceMetric = "l2",
 ) -> None:
+    """Assert hybrid triple branch result."""
     assert result is not None
     assert "ids" in result and result["ids"]
     ids = result["ids"][0]
@@ -802,6 +820,7 @@ def assert_hybrid_triple_branch_result(
         assert case.where_document is not None
 
         def _fts_row(rec: CorpusRecord) -> bool:
+            """Fts row."""
             if not doc_matches_where_document(rec.document, case.where_document):
                 return False
             if case.where is not None and not doc_matches_where_metadata(rec.metadata, case.where):
@@ -832,6 +851,7 @@ def assert_hybrid_triple_branch_result(
         assert case.where is not None
 
         def _si_row(rec: CorpusRecord) -> bool:
+            """Si row."""
             if not corpus_matches_where(rec, case.where):
                 return False
             if case.where_document is not None and not doc_matches_where_document(
@@ -865,6 +885,7 @@ def assert_hybrid_triple_branch_result(
         knn_where = case.knn.get("where")
 
         def _knn_row(rec: CorpusRecord) -> bool:
+            """Knn row."""
             if knn_where is not None and not corpus_matches_where(rec, knn_where):
                 return False
             if case.where is not None and not doc_matches_where_metadata(rec.metadata, case.where):
@@ -953,6 +974,7 @@ def assert_hybrid_triple_branch_result(
 def _build_triple_branch_hybrid_search_kwargs(
     case: HybridTripleBranchCase,
 ) -> dict[str, Any]:
+    """Build triple branch hybrid search kwargs."""
     query: dict[str, Any] | None = None
     if case.where_document is not None or case.where is not None:
         query = {"n_results": case.n_results}
@@ -1058,6 +1080,7 @@ def _try_assert_hybrid_triple_branch_result(
     *,
     distance_metric: VectorDistanceMetric = "l2",
 ) -> BaseException | None:
+    """Try assert hybrid triple branch result."""
     try:
         assert_hybrid_triple_branch_result(
             corpus, result, case, distance_metric=distance_metric
@@ -1146,6 +1169,7 @@ def run_hybrid_triple_branch_case(
     collection_baseline: Any | None = None,
     distance_metric: VectorDistanceMetric = "l2",
 ) -> dict[str, Any]:
+    """Run hybrid triple branch case."""
     if collection_baseline is not None:
         assert_flat_collection_baseline(collection_baseline)
         try:
@@ -1553,6 +1577,7 @@ TRIPLE_BRANCH_CASES: list[HybridTripleBranchCase] = [
 
 
 def get_triple_branch_case(name: str) -> HybridTripleBranchCase:
+    """Get triple branch case."""
     for case in TRIPLE_BRANCH_CASES:
         if case.name == name:
             return case
@@ -1567,6 +1592,7 @@ def run_triple_branch_case_on_quadrants(
     collection_baseline: Any | None = None,
     distance_metric: VectorDistanceMetric = "l2",
 ) -> None:
+    """Run triple branch case on quadrants."""
     tb_case = case if isinstance(case, HybridTripleBranchCase) else get_triple_branch_case(case)
     for key in quadrant_keys:
         corpus, namespace = ctx[key]
@@ -1584,6 +1610,7 @@ def run_search_index_case_on_quadrants(
     case: SearchIndexQueryCase | str,
     quadrant_keys: tuple[str, ...] = MULTI_COLL_MULTI_NS_FTS_LOADED_QUADRANTS,
 ) -> None:
+    """Run search index case on quadrants."""
     si_case = case if isinstance(case, SearchIndexQueryCase) else get_search_index_case(case)
     for key in quadrant_keys:
         corpus, namespace = ctx[key]
@@ -1597,6 +1624,7 @@ def run_knn_case_on_quadrants(
     *,
     distance_metric: VectorDistanceMetric = "l2",
 ) -> None:
+    """Run knn case on quadrants."""
     knn_case = case if isinstance(case, VectorKnnCase) else get_vector_knn_case(case)
     for key in quadrant_keys:
         corpus, namespace = ctx[key]
@@ -1611,6 +1639,7 @@ def assert_hybrid_search_index_no_hits(
     *,
     n_results: int = 10,
 ) -> None:
+    """Assert hybrid search index no hits."""
     result = namespace.hybrid_search(
         query={"where": where, "n_results": n_results},
         n_results=n_results,

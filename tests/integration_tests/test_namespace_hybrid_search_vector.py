@@ -38,6 +38,7 @@ class TestNamespaceHybridSearchVector:
         vector_distance: VectorDistanceMetric,
         request: pytest.FixtureRequest,
     ) -> None:
+        """Bind shared collection."""
         entry = ensure_shared_hybrid_search_collection(
             self._shared_by_mode, db_client, request, vector_distance
         )
@@ -47,11 +48,13 @@ class TestNamespaceHybridSearchVector:
 
     @classmethod
     def teardown_class(cls) -> None:
+        """Teardown class."""
         for entry in cls._shared_by_mode.values():
             teardown_large_fts_collection(entry["db_client"], entry["collection"])
         cls._shared_by_mode.clear()
 
     def _new_namespace(self, case_name: str) -> Any:
+        """New namespace."""
         ns_name = f"ns_knn_{case_name}_{int(time.time() * 1000)}"
         return setup_fts_namespace_with_corpus(
             self._collection,
@@ -60,6 +63,7 @@ class TestNamespaceHybridSearchVector:
         )
 
     def _run_knn_case(self, case_name: str) -> None:
+        """Run knn case."""
         namespace = self._new_namespace(case_name)
         run_hybrid_knn_case(
             namespace,
@@ -70,6 +74,7 @@ class TestNamespaceHybridSearchVector:
 
     @pytest.mark.parametrize("case_name", [c.name for c in VECTOR_KNN_CASES])
     def test_hybrid_search_vector_knn_cases(self, db_client, case_name: str):
+        """Test hybrid search vector knn cases."""
         self._run_knn_case(case_name)
 
     def test_hybrid_search_vector_top1_nearest(self, db_client):

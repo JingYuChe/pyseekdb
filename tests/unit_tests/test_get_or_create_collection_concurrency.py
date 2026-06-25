@@ -21,8 +21,11 @@ from pyseekdb.client.types import _NOT_PROVIDED  # noqa: E402
 
 
 class TestCollectionCatalogConflictDetection:
+    """TestCollectionCatalogConflictDetection class."""
     def test_detects_integrity_error_on_sdk_collections(self):
+        """Test detects integrity error on sdk collections."""
         class IntegrityError(Exception):
+            """IntegrityError class."""
             pass
 
         exc = IntegrityError(
@@ -31,20 +34,25 @@ class TestCollectionCatalogConflictDetection:
         assert _is_sdk_collection_catalog_conflict_error(exc)
 
     def test_ignores_unrelated_errors(self):
+        """Test ignores unrelated errors."""
         assert not _is_sdk_collection_catalog_conflict_error(ValueError("invalid dimension"))
 
 
 class TestCollectionCatalogInsertRecovery:
+    """TestCollectionCatalogInsertRecovery class."""
     def test_insert_conflict_reuses_existing_collection_id(self):
+        """Test insert conflict reuses existing collection id."""
         client = MagicMock(spec=BaseClient)
         client._get_collection_id.side_effect = [ValueError("not found"), "existing_id"]
         conn = MagicMock()
         client._ensure_connection.return_value = conn
 
         class IntegrityError(Exception):
+            """IntegrityError class."""
             pass
 
         def execute_side_effect(sql):
+            """Execute side effect."""
             if "INSERT INTO" in sql:
                 raise IntegrityError(
                     '(1062, "Duplicate entry \'items\' for key \'uk_sdk_coll_name\'")'
@@ -60,6 +68,7 @@ class TestCollectionCatalogInsertRecovery:
         assert client._get_collection_id.call_count == 2
 
     def test_existing_catalog_row_is_reused_without_insert(self):
+        """Test existing catalog row is reused without insert."""
         client = MagicMock(spec=BaseClient)
         client._get_collection_id.return_value = "existing_id"
 
@@ -73,25 +82,32 @@ class TestCollectionCatalogInsertRecovery:
 
 
 class TestCollectionConflictDetection:
+    """TestCollectionConflictDetection class."""
     def test_detects_value_error_for_existing_collection(self):
+        """Test detects value error for existing collection."""
         assert _is_collection_conflict_error(ValueError("Collection 'items' already exists"))
 
     def test_detects_seekdb_table_exists_error(self):
+        """Test detects seekdb table exists error."""
         class SeekdbError(Exception):
+            """SeekdbError class."""
             pass
 
         exc = SeekdbError("Table 'c$v2$abc' already exists failed: code=1050")
         assert _is_collection_conflict_error(exc)
 
     def test_ignores_unrelated_errors(self):
+        """Test ignores unrelated errors."""
         assert not _is_collection_conflict_error(ValueError("invalid dimension"))
 
     def test_ignores_metadata_failure_without_conflict_cause(self):
+        """Test ignores metadata failure without conflict cause."""
         assert not _is_collection_conflict_error(
             ValueError("Failed to create collection metadata: Collection not found: 'items'")
         )
 
     def test_detects_conflict_in_cause_chain(self):
+        """Test detects conflict in cause chain."""
         inner = Exception("Table 'c$v2$abc' already exists failed: code=1050")
         outer = ValueError("Failed to create collection metadata: duplicate entry")
         outer.__cause__ = inner
@@ -99,13 +115,16 @@ class TestCollectionConflictDetection:
 
 
 class TestGetOrCreateCollectionRecovery:
+    """TestGetOrCreateCollectionRecovery class."""
     @staticmethod
     def _bind_resume_helper(client):
+        """Bind resume helper."""
         client._get_or_resume_existing_collection = (
             BaseClient._get_or_resume_existing_collection.__get__(client, BaseClient)
         )
 
     def test_returns_existing_collection_after_create_conflict(self):
+        """Test returns existing collection after create conflict."""
         client = MagicMock(spec=BaseClient)
         self._bind_resume_helper(client)
         client.has_collection.return_value = False
@@ -119,6 +138,7 @@ class TestGetOrCreateCollectionRecovery:
         client.get_collection.assert_called_once_with("items", embedding_function=_NOT_PROVIDED)
 
     def test_retries_get_after_wrapped_table_conflict(self):
+        """Test retries get after wrapped table conflict."""
         client = MagicMock(spec=BaseClient)
         self._bind_resume_helper(client)
         client.has_collection.return_value = False
@@ -135,6 +155,7 @@ class TestGetOrCreateCollectionRecovery:
         client.get_collection.assert_called_once_with("items", embedding_function=_NOT_PROVIDED)
 
     def test_conflict_on_namespace_collection_resumes_incomplete_handle(self):
+        """Test conflict on namespace collection resumes incomplete handle."""
         client = MagicMock(spec=BaseClient)
         self._bind_resume_helper(client)
         resumed = object()
@@ -157,6 +178,7 @@ class TestGetOrCreateCollectionRecovery:
         client.get_collection.assert_not_called()
 
     def test_conflict_on_namespace_collection_without_metadata_reraises(self):
+        """Test conflict on namespace collection without metadata reraises."""
         client = MagicMock(spec=BaseClient)
         self._bind_resume_helper(client)
         client.has_collection.return_value = False
@@ -167,6 +189,7 @@ class TestGetOrCreateCollectionRecovery:
             BaseClient.get_or_create_collection(client, "items", use_namespace=True)
 
     def test_resumes_incomplete_namespace_collection_when_present(self):
+        """Test resumes incomplete namespace collection when present."""
         client = MagicMock(spec=BaseClient)
         resumed = object()
         client.has_collection.return_value = True
@@ -180,6 +203,7 @@ class TestGetOrCreateCollectionRecovery:
         client.get_collection.assert_not_called()
 
     def test_does_not_mask_unrelated_create_errors(self):
+        """Test does not mask unrelated create errors."""
         client = MagicMock(spec=BaseClient)
         client.has_collection.return_value = False
         client.create_collection.side_effect = ValueError("invalid dimension")
@@ -189,7 +213,9 @@ class TestGetOrCreateCollectionRecovery:
 
 
 class TestListNsNamespacesRecyclebinFilter:
+    """TestListNsNamespacesRecyclebinFilter class."""
     def test_sql_excludes_recyclebin_rows(self):
+        """Test sql excludes recyclebin rows."""
         client = MagicMock(spec=BaseClient)
         client._qtable.return_value = "`sdk_namespaces`"
         client._execute.return_value = [

@@ -15,6 +15,7 @@ from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT, ns_schema
 
 
 def _make_oceanbase_client():
+    """Make oceanbase client."""
     import os
 
     return pyseekdb.Client(
@@ -28,6 +29,7 @@ def _make_oceanbase_client():
 
 
 def _count_sdk_namespaces(client, collection_id: str, namespace_name: str) -> int:
+    """Count sdk namespaces."""
     rows = client._server._execute(
         "SELECT COUNT(*) AS cnt FROM sdk_namespaces "
         f"WHERE collection_id = '{collection_id}' AND namespace_name = '{namespace_name}'"
@@ -37,6 +39,7 @@ def _count_sdk_namespaces(client, collection_id: str, namespace_name: str) -> in
 
 
 def _count_sdk_ltables(client, collection_id: str, namespace_id: int) -> int:
+    """Count sdk ltables."""
     rows = client._server._execute(
         "SELECT COUNT(*) AS cnt FROM sdk_ltables "
         f"WHERE collection_id = '{collection_id}' AND namespace_id = {int(namespace_id)} "
@@ -47,6 +50,7 @@ def _count_sdk_ltables(client, collection_id: str, namespace_id: int) -> int:
 
 
 class TestLogicTableMonitoringP1:
+    """TestLogicTableMonitoringP1 class."""
     def test_concurrent_get_or_create_same_namespace_is_idempotent(self, oceanbase_client):
         """8 threads with independent clients race on the same namespace name."""
         owner = oceanbase_client
@@ -64,6 +68,7 @@ class TestLogicTableMonitoringP1:
         errors: list[str] = []
 
         def _worker(thread_id: int) -> None:
+            """Worker."""
             client = _make_oceanbase_client()
             try:
                 coll = client.get_collection(collection_name)

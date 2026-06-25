@@ -30,6 +30,7 @@ from namespace_hybrid_search_helpers import (
 
 @pytest.mark.parametrize("vector_distance", ["l2", "cosine"])
 class TestNamespaceHybridSearchCombined:
+    """TestNamespaceHybridSearchCombined class."""
     _shared_by_mode: ClassVar[dict[str, dict[str, Any]]] = {}
 
     @pytest.fixture(autouse=True)
@@ -39,6 +40,7 @@ class TestNamespaceHybridSearchCombined:
         vector_distance: VectorDistanceMetric,
         request: pytest.FixtureRequest,
     ) -> None:
+        """Bind shared collection."""
         entry = ensure_shared_hybrid_search_collection(
             self._shared_by_mode, db_client, request, vector_distance
         )
@@ -48,11 +50,13 @@ class TestNamespaceHybridSearchCombined:
 
     @classmethod
     def teardown_class(cls) -> None:
+        """Teardown class."""
         for entry in cls._shared_by_mode.values():
             teardown_large_fts_collection(entry["db_client"], entry["collection"])
         cls._shared_by_mode.clear()
 
     def _new_namespace(self, case_name: str) -> Any:
+        """New namespace."""
         return setup_fts_namespace_with_corpus(
             self._collection,
             self._corpus,
@@ -61,6 +65,7 @@ class TestNamespaceHybridSearchCombined:
 
     @pytest.mark.parametrize("case_name", [c.name for c in HYBRID_COMBINED_CASES])
     def test_hybrid_search_combined(self, db_client, case_name: str):
+        """Test hybrid search combined."""
         case = get_hybrid_combined_case(case_name)
         namespace = self._new_namespace(case_name)
         run_hybrid_combined_case(

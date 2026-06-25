@@ -16,6 +16,7 @@ from pymysql.converters import escape_string
 
 
 def _make_oceanbase_client():
+    """Make oceanbase client."""
     import os
 
     return pyseekdb.Client(
@@ -29,6 +30,7 @@ def _make_oceanbase_client():
 
 
 def _count_sdk_collections(client, collection_name: str) -> int:
+    """Count sdk collections."""
     name_escaped = escape_string(collection_name)
     rows = client._server._execute(
         "SELECT COUNT(*) AS cnt FROM sdk_collections "
@@ -39,6 +41,7 @@ def _count_sdk_collections(client, collection_name: str) -> int:
 
 
 def _has_unique_name_index(client) -> bool:
+    """Has unique name index."""
     rows = client._server._execute("SHOW INDEX FROM sdk_collections")
     for row in rows:
         key_name = row["Key_name"] if isinstance(row, dict) else row[2]
@@ -48,6 +51,7 @@ def _has_unique_name_index(client) -> bool:
 
 
 class TestGetOrCreateCollectionConcurrencyOceanBase:
+    """TestGetOrCreateCollectionConcurrencyOceanBase class."""
     def test_concurrent_get_or_create_collection_is_idempotent(self, oceanbase_client):
         """8 independent clients race on get_or_create_collection with the same name."""
         owner = oceanbase_client
@@ -57,6 +61,7 @@ class TestGetOrCreateCollectionConcurrencyOceanBase:
         errors: list[str] = []
 
         def _worker(thread_id: int) -> None:
+            """Worker."""
             client = _make_oceanbase_client()
             try:
                 barrier.wait(timeout=30)

@@ -35,6 +35,7 @@ class TestNamespaceHybridSearchFulltext:
 
     @pytest.fixture(autouse=True)
     def _bind_shared_collection(self, db_client: Any, request: pytest.FixtureRequest) -> None:
+        """Bind shared collection."""
         mode = request.node.callspec.params["db_client"] if request.node.callspec else "default"
         if mode not in self._shared_by_mode:
             corpus, collection = setup_large_fts_collection(db_client)
@@ -50,11 +51,13 @@ class TestNamespaceHybridSearchFulltext:
 
     @classmethod
     def teardown_class(cls) -> None:
+        """Teardown class."""
         for entry in cls._shared_by_mode.values():
             teardown_large_fts_collection(entry["db_client"], entry["collection"])
         cls._shared_by_mode.clear()
 
     def _new_namespace(self, case_name: str) -> Any:
+        """New namespace."""
         ns_name = f"ns_{case_name}_{int(time.time() * 1000)}"
         return setup_fts_namespace_with_corpus(
             self._collection,
@@ -63,6 +66,7 @@ class TestNamespaceHybridSearchFulltext:
         )
 
     def _run_fts_case(self, case_name: str) -> None:
+        """Run fts case."""
         namespace = self._new_namespace(case_name)
         run_hybrid_search_fts_case(namespace, self._corpus, get_fts_case(case_name))
 

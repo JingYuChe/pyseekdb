@@ -15,7 +15,9 @@ from namespace_dml_helpers import (
 
 class TestNamespaceDMLMultiColl:
 
+    """TestNamespaceDMLMultiColl class."""
     def test_same_namespace_name_across_collections(self, db_client):
+        """Test same namespace name across collections."""
         coll_a = create_ns_collection(db_client, suffix="_mc_a")
         coll_b = create_ns_collection(db_client, suffix="_mc_b")
         ns_a = coll_a.create_namespace("tenant")
@@ -46,6 +48,7 @@ class TestNamespaceDMLMultiColl:
             cleanup(db_client, coll_a, coll_b)
 
     def test_update_delete_isolated_by_collection(self, db_client):
+        """Test update delete isolated by collection."""
         coll_a = create_ns_collection(db_client, suffix="_mc_upd_a")
         coll_b = create_ns_collection(db_client, suffix="_mc_upd_b")
         ns_a = coll_a.create_namespace("tenant")

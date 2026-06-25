@@ -16,7 +16,9 @@ from pyseekdb.client.client_base import BaseClient  # noqa: E402
 
 
 class TestNamespaceUpsertReconcile:
+    """TestNamespaceUpsertReconcile class."""
     def test_reconcile_skips_when_single_row_exists(self):
+        """Test reconcile skips when single row exists."""
         client = MagicMock(spec=BaseClient)
         client._count_namespace_records_by_id.return_value = 1
 
@@ -39,6 +41,7 @@ class TestNamespaceUpsertReconcile:
         client._namespace_add.assert_not_called()
 
     def test_reconcile_collapses_duplicate_rows(self):
+        """Test reconcile collapses duplicate rows."""
         client = MagicMock(spec=BaseClient)
         client._count_namespace_records_by_id.side_effect = [4, 0, 1]
 
@@ -68,6 +71,7 @@ class TestNamespaceUpsertReconcile:
         assert add_kwargs["embeddings"] == [[1.0, 2.0, 3.0]]
 
     def test_reconcile_raises_when_retries_exhausted(self):
+        """Test reconcile raises when retries exhausted."""
         client = MagicMock(spec=BaseClient)
         client._count_namespace_records_by_id.return_value = 4
 

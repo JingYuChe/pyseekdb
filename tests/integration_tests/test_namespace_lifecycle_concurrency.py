@@ -15,10 +15,12 @@ from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT, cleanup, ns_sc
 
 
 def _unique_name(prefix: str) -> str:
+    """Unique name."""
     return f"{prefix}_{time.time_ns()}"
 
 
 def _new_oceanbase_client():
+    """New oceanbase client."""
     return pyseekdb.Client(
         host=os.environ.get("OB_HOST", "127.0.0.1"),
         port=int(os.environ.get("OB_PORT", "10902")),
@@ -47,6 +49,7 @@ def test_multi_client_has_false_after_drop_returns(oceanbase_client):
         collection.create_namespace(ns_name)
 
         def _drop_worker() -> None:
+            """Drop worker."""
             try:
                 clients[0].get_collection(collection.name).delete_namespace(ns_name)
             except Exception as exc:  # noqa: BLE001
@@ -55,6 +58,7 @@ def test_multi_client_has_false_after_drop_returns(oceanbase_client):
                 drop_done.set()
 
         def _has_worker() -> None:
+            """Has worker."""
             try:
                 coll = clients[1].get_collection(collection.name)
                 drop_done.wait(timeout=60)
@@ -104,12 +108,14 @@ def test_multi_client_has_does_not_error_during_drop(oceanbase_client):
         real_execute = clients[0]._server._execute
 
         def _slow_drop_execute(sql, *args, **kwargs):
+            """Slow drop execute."""
             if "DROP_NAMESPACE" in str(sql):
                 drop_started.set()
                 assert drop_can_finish.wait(timeout=30), "drop blocked too long"
             return real_execute(sql, *args, **kwargs)
 
         def _drop_worker() -> None:
+            """Drop worker."""
             try:
                 with patch.object(clients[0]._server, "_execute", side_effect=_slow_drop_execute):
                     dropper.delete_namespace(ns_name)
@@ -117,6 +123,7 @@ def test_multi_client_has_does_not_error_during_drop(oceanbase_client):
                 errors.append(exc)
 
         def _has_worker() -> None:
+            """Has worker."""
             try:
                 assert drop_started.wait(timeout=30), "drop did not start"
                 for _ in range(10):

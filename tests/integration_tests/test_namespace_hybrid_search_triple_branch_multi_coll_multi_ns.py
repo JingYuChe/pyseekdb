@@ -62,6 +62,7 @@ _RRF_CASE_NAMES: tuple[str, ...] = tuple(
 
 
 def _namespace_corpus(base_corpus: list[CorpusRecord], key: str) -> list[CorpusRecord]:
+    """Namespace corpus."""
     return [
         CorpusRecord(
             doc_id=f"{key}_{record.doc_id}",
@@ -118,6 +119,7 @@ def _setup_multi_coll_multi_ns_isolation_triple(
 
 
 class TestNamespaceHybridSearchTripleBranchMultiCollMultiNs:
+    """TestNamespaceHybridSearchTripleBranchMultiCollMultiNs class."""
     @pytest.mark.parametrize("vector_distance", ["l2", "cosine"])
     def test_cross_quadrant_triple_branch_isolation(
         self, db_client, vector_distance: VectorDistanceMetric
@@ -149,6 +151,7 @@ class TestNamespaceHybridSearchTripleBranchMultiCollMultiNs:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)
 
     def test_cross_quadrant_search_index_branch_isolation(self, db_client):
+        """Test cross quadrant search index branch isolation."""
         ctx = setup_multi_coll_multi_ns_fts_single_loaded(db_client, loaded_quadrant="c1_x")
         try:
             case = get_triple_branch_case("si_and_has_both_zpx_gte")
@@ -166,6 +169,7 @@ class TestNamespaceHybridSearchTripleBranchMultiCollMultiNs:
     def test_triple_branch_top1_fts_all_quadrants(
         self, db_client, vector_distance: VectorDistanceMetric
     ):
+        """Test triple branch top1 fts all quadrants."""
         ctx = _setup_multi_coll_multi_ns_isolation_triple(
             db_client, distance=vector_distance
         )
@@ -194,6 +198,7 @@ class TestNamespaceHybridSearchTripleBranchMultiCollMultiNs:
 
     @pytest.mark.parametrize("case_name", _FTS_TRIPLE_CASE_NAMES)
     def test_hybrid_search_triple_branch_fts_all_loaded_quadrants(self, db_client, case_name: str):
+        """Test hybrid search triple branch fts all loaded quadrants."""
         ctx = setup_multi_coll_multi_ns_fts(db_client)
         try:
             run_triple_branch_case_on_quadrants(ctx, case_name)
@@ -204,6 +209,7 @@ class TestNamespaceHybridSearchTripleBranchMultiCollMultiNs:
     def test_hybrid_search_triple_branch_search_index_all_loaded_quadrants(
         self, db_client, case_name: str
     ):
+        """Test hybrid search triple branch search index all loaded quadrants."""
         ctx = setup_multi_coll_multi_ns_fts(db_client)
         try:
             run_triple_branch_case_on_quadrants(ctx, case_name)
@@ -215,6 +221,7 @@ class TestNamespaceHybridSearchTripleBranchMultiCollMultiNs:
     def test_hybrid_search_triple_branch_knn_all_loaded_quadrants(
         self, db_client, vector_distance: VectorDistanceMetric, case_name: str
     ):
+        """Test hybrid search triple branch knn all loaded quadrants."""
         ctx = setup_multi_coll_multi_ns_fts(db_client, distance=vector_distance)
         try:
             run_triple_branch_case_on_quadrants(
@@ -228,6 +235,7 @@ class TestNamespaceHybridSearchTripleBranchMultiCollMultiNs:
     def test_hybrid_search_triple_branch_intersection_all_loaded_quadrants(
         self, db_client, vector_distance: VectorDistanceMetric, case_name: str
     ):
+        """Test hybrid search triple branch intersection all loaded quadrants."""
         ctx = setup_multi_coll_multi_ns_fts(db_client, distance=vector_distance)
         try:
             run_triple_branch_case_on_quadrants(
@@ -241,6 +249,7 @@ class TestNamespaceHybridSearchTripleBranchMultiCollMultiNs:
     def test_hybrid_search_triple_branch_rrf_all_loaded_quadrants(
         self, db_client, vector_distance: VectorDistanceMetric, case_name: str
     ):
+        """Test hybrid search triple branch rrf all loaded quadrants."""
         ctx = setup_multi_coll_multi_ns_fts(db_client, distance=vector_distance)
         try:
             run_triple_branch_case_on_quadrants(

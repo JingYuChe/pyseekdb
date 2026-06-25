@@ -99,6 +99,7 @@ class TestNamespaceHybridSearchFulltextMultiCollMultiNs:
     """Large-scale hybrid_search FTS across 2 collections x 2 loaded namespaces."""
 
     def _run_fts_case_all_quadrants(self, db_client, case_name: str) -> None:
+        """Run fts case all quadrants."""
         ctx = _setup_multi_coll_multi_ns_isolation_fts(db_client)
         try:
             case = get_fts_case(case_name)
@@ -133,15 +134,19 @@ class TestNamespaceHybridSearchFulltextMultiCollMultiNs:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)
 
     def test_hybrid_search_fulltext_contains_token_zpx(self, db_client):
+        """Test hybrid search fulltext contains token zpx."""
         self._run_fts_case_all_quadrants(db_client, "contains_token_zpx")
 
     def test_hybrid_search_fulltext_contains_token_alp(self, db_client):
+        """Test hybrid search fulltext contains token alp."""
         self._run_fts_case_all_quadrants(db_client, "contains_token_alp")
 
     def test_hybrid_search_fulltext_contains_string_shorthand(self, db_client):
+        """Test hybrid search fulltext contains string shorthand."""
         self._run_fts_case_all_quadrants(db_client, "string_shorthand_token_zpx")
 
     def test_hybrid_search_fulltext_not_contains(self, db_client):
+        """Test hybrid search fulltext not contains."""
         case = get_fts_case("not_contains_token_zpx")
         ctx = _setup_multi_coll_multi_ns_isolation_fts(db_client)
         try:
@@ -153,15 +158,19 @@ class TestNamespaceHybridSearchFulltextMultiCollMultiNs:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)
 
     def test_hybrid_search_fulltext_and_zpx_alp(self, db_client):
+        """Test hybrid search fulltext and zpx alp."""
         self._run_fts_case_all_quadrants(db_client, "and_zpx_alp")
 
     def test_hybrid_search_fulltext_and_multi_contains(self, db_client):
+        """Test hybrid search fulltext and multi contains."""
         self._run_fts_case_all_quadrants(db_client, "and_multi_contains_phrase")
 
     def test_hybrid_search_fulltext_or_zpx_alp(self, db_client):
+        """Test hybrid search fulltext or zpx alp."""
         self._run_fts_case_all_quadrants(db_client, "or_zpx_alp")
 
     def test_hybrid_search_fulltext_top1_contains_zpx(self, db_client):
+        """Test hybrid search fulltext top1 contains zpx."""
         ctx = _setup_multi_coll_multi_ns_isolation_fts(db_client)
         try:
             for key in MULTI_COLL_MULTI_NS_QUADRANT_KEYS:

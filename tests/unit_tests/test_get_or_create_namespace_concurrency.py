@@ -19,8 +19,11 @@ from pyseekdb.client.client_base import (  # noqa: E402
 
 
 class TestNamespaceCatalogConflictDetection:
+    """TestNamespaceCatalogConflictDetection class."""
     def test_detects_integrity_error_on_sdk_namespaces(self):
+        """Test detects integrity error on sdk namespaces."""
         class IntegrityError(Exception):
+            """IntegrityError class."""
             pass
 
         exc = IntegrityError(
@@ -29,7 +32,9 @@ class TestNamespaceCatalogConflictDetection:
         assert _is_namespace_catalog_conflict_error(exc)
 
     def test_detects_integrity_error_on_sdk_ltables(self):
+        """Test detects integrity error on sdk ltables."""
         class IntegrityError(Exception):
+            """IntegrityError class."""
             pass
 
         exc = IntegrityError(
@@ -38,11 +43,14 @@ class TestNamespaceCatalogConflictDetection:
         assert _is_namespace_catalog_conflict_error(exc)
 
     def test_ignores_unrelated_errors(self):
+        """Test ignores unrelated errors."""
         assert not _is_namespace_catalog_conflict_error(ValueError("invalid namespace name"))
 
 
 class TestGetOrCreateNamespaceMetaRecovery:
+    """TestGetOrCreateNamespaceMetaRecovery class."""
     def test_idempotent_insert_reuses_existing_namespace(self):
+        """Test idempotent insert reuses existing namespace."""
         client = MagicMock(spec=BaseClient)
         client._get_ns_namespace_meta.return_value = None
         client._insert_ns_namespace_catalog_row.return_value = 42
@@ -64,6 +72,7 @@ class TestGetOrCreateNamespaceMetaRecovery:
         )
 
     def test_existing_namespace_without_ltable_creates_default_ltable(self):
+        """Test existing namespace without ltable creates default ltable."""
         client = MagicMock(spec=BaseClient)
         client._get_ns_namespace_meta.return_value = {
             "namespace_id": "42",
