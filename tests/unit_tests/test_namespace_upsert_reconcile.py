@@ -4,7 +4,7 @@ Unit tests for namespace upsert duplicate-record reconciliation.
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -66,6 +66,27 @@ class TestNamespaceUpsertReconcile:
         assert add_kwargs["documents"] == ["winner"]
         assert add_kwargs["metadatas"] == [{"client": 2}]
         assert add_kwargs["embeddings"] == [[1.0, 2.0, 3.0]]
+
+    def test_reconcile_raises_when_retries_exhausted(self):
+        client = MagicMock(spec=BaseClient)
+        client._count_namespace_records_by_id.return_value = 4
+
+        with patch("pyseekdb.client.client_base.time.sleep"):
+            with pytest.raises(ValueError, match="Failed to reconcile duplicate namespace rows"):
+                BaseClient._reconcile_namespace_duplicate_records(
+                    client,
+                    collection_id="c" * 32,
+                    collection_name="items",
+                    namespace_id="7",
+                    namespace_name="race_ns",
+                    ltable_id=9,
+                    table_name="logic_data_table",
+                    ids=["same_new_id"],
+                    documents=["doc"],
+                    metadatas=None,
+                    embeddings=None,
+                    embedding_function=None,
+                )
 
 
 if __name__ == "__main__":

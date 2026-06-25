@@ -135,6 +135,19 @@ def _is_sdk_collection_catalog_conflict_error(exc: BaseException) -> bool:
     return False
 
 
+def _reraise_unless_unique_index_exists(exc: BaseException) -> None:
+    """Re-raise unless the exception indicates the unique index is already present."""
+    message = str(exc).lower()
+    if (
+        "already exists" in message
+        or "duplicate key name" in message
+        or "code=1061" in message
+        or "1061" in message and "duplicate" in message
+    ):
+        return
+    raise exc
+
+
 def _extract_hnsw_config(config: ConfigurationParam) -> HNSWConfiguration | None:
     """Return the HNSW config from a Configuration/HNSWConfiguration, or None."""
     if config is None:
@@ -1188,10 +1201,12 @@ class BaseClient(BaseConnection, AdminAPI):
                 UNIQUE KEY uk_sdk_coll_name (collection_name)
             ) COMMENT='Settings of collections created by SDK' ORGANIZATION INDEX {scp};"""
             self._execute(create_table_sql)
-            with contextlib.suppress(Exception):
+            try:
                 self._execute(
                     f"CREATE UNIQUE INDEX uk_sdk_coll_name ON {sdk_coll} (collection_name)"
                 )
+            except Exception as exc:
+                _reraise_unless_unique_index_exists(exc)
         except Exception as e:
             raise ValueError(f"Failed to create sdk_collections table: {e}") from e
 
@@ -1328,16 +1343,20 @@ class BaseClient(BaseConnection, AdminAPI):
         self._execute(ns_namespaces_sql)
         self._execute(ns_ltables_sql)
         self._execute(namespaces_stats_sql)
-        with contextlib.suppress(Exception):
+        try:
             self._execute(
                 f"CREATE UNIQUE INDEX uk_sdk_ns_coll_name ON {ns_namespaces_q} "
                 f"(collection_id, namespace_name)"
             )
-        with contextlib.suppress(Exception):
+        except Exception as exc:
+            _reraise_unless_unique_index_exists(exc)
+        try:
             self._execute(
                 f"CREATE UNIQUE INDEX uk_sdk_lt_coll_ns_name ON {ns_ltables_q} "
                 f"(collection_id, namespace_id, ltable_name)"
             )
+        except Exception as exc:
+            _reraise_unless_unique_index_exists(exc)
 
     def _rollback_connection_if_supported(self) -> None:
         """Roll back the current connection transaction if the backend supports it."""
@@ -5324,6 +5343,10 @@ class BaseClient(BaseConnection, AdminAPI):
                     )
                 if attempt < 119:
                     time.sleep(0.05 * min(attempt + 1, 10))
+            else:
+                raise ValueError(
+                    f"Failed to reconcile duplicate namespace rows for record_id={record_id!r}"
+                )
 
     def _namespace_add(  # noqa: C901
         self,
