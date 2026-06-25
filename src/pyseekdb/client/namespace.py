@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .validators import _validate_n_results
+from .validators import _validate_include, _validate_n_results
 
 if TYPE_CHECKING:
     from .collection import Collection
@@ -173,6 +173,7 @@ class Namespace:
         """Run vector similarity search within this namespace."""
         self._guard_exists()
         _validate_n_results(n_results)
+        _validate_include(include)
         return self._client._namespace_query(
             collection_id=self._collection.id,
             collection_name=self._collection.name,
@@ -201,6 +202,7 @@ class Namespace:
         """Run hybrid fulltext + vector search within this namespace."""
         self._guard_exists()
         _validate_n_results(n_results)
+        _validate_include(include)
         if include is None and not query and not knn:
             include = []
         return self._client._namespace_hybrid_search(
@@ -230,6 +232,7 @@ class Namespace:
     ) -> dict[str, Any]:
         """Fetch records from this namespace by ids or filters."""
         self._guard_exists()
+        _validate_include(include)
         return self._client._namespace_get(
             collection_id=self._collection.id,
             collection_name=self._collection.name,

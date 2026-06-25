@@ -21,7 +21,7 @@ from pyseekdb.client.client_base import BaseClient  # noqa: E402
 from pyseekdb.client.collection import Collection  # noqa: E402
 from pyseekdb.client.configuration import HNSWConfiguration, IVFIndexType, VectorIndexConfig  # noqa: E402
 from pyseekdb.client.namespace import Namespace  # noqa: E402
-from pyseekdb.client.validators import _validate_n_results  # noqa: E402
+from pyseekdb.client.validators import _validate_include, _validate_n_results  # noqa: E402
 
 
 # ==================== IVFConfiguration Tests ====================
@@ -1291,6 +1291,30 @@ class TestValidateNResults:
             _validate_n_results(True)
         with pytest.raises(ValueError, match="n_results must be an integer"):
             _validate_n_results(False)
+
+
+class TestValidateInclude:
+
+    """TestValidateInclude class."""
+
+    def test_accepts_none_and_valid_fields(self):
+        """Test accepts none and valid fields."""
+        _validate_include(None)
+        _validate_include([])
+        _validate_include(["documents", "metadatas", "embeddings", "distances"])
+        _validate_include(["document", "metadata", "embedding", "distance"])
+
+    def test_rejects_invalid_field_names(self):
+        """Test rejects invalid field names."""
+        with pytest.raises(ValueError, match="Invalid include field"):
+            _validate_include(["invalid_field_name"])
+        with pytest.raises(ValueError, match="Invalid include field"):
+            _validate_include(["documents", "bad_field"])
+
+    def test_rejects_non_list(self):
+        """Test rejects non list."""
+        with pytest.raises(TypeError, match="include must be a list"):
+            _validate_include("documents")  # type: ignore[arg-type]
 
 
 # ==================== UseNamespace Validation Tests ====================

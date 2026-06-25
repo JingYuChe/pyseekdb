@@ -7,6 +7,36 @@ _MAX_NAME_LENGTH = 512
 _MAX_NAMESPACE_NAME_LENGTH = 256
 _MAX_NAMESPACE_BATCH_SIZE = 100
 _MAX_N_RESULTS = 16384  # OceanBase vector-search k upper bound
+_VALID_INCLUDE_FIELDS = frozenset(
+    {
+        "documents",
+        "document",
+        "metadatas",
+        "metadata",
+        "embeddings",
+        "embedding",
+        "distances",
+        "distance",
+    }
+)
+
+
+def _validate_include(include: list[str] | None) -> None:
+    """Validate ``include`` is a list of supported result field names."""
+    if include is None:
+        return
+    if not isinstance(include, list):
+        raise TypeError(
+            f"include must be a list[str] or None, got {type(include).__name__}"
+        )
+    invalid = [field for field in include if field not in _VALID_INCLUDE_FIELDS]
+    if invalid:
+        allowed = "documents, metadatas, embeddings, distances"
+        raise ValueError(
+            f"Invalid include field(s): {invalid!r}. "
+            f"Allowed values: {allowed} "
+            f"(singular forms document, metadata, embedding, distance are also accepted)."
+        )
 
 
 def _validate_namespace_name(name: str) -> None:

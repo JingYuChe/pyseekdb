@@ -143,6 +143,21 @@ class TestNamespaceQuery:
         finally:
             db_client.delete_collection(name=collection.name)
 
+    def test_query_rejects_invalid_include(self, db_client):
+        """Invalid include fields must fail before executing the query."""
+        collection = self._setup(db_client)
+        ns = collection.create_namespace("qns_bad_inc")
+        try:
+            self._insert_data(ns)
+            with pytest.raises(ValueError, match="Invalid include field"):
+                ns.query(
+                    query_embeddings=[1.0, 0.0, 0.0],
+                    n_results=3,
+                    include=["invalid_field_name"],
+                )
+        finally:
+            db_client.delete_collection(name=collection.name)
+
     def test_multi_namespace_isolation(self, db_client):
         """Test multi namespace isolation."""
         collection = self._setup(db_client, suffix="_iso")
