@@ -17,6 +17,13 @@ from typing import Any
 
 from pymysql.converters import escape_string
 
+from .document_query_builder import (
+    build_document_hybrid_expression,
+    doc_matches_where_document,
+    document_expr_as_knn_filter,
+    merge_into_knn_filter,
+    where_document_knn_prefilterable,
+)
 from .kernel_errors import maybe_reraise_friendly_kernel_error, namespace_kernel_error_guard
 from .admin_client import DEFAULT_TENANT, AdminAPI
 from .base_connection import BaseConnection
@@ -4697,72 +4704,9 @@ class BaseClient(BaseConnection, AdminAPI):
             _apply_boost(expr)
             return expr
 
-        # Handle $contains - use query_string
-        if "$contains" in where_document:
-            # Use pymysql's escape_string for safe escaping of query content
-            query_content = where_document["$contains"]
-            escaped_query = escape_string(query_content)
-            return _with_boost({"query_string": {"fields": ["document"], "query": escaped_query}})
-
-        # Handle $not_contains - wrap query_string in must_not bool
-        if "$not_contains" in where_document:
-            escaped_query = escape_string(where_document["$not_contains"])
-            return _with_boost({
-                "bool": {
-                    "must_not": [
-                        {
-                            "query_string": {
-                                "fields": ["document"],
-                                "query": escaped_query,
-                            }
-                        }
-                    ]
-                }
-            })
-
-        # Handle $and with $contains
-        if "$and" in where_document:
-            and_conditions = where_document["$and"]
-            contains_queries = []
-            for condition in and_conditions:
-                if isinstance(condition, dict) and "$contains" in condition:
-                    contains_queries.append(condition["$contains"])
-
-            if contains_queries:
-                # Combine multiple $contains with AND (escape each query)
-                escaped_queries = [escape_string(q) for q in contains_queries]
-                return _with_boost({
-                    "query_string": {
-                        "fields": ["document"],
-                        "query": " ".join(escaped_queries),
-                        "default_operator": "and",
-                    }
-                })
-
-        # Handle $or with $contains
-        if "$or" in where_document:
-            or_conditions = where_document["$or"]
-            contains_queries = []
-            for condition in or_conditions:
-                if isinstance(condition, dict) and "$contains" in condition:
-                    contains_queries.append(condition["$contains"])
-
-            if contains_queries:
-                # Combine multiple $contains with OR (escape each query)
-                escaped_queries = [escape_string(q) for q in contains_queries]
-                return _with_boost({
-                    "query_string": {
-                        "fields": ["document"],
-                        "query": " ".join(escaped_queries),
-                        "default_operator": "or",
-                    }
-                })
-
-        # Default: if it's a string, treat as $contains
-        if isinstance(where_document, str):
-            return _with_boost({"query_string": {"fields": ["document"], "query": where_document}})
-
-        return None
+        return _with_boost(
+            build_document_hybrid_expression(where_document, boost=boost)
+        )
 
     def _build_metadata_filter_for_search_parm(self, where: dict[str, Any] | None) -> list[dict[str, Any]]:
         """
@@ -4924,6 +4868,7 @@ class BaseClient(BaseConnection, AdminAPI):
         query_texts = knn.get("query_texts")
         query_embeddings = knn.get("query_embeddings")
         where = knn.get("where")
+        where_document = knn.get("where_document")
         n_results = knn.get("n_results", 10)
         if not isinstance(n_results, int) or n_results < 1:
             raise ValueError(f"n_results must be an integer >= 1, got {n_results!r}")
@@ -4995,6 +4940,17 @@ class BaseClient(BaseConnection, AdminAPI):
             knn_filter = [{"bool": bool_filter}]
         elif pos_filters:
             knn_filter = pos_filters
+
+        if where_document is not None and where_document_knn_prefilterable(where_document):
+            doc_filter = document_expr_as_knn_filter(
+                build_document_hybrid_expression(where_document)
+            )
+            if doc_filter is not None:
+                if knn_filter is None:
+                    knn_filter = [doc_filter]
+                else:
+                    knn_filter = [*knn_filter, doc_filter]
+
         for vector in vectors:
             expr = {"field": "embedding", "k": n_results, "query_vector": vector}
             if boost is not None:
@@ -5006,6 +4962,54 @@ class BaseClient(BaseConnection, AdminAPI):
             knn_exprs.append(expr)
 
         return knn_exprs if len(knn_exprs) > 1 else knn_exprs[0]
+
+    def _post_filter_namespace_query_result(
+        self,
+        result: dict[str, Any],
+        where_document: dict[str, Any] | str,
+        *,
+        n_results: int,
+    ) -> dict[str, Any]:
+        """Drop hybrid_search rows that violate a where_document predicate."""
+        ids_groups = result.get("ids") or []
+        if not ids_groups:
+            return result
+
+        filtered: dict[str, Any] = {"ids": []}
+        if result.get("distances") is not None:
+            filtered["distances"] = []
+        for optional_key in ("documents", "metadatas", "embeddings"):
+            if optional_key in result:
+                filtered[optional_key] = []
+
+        for qi, ids in enumerate(ids_groups):
+            kept_indices: list[int] = []
+            docs_group = (result.get("documents") or [[]])[qi] if result.get("documents") else None
+            for idx, _doc_id in enumerate(ids):
+                if not docs_group or idx >= len(docs_group) or docs_group[idx] is None:
+                    continue
+                doc_text = str(docs_group[idx])
+                if doc_matches_where_document(doc_text, where_document):
+                    kept_indices.append(idx)
+                if len(kept_indices) >= n_results:
+                    break
+
+            def _pick(key: str) -> list[Any]:
+                """Pick kept elements from one result group."""
+                groups = result.get(key)
+                if not groups or qi >= len(groups):
+                    return []
+                group = groups[qi]
+                return [group[i] for i in kept_indices if i < len(group)]
+
+            filtered["ids"].append([ids[i] for i in kept_indices])
+            if "distances" in result and result["distances"]:
+                filtered["distances"].append(_pick("distances"))
+            for optional_key in ("documents", "metadatas", "embeddings"):
+                if optional_key in filtered:
+                    filtered[optional_key].append(_pick(optional_key))
+
+        return filtered
 
     def _build_source_fields(self, include: list[str] | None) -> list[str]:
         """
@@ -5825,26 +5829,38 @@ class BaseClient(BaseConnection, AdminAPI):
             if where is not None:
                 knn_cfg["where"] = where
 
-            query_cfg: dict[str, Any] | None = None
+            post_filter_wd: dict[str, Any] | str | None = None
+            hybrid_include = include
             if where_document is not None:
-                query_cfg = {"where_document": where_document, "n_results": n_results}
-                if where is not None:
-                    query_cfg["where"] = where
+                if where_document_knn_prefilterable(where_document):
+                    knn_cfg["where_document"] = where_document
+                else:
+                    post_filter_wd = where_document
+                    knn_cfg["n_results"] = min(max(n_results * 5, n_results), _MAX_N_RESULTS)
+                    if include is None:
+                        hybrid_include = ["documents", "metadatas"]
+                    elif not {"documents", "document"} & {*(include or [])}:
+                        hybrid_include = ["documents", *include]
 
             batch = self._namespace_hybrid_search(
                 collection_id=collection_id,
                 collection_name=collection_name,
                 namespace_id=namespace_id,
                 namespace_name=namespace_name,
-                query=query_cfg,
+                query=None,
                 knn=knn_cfg,
-                n_results=n_results,
-                include=include,
+                n_results=knn_cfg["n_results"],
+                include=hybrid_include,
                 embedding_function=embedding_function,
                 distance=distance,
                 dimension=kwargs.get("dimension"),
                 **hybrid_kwargs,
             )
+
+            if post_filter_wd is not None:
+                batch = self._post_filter_namespace_query_result(
+                    batch, post_filter_wd, n_results=n_results,
+                )
 
             batch_ids = batch.get("ids") or [[]]
             all_ids.append(batch_ids[0] if batch_ids else [])
