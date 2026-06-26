@@ -223,6 +223,8 @@ from .validators import (  # noqa: F401
     _quote_sql_identifier,
     _validate_database_name,
     _validate_namespace_name,
+    _validate_namespace_no_index_explicit_embeddings,
+    _validate_namespace_explicit_embedding_dimensions,
     _validate_record_ids,
 )
 
@@ -1178,6 +1180,7 @@ class BaseClient(BaseConnection, AdminAPI):
             distance=distance,
             use_namespace=True,
             partition_count=pc,
+            has_vector_index=settings.get("dense_index_type") == "ivf",
         )
 
     def _get_embedding_function_dimension(self, embedding_function: EmbeddingFunction) -> int:
@@ -2019,6 +2022,7 @@ class BaseClient(BaseConnection, AdminAPI):
             distance=distance,
             use_namespace=True,
             partition_count=partition_count,
+            has_vector_index=settings.get("dense_index_type") == "ivf",
         )
 
     def _resolve_collection_metadata_from_sdk_collections(self, collection_name: str) -> _CollectionMeta | None:
@@ -2872,6 +2876,7 @@ class BaseClient(BaseConnection, AdminAPI):
         """
         logger.debug(f"Adding data to collection '{collection_name}'")
 
+        explicit_embeddings = embeddings is not None
         # Normalize inputs to lists
         if isinstance(ids, str):
             ids = [ids]
@@ -2886,6 +2891,13 @@ class BaseClient(BaseConnection, AdminAPI):
             and not isinstance(embeddings[0], list)
         ):
             embeddings = [embeddings]
+
+        self._warn_explicit_embeddings_override_embedding_function(
+            operation="collection.add",
+            explicit_embeddings=explicit_embeddings,
+            has_documents=bool(documents),
+            embedding_function=embedding_function,
+        )
 
         # Handle vector generation logic:
         # 1. If embeddings are provided, use them directly without embedding
@@ -3048,6 +3060,7 @@ class BaseClient(BaseConnection, AdminAPI):
         """
         logger.debug(f"Updating data in collection '{collection_name}'")
 
+        explicit_embeddings = embeddings is not None
         # Normalize inputs to lists
         if isinstance(ids, str):
             ids = [ids]
@@ -3062,6 +3075,13 @@ class BaseClient(BaseConnection, AdminAPI):
             and not isinstance(embeddings[0], list)
         ):
             embeddings = [embeddings]
+
+        self._warn_explicit_embeddings_override_embedding_function(
+            operation="collection.update",
+            explicit_embeddings=explicit_embeddings,
+            has_documents=bool(documents),
+            embedding_function=embedding_function,
+        )
 
         # Handle vector generation logic:
         # 1. If embeddings are provided, use them directly without embedding
@@ -4890,6 +4910,13 @@ class BaseClient(BaseConnection, AdminAPI):
 
         embedding_function = kwargs.get("embedding_function")
 
+        self._warn_explicit_embeddings_override_embedding_function(
+            operation="hybrid_search.knn",
+            explicit_embeddings=query_embeddings is not None,
+            has_documents=query_texts is not None,
+            embedding_function=embedding_function,
+        )
+
         def _normalize_vectors(raw_embeddings: Any) -> list[list[float]]:
             """Normalize input vectors to a consistent list-of-floats form."""
             if raw_embeddings is None:
@@ -5262,6 +5289,45 @@ class BaseClient(BaseConnection, AdminAPI):
             return f"WHERE {ns_cond} AND ({inner})", params
         return f"WHERE {ns_cond} AND ({where_clause})", params
 
+    @staticmethod
+    def _validate_namespace_explicit_embeddings_if_needed(
+        embeddings: list[list[float]] | None,
+        *,
+        explicit_embeddings: bool,
+        has_vector_index: bool,
+        collection_dimension: int | None,
+    ) -> None:
+        """Validate user-supplied embeddings match the collection VECTOR column dimension."""
+        if not explicit_embeddings or not embeddings:
+            return
+        expected = (
+            collection_dimension
+            if collection_dimension is not None
+            else DEFAULT_VECTOR_DIMENSION
+        )
+        _validate_namespace_explicit_embedding_dimensions(
+            embeddings,
+            expected_dimension=expected,
+            has_vector_index=has_vector_index,
+        )
+
+    @staticmethod
+    def _warn_explicit_embeddings_override_embedding_function(
+        *,
+        operation: str,
+        explicit_embeddings: bool,
+        has_documents: bool,
+        embedding_function: EmbeddingFunction[EmbeddingDocuments] | None,
+    ) -> None:
+        """Log when explicit embeddings take priority over embedding_function."""
+        if explicit_embeddings and has_documents and embedding_function is not None:
+            logger.warning(
+                "%s: explicit embeddings provided together with documents while an "
+                "embedding_function is configured; using explicit embeddings and "
+                "not calling embedding_function.",
+                operation,
+            )
+
     def _count_namespace_records_by_id(
         self,
         table_name: str,
@@ -5383,10 +5449,9 @@ class BaseClient(BaseConnection, AdminAPI):
         **kwargs,
     ) -> None:
         """Add records to a namespace collection."""
-        ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
-        self._set_session_ns_context(
-            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
-        )
+        has_vector_index = kwargs.pop("has_vector_index", True)
+        collection_dimension = kwargs.pop("collection_dimension", None)
+        explicit_embeddings = embeddings is not None
         if isinstance(ids, str):
             ids = [ids]
         _validate_record_ids(ids)
@@ -5405,6 +5470,13 @@ class BaseClient(BaseConnection, AdminAPI):
             and not isinstance(embeddings[0], list)
         ):
             embeddings = [embeddings]
+
+        self._warn_explicit_embeddings_override_embedding_function(
+            operation="namespace.add",
+            explicit_embeddings=explicit_embeddings,
+            has_documents=bool(documents),
+            embedding_function=embedding_function,
+        )
 
         if embeddings:
             pass
@@ -5437,6 +5509,17 @@ class BaseClient(BaseConnection, AdminAPI):
         if embeddings and len(embeddings) != num_items:
             raise ValueError(f"Number of embeddings ({len(embeddings)}) does not match number of ids ({num_items})")
 
+        self._validate_namespace_explicit_embeddings_if_needed(
+            embeddings,
+            explicit_embeddings=explicit_embeddings,
+            has_vector_index=has_vector_index,
+            collection_dimension=collection_dimension,
+        )
+
+        ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
+        self._set_session_ns_context(
+            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
+        )
         table_name = NamespaceCollectionNames.data_table_name(collection_id)
         ns_id = int(namespace_id)
 
@@ -5479,10 +5562,9 @@ class BaseClient(BaseConnection, AdminAPI):
         **kwargs,
     ) -> None:
         """Update existing records in a namespace collection."""
-        ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
-        self._set_session_ns_context(
-            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
-        )
+        has_vector_index = kwargs.pop("has_vector_index", True)
+        collection_dimension = kwargs.pop("collection_dimension", None)
+        explicit_embeddings = embeddings is not None
         if isinstance(ids, str):
             ids = [ids]
         _validate_record_ids(ids)
@@ -5502,6 +5584,13 @@ class BaseClient(BaseConnection, AdminAPI):
         ):
             embeddings = [embeddings]
 
+        self._warn_explicit_embeddings_override_embedding_function(
+            operation="namespace.update",
+            explicit_embeddings=explicit_embeddings,
+            has_documents=bool(documents),
+            embedding_function=embedding_function,
+        )
+
         if embeddings:
             # embeddings provided, use them directly without embedding
             pass
@@ -5517,6 +5606,17 @@ class BaseClient(BaseConnection, AdminAPI):
                     "  2. Provide embedding_function to auto-generate embeddings from documents."
                 )
 
+        self._validate_namespace_explicit_embeddings_if_needed(
+            embeddings,
+            explicit_embeddings=explicit_embeddings,
+            has_vector_index=has_vector_index,
+            collection_dimension=collection_dimension,
+        )
+
+        ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
+        self._set_session_ns_context(
+            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
+        )
         table_name = NamespaceCollectionNames.data_table_name(collection_id)
         ns_id = int(namespace_id)
 
@@ -5626,6 +5726,8 @@ class BaseClient(BaseConnection, AdminAPI):
         **kwargs,
     ) -> None:
         """Insert or update records in a namespace collection."""
+        has_vector_index = kwargs.pop("has_vector_index", True)
+        collection_dimension = kwargs.pop("collection_dimension", None)
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._set_session_ns_context(
             collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
@@ -5686,7 +5788,10 @@ class BaseClient(BaseConnection, AdminAPI):
                 collection_id=collection_id, collection_name=collection_name,
                 namespace_id=namespace_id, namespace_name=namespace_name,
                 ids=add_ids, embeddings=add_embs, metadatas=add_metas,
-                documents=add_docs, embedding_function=embedding_function, **kwargs,
+                documents=add_docs, embedding_function=embedding_function,
+                has_vector_index=has_vector_index,
+                collection_dimension=collection_dimension,
+                **kwargs,
             )
 
         if update_indices:
@@ -5698,7 +5803,10 @@ class BaseClient(BaseConnection, AdminAPI):
                 collection_id=collection_id, collection_name=collection_name,
                 namespace_id=namespace_id, namespace_name=namespace_name,
                 ids=upd_ids, embeddings=upd_embs, metadatas=upd_metas,
-                documents=upd_docs, embedding_function=embedding_function, **kwargs,
+                documents=upd_docs, embedding_function=embedding_function,
+                has_vector_index=has_vector_index,
+                collection_dimension=collection_dimension,
+                **kwargs,
             )
 
         self._reconcile_namespace_duplicate_records(
@@ -5797,12 +5905,18 @@ class BaseClient(BaseConnection, AdminAPI):
         **kwargs,
     ) -> dict[str, Any]:
         """Run a vector query against a namespace collection."""
-        ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
-        self._set_session_ns_context(
-            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
-        )
+        has_vector_index = kwargs.pop("has_vector_index", True)
+        collection_dimension = kwargs.pop("collection_dimension", kwargs.pop("dimension", None))
+        explicit_query_embeddings = query_embeddings is not None
         embedding_function = kwargs.get("embedding_function")
         distance = kwargs.get("distance", DEFAULT_DISTANCE_METRIC)
+
+        self._warn_explicit_embeddings_override_embedding_function(
+            operation="namespace.query",
+            explicit_embeddings=explicit_query_embeddings,
+            has_documents=query_texts is not None,
+            embedding_function=embedding_function,
+        )
 
         if query_embeddings is not None:
             pass
@@ -5815,6 +5929,17 @@ class BaseClient(BaseConnection, AdminAPI):
             raise ValueError("Neither query_embeddings nor query_texts provided.")
 
         query_embeddings = self._normalize_query_embeddings(query_embeddings)
+        self._validate_namespace_explicit_embeddings_if_needed(
+            query_embeddings,
+            explicit_embeddings=explicit_query_embeddings,
+            has_vector_index=has_vector_index,
+            collection_dimension=collection_dimension,
+        )
+
+        ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
+        self._set_session_ns_context(
+            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
+        )
         include_fields = self._normalize_include_fields(include)
 
         # Logical-table vector search must use hybrid_search DSL; direct SQL vector
@@ -5862,7 +5987,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 include=hybrid_include,
                 embedding_function=embedding_function,
                 distance=distance,
-                dimension=kwargs.get("dimension"),
+                dimension=collection_dimension,
                 **hybrid_kwargs,
             )
 

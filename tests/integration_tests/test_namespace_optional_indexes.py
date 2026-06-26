@@ -144,6 +144,9 @@ class TestNamespaceOptionalIndexes:
             result = ns.query(query_embeddings=_unit_vector(3), n_results=3)
             assert result["ids"] and result["ids"][0]
 
+            with pytest.raises(ValueError, match="Embedding dimension mismatch: expected 3"):
+                ns.add(ids="bad_dim", embeddings=[1.0, 2.0])
+
             knn = ns.hybrid_search(
                 knn={"query_embeddings": _unit_vector(3), "n_results": 3},
                 n_results=3,
@@ -196,6 +199,23 @@ class TestNamespaceOptionalIndexes:
                     knn={"query_embeddings": _unit_vector(collection.dimension), "n_results": 3},
                     n_results=3,
                 )
+        finally:
+            db_client.delete_collection(name=collection.name)
+
+    def test_search_only_rejects_non_default_explicit_embeddings(self, db_client):
+        """Without VECTOR INDEX, explicit embeddings must match VECTOR(384)."""
+        collection = _create_collection(db_client, "search_dim", _schema_search_only())
+        try:
+            assert collection.dimension == 384
+            assert collection.has_vector_index is False
+            ns = collection.create_namespace("ns")
+
+            with pytest.raises(ValueError, match="384-dimensional"):
+                ns.add(ids="bad", embeddings=[1.0, 2.0, 3.0])
+
+            ns.add(ids="ok", embeddings=[0.0] * 384)
+            got = ns.get(ids="ok", include=["embeddings"])
+            assert len(got["embeddings"][0]) == 384
         finally:
             db_client.delete_collection(name=collection.name)
 

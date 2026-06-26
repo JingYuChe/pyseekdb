@@ -585,6 +585,65 @@ class TestNamespaceSQLGeneration:
         assert '\\"id\\": \\"d1\\"' in sql or '"id": "d1"' in sql
         assert '\\"tag\\": \\"a\\"' in sql or '"tag": "a"' in sql
 
+    def test_add_warns_when_embeddings_and_documents_with_embedding_function(self, caplog):
+        """Warn when explicit embeddings override embedding_function."""
+        import logging
+        from unittest.mock import MagicMock
+
+        caplog.set_level(logging.WARNING)
+        c = self._client()
+        c._namespace_add(
+            **self._common_kwargs(),
+            ids="d1",
+            embeddings=[1.0, 2.0, 3.0],
+            documents="hello",
+            embedding_function=MagicMock(),
+            has_vector_index=True,
+            collection_dimension=3,
+        )
+        assert any(
+            "explicit embeddings" in r.message and "embedding_function" in r.message
+            for r in caplog.records
+        )
+
+    def test_add_rejects_explicit_embeddings_wrong_dim_without_vector_index(self):
+        """Without VECTOR INDEX, explicit embeddings must match collection dimension."""
+        c = self._client()
+        with pytest.raises(ValueError, match="384-dimensional"):
+            c._namespace_add(
+                **self._common_kwargs(),
+                ids="d1",
+                embeddings=[1.0, 2.0, 3.0],
+                has_vector_index=False,
+                collection_dimension=384,
+            )
+        assert not c.executed_sqls
+
+    def test_add_accepts_384_explicit_embeddings_without_vector_index(self):
+        """Explicit 384-dim embeddings are allowed when no vector index is configured."""
+        c = self._client()
+        c._namespace_add(
+            **self._common_kwargs(),
+            ids="d1",
+            embeddings=[0.0] * 384,
+            has_vector_index=False,
+            collection_dimension=384,
+        )
+        assert c.executed_sqls
+
+    def test_add_rejects_explicit_embeddings_wrong_dim_with_vector_index(self):
+        """With VECTOR INDEX, explicit embeddings must match collection dimension."""
+        c = self._client()
+        with pytest.raises(ValueError, match="Embedding dimension mismatch: expected 3"):
+            c._namespace_add(
+                **self._common_kwargs(),
+                ids="d1",
+                embeddings=[1.0, 2.0],
+                has_vector_index=True,
+                collection_dimension=3,
+            )
+        assert not c.executed_sqls
+
     def test_add_batch_sql(self):
         """Test add batch sql."""
         c = self._client()

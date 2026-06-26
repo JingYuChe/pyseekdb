@@ -111,3 +111,40 @@ def _validate_record_ids(ids: list[str]) -> None:
                 f"Invalid record id: '{rid}'. Record id contains invalid characters. "
                 "Only letters, digits, and underscore are allowed: [a-zA-Z0-9_]"
             )
+
+
+def _validate_namespace_explicit_embedding_dimensions(
+    embeddings: list[list[float]],
+    *,
+    expected_dimension: int,
+    has_vector_index: bool,
+) -> None:
+    """Reject explicit embeddings whose dimension does not match the collection VECTOR column."""
+    for i, vec in enumerate(embeddings):
+        if vec is None:
+            continue
+        actual = len(vec)
+        if actual != expected_dimension:
+            if has_vector_index:
+                raise ValueError(
+                    f"Embedding dimension mismatch: expected {expected_dimension}, "
+                    f"got {actual} at index {i}."
+                )
+            raise ValueError(
+                f"Collections without a vector index store embeddings as "
+                f"VECTOR({expected_dimension}); explicit embeddings must be "
+                f"{expected_dimension}-dimensional, got {actual} at index {i}."
+            )
+
+
+def _validate_namespace_no_index_explicit_embeddings(
+    embeddings: list[list[float]],
+    *,
+    expected_dimension: int,
+) -> None:
+    """Reject explicit embeddings whose dimension does not match a no-index VECTOR column."""
+    _validate_namespace_explicit_embedding_dimensions(
+        embeddings,
+        expected_dimension=expected_dimension,
+        has_vector_index=False,
+    )

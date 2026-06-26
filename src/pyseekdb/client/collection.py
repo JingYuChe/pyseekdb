@@ -48,6 +48,7 @@ class Collection:
         sparse_vector_index_config: Optional["SparseVectorIndexConfig"] = None,
         use_namespace: bool = False,
         partition_count: int | None = None,
+        has_vector_index: bool = False,
         **metadata,
     ):
         """Initialize a lightweight collection handle bound to a client implementation."""
@@ -60,6 +61,7 @@ class Collection:
         self._sparse_vector_index_config = sparse_vector_index_config
         self._use_namespace = use_namespace
         self._partition_count = partition_count
+        self._has_vector_index = has_vector_index
         self._metadata = metadata
 
     # ==================== Properties ====================
@@ -115,6 +117,11 @@ class Collection:
     def use_namespace(self) -> bool:
         """Whether this collection routes data operations through namespaces."""
         return self._use_namespace
+
+    @property
+    def has_vector_index(self) -> bool:
+        """Whether this collection has a dense VECTOR INDEX (namespace IVF)."""
+        return self._has_vector_index
 
     @property
     def partition_count(self) -> int | None:

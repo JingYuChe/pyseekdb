@@ -59,6 +59,14 @@ class Namespace:
             f"collection='{self._collection.name}')"
         )
 
+    def _dml_collection_context(self) -> dict[str, Any]:
+        """Collection metadata required for namespace DML/DQL validation."""
+        return {
+            "has_vector_index": self._collection.has_vector_index,
+            "collection_dimension": self._collection.dimension,
+            "dimension": self._collection.dimension,
+        }
+
     def _guard_exists(self) -> None:
         """Raise if this namespace or its collection was deleted."""
         if not self._client._ns_collection_exists_by_id(self._collection.id):
@@ -94,6 +102,7 @@ class Namespace:
             metadatas=metadatas,
             documents=documents,
             embedding_function=self._collection.embedding_function,
+            **self._dml_collection_context(),
             **kwargs,
         )
 
@@ -117,6 +126,7 @@ class Namespace:
             metadatas=metadatas,
             documents=documents,
             embedding_function=self._collection.embedding_function,
+            **self._dml_collection_context(),
             **kwargs,
         )
 
@@ -140,6 +150,7 @@ class Namespace:
             metadatas=metadatas,
             documents=documents,
             embedding_function=self._collection.embedding_function,
+            **self._dml_collection_context(),
             **kwargs,
         )
 
@@ -192,6 +203,7 @@ class Namespace:
             include=include,
             embedding_function=self._collection.embedding_function,
             distance=self._collection.distance,
+            **self._dml_collection_context(),
             **kwargs,
         )
 
