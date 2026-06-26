@@ -834,6 +834,7 @@ class TestNamespaceSQLGeneration:
         assert "FULLTEXT INDEX idx_fts(document) WITH PARSER ik" in data_create
         assert "SEARCH INDEX idx_json(data_content)" in data_create
         assert "centroids_fresh_mode=spfresh" in data_create
+        assert "LOB_INROW_THRESHOLD=16384" in data_create
         assert not any(s.startswith("CREATE VECTOR INDEX") for s in c.executed_sqls)
         assert not any("_hot_table" in s for s in c.executed_sqls if s.startswith("CREATE TABLE"))
 

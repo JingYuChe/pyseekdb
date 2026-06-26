@@ -61,6 +61,62 @@ class TestNamespaceIvfTypeConstraint:
             oceanbase_client.delete_collection(name=name)
 
 
+class TestNamespaceIvfDimensionConstraint:
+    """Namespace IVF dimension must stay within SDK max (logic_data_table LOB in-row threshold)."""
+
+    def test_dimension_2049_accepted(self, oceanbase_client):
+        """Dimensions above default LOB threshold succeed with logic_data_table DDL fix."""
+        name = _unique_name("_dim_2049")
+        schema = Schema(
+            vector_index=VectorIndexConfig(
+                ivf=IVFConfiguration(dimension=2049, distance="cosine", centroids_fresh_mode="spfresh"),
+                embedding_function=None,
+            ),
+        )
+        collection = oceanbase_client.create_collection(
+            name=name, schema=schema, use_namespace=True, partition_count=1,
+        )
+        try:
+            assert collection.dimension == 2049
+        finally:
+            oceanbase_client.delete_collection(name=name)
+
+    def test_dimension_4096_accepted(self, oceanbase_client):
+        """Positive control: max supported IVF dimension succeeds."""
+        name = _unique_name("_dim_4096")
+        schema = Schema(
+            vector_index=VectorIndexConfig(
+                ivf=IVFConfiguration(dimension=4096, distance="cosine", centroids_fresh_mode="spfresh"),
+                embedding_function=None,
+            ),
+        )
+        collection = oceanbase_client.create_collection(
+            name=name, schema=schema, use_namespace=True, partition_count=1,
+        )
+        try:
+            assert collection.dimension == 4096
+        finally:
+            oceanbase_client.delete_collection(name=name)
+
+    def test_dimension_4097_rejected_at_sdk(self, oceanbase_client):
+        """Dimensions above 4096 are rejected before OB DDL."""
+        name = _unique_name("_dim_4097")
+        with pytest.raises(ValueError, match="between 1 and 4096"):
+            oceanbase_client.create_collection(
+                name=name,
+                schema=Schema(
+                    vector_index=VectorIndexConfig(
+                        ivf=IVFConfiguration(
+                            dimension=4097, distance="cosine", centroids_fresh_mode="spfresh",
+                        ),
+                        embedding_function=None,
+                    ),
+                ),
+                use_namespace=True,
+            )
+        assert not oceanbase_client.has_collection(name)
+
+
 class TestNamespaceMinVersionConstraint:
     """TestNamespaceMinVersionConstraint class."""
     def test_connected_ob_meets_min_version(self, oceanbase_client):

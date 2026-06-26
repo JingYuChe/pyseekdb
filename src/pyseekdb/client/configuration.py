@@ -14,6 +14,11 @@ from pyseekdb.client.types import _NOT_PROVIDED, K
 # So we use 384 as the default dimension to match
 DEFAULT_VECTOR_DIMENSION = 384  # Matches DefaultEmbeddingFunction dimension
 DEFAULT_DISTANCE_METRIC = "cosine"
+MAX_HNSW_VECTOR_DIMENSION = 4096
+# Namespace IVF uses logic_data_table with LOB_INROW_THRESHOLD sized for float32 vectors
+# (dimension * 4 bytes). Below the default ~8KB threshold, IVF indexing rejects out-row LOB.
+MAX_IVF_VECTOR_DIMENSION = MAX_HNSW_VECTOR_DIMENSION
+LOGIC_DATA_TABLE_LOB_INROW_THRESHOLD = MAX_IVF_VECTOR_DIMENSION * 4
 PrimitiveValue = str | int | float | bool
 
 
@@ -131,7 +136,7 @@ def _validate_hnsw_base_fields(config: "HNSWConfiguration") -> None:
     """Validate core HNSW index fields shared across index subtypes."""
     if isinstance(config.dimension, bool) or not isinstance(config.dimension, int):
         raise TypeError(f"dimension must be an integer, got {type(config.dimension).__name__}")
-    _validate_int_range(config.dimension, key="dimension", min_value=1, max_value=4096)
+    _validate_int_range(config.dimension, key="dimension", min_value=1, max_value=MAX_HNSW_VECTOR_DIMENSION)
 
     config.distance = _normalize_str_enum(config.distance, field_name="distance")
     valid_distances = [e.value for e in DistanceMetric]
@@ -373,7 +378,8 @@ class IVFConfiguration:
     IVF (Inverted File) index configuration for Agent Database namespace-enabled collections.
 
     Args:
-        dimension: Vector dimension (number of elements in each vector)
+        dimension: Vector dimension (1..4096 on namespace IVF). logic_data_table is
+            created with ``LOB_INROW_THRESHOLD`` so float32 vectors stay in-row.
         distance: Distance metric for similarity calculation (e.g., 'l2', 'cosine', 'inner_product')
         type: IVF index subtype ('ivf_flat', 'ivf_sq8', 'ivf_pq')
         centroids_fresh_mode: SPFresh mode for online index updates (e.g., 'spfresh'). Defaults to None (disabled).
@@ -391,7 +397,7 @@ class IVFConfiguration:
         """Validate IVF configuration fields and normalize properties."""
         if isinstance(self.dimension, bool) or not isinstance(self.dimension, int):
             raise TypeError(f"dimension must be an integer, got {type(self.dimension).__name__}")
-        _validate_int_range(self.dimension, key="dimension", min_value=1, max_value=4096)
+        _validate_int_range(self.dimension, key="dimension", min_value=1, max_value=MAX_IVF_VECTOR_DIMENSION)
 
         self.distance = _normalize_str_enum(self.distance, field_name="distance")
         valid_distances = [e.value for e in DistanceMetric]

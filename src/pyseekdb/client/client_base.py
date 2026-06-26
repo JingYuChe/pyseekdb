@@ -30,6 +30,9 @@ from .collection import Collection
 from .configuration import (
     DEFAULT_DISTANCE_METRIC,
     DEFAULT_VECTOR_DIMENSION,
+    LOGIC_DATA_TABLE_LOB_INROW_THRESHOLD,
+    MAX_HNSW_VECTOR_DIMENSION,
+    MAX_IVF_VECTOR_DIMENSION,
     Configuration,
     ConfigurationParam,
     FulltextIndexConfig,
@@ -1009,8 +1012,10 @@ class BaseClient(BaseConnection, AdminAPI):
                     )
 
         dimension = hnsw_config.dimension
-        if dimension < 1 or dimension > 4096:
-            raise ValueError(f"Dimension must be between 1 and 4096, got {dimension}")
+        if dimension < 1 or dimension > MAX_HNSW_VECTOR_DIMENSION:
+            raise ValueError(
+                f"Dimension must be between 1 and {MAX_HNSW_VECTOR_DIMENSION}, got {dimension}"
+            )
 
         # Extract fulltext parser configuration
         fulltext_index_clause = _get_fulltext_index_sql(schema.fulltext_index)
@@ -1109,9 +1114,6 @@ class BaseClient(BaseConnection, AdminAPI):
                     dimension = DEFAULT_VECTOR_DIMENSION
                 distance = DEFAULT_DISTANCE_METRIC
 
-            if dimension < 1 or dimension > 4096:
-                raise ValueError(f"Dimension must be between 1 and 4096, got {dimension}")
-
             is_ss = self._is_shared_storage_mode()
             settings = {
                 "version": 2,
@@ -1133,6 +1135,14 @@ class BaseClient(BaseConnection, AdminAPI):
 
             collection_meta = self._create_ns_collection_meta(name, settings)
             collection_id = collection_meta["collection_id"]
+
+        if isinstance(dimension, bool) or not isinstance(dimension, int):
+            raise TypeError(f"dimension must be an integer, got {type(dimension).__name__}")
+        if dimension < 1 or dimension > MAX_IVF_VECTOR_DIMENSION:
+            raise ValueError(
+                f"Dimension must be between 1 and {MAX_IVF_VECTOR_DIMENSION} for namespace "
+                f"IVF collections, got {dimension}"
+            )
 
         self._ensure_namespace_catalogs()
 
@@ -1521,7 +1531,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 created_by VARCHAR(64) DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 {index_sql}
-            ) TABLEGROUP=`{tg_name}` COMMENT='逻辑表主数据' DEFAULT CHARSET=utf8mb4 ORGANIZATION HEAP IS_LOGIC_TABLE = TRUE
+            ) TABLEGROUP=`{tg_name}` COMMENT='逻辑表主数据' DEFAULT CHARSET=utf8mb4 ORGANIZATION HEAP IS_LOGIC_TABLE = TRUE LOB_INROW_THRESHOLD={LOGIC_DATA_TABLE_LOB_INROW_THRESHOLD}
             {partition_clause}"""
 
             self._execute(data_sql)
