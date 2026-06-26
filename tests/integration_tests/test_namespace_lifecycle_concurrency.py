@@ -100,6 +100,7 @@ def test_multi_client_has_does_not_error_during_drop(oceanbase_client):
     drop_can_finish = threading.Event()
     errors: list[Exception] = []
     has_results: list[bool] = []
+    has_completed_while_drop_blocked = threading.Event()
 
     try:
         collection.create_namespace(ns_name)
@@ -128,6 +129,7 @@ def test_multi_client_has_does_not_error_during_drop(oceanbase_client):
                 assert drop_started.wait(timeout=30), "drop did not start"
                 for _ in range(10):
                     has_results.append(checker.has_namespace(ns_name))
+                    has_completed_while_drop_blocked.set()
                     time.sleep(0.05)
             except Exception as exc:  # noqa: BLE001
                 errors.append(exc)
@@ -137,12 +139,14 @@ def test_multi_client_has_does_not_error_during_drop(oceanbase_client):
         drop_thread.start()
         has_thread.start()
 
+        observed_during_blocked_drop = has_completed_while_drop_blocked.wait(timeout=30)
         drop_can_finish.set()
         drop_thread.join(timeout=120)
         has_thread.join(timeout=120)
 
         assert errors == []
-        assert has_results
+        assert observed_during_blocked_drop, "has_namespace did not complete while drop was blocked"
+        assert has_results and has_results[0] is True
         assert checker.has_namespace(ns_name) is False
     finally:
         for client in clients:

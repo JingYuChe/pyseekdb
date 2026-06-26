@@ -26,6 +26,20 @@ class TestBuildDocumentHybridExpression:
             }
         }
 
+    def test_and_multi_word_uses_bool_composition(self):
+        """Multi-word $contains terms must not use the single query_string fast path."""
+        expr = build_document_hybrid_expression({
+            "$and": [{"$contains": "foo bar"}, {"$contains": "baz"}],
+        })
+        assert expr == {
+            "bool": {
+                "must": [
+                    {"query_string": {"fields": ["document"], "query": "foo bar"}},
+                    {"query_string": {"fields": ["document"], "query": "baz"}},
+                ]
+            }
+        }
+
     def test_and_or_nested(self):
         """Test and or nested."""
         expr = build_document_hybrid_expression({

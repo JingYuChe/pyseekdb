@@ -9,6 +9,12 @@ from pyseekdb.client.validators import (
 
 
 class TestNoIndexExplicitEmbeddingDimension:
+    def test_ignores_none_embeddings(self):
+        _validate_namespace_no_index_explicit_embeddings(
+            [None, [0.0] * 384],
+            expected_dimension=384,
+        )
+
     def test_accepts_matching_dimension(self):
         _validate_namespace_no_index_explicit_embeddings(
             [[0.0] * 384, [1.0] * 384],
@@ -31,6 +37,13 @@ class TestNoIndexExplicitEmbeddingDimension:
 
 
 class TestIvfExplicitEmbeddingDimension:
+    def test_ignores_none_embeddings(self):
+        _validate_namespace_explicit_embedding_dimensions(
+            [None, [1.0, 0.0, 0.0]],
+            expected_dimension=3,
+            has_vector_index=True,
+        )
+
     def test_rejects_wrong_dimension(self):
         with pytest.raises(ValueError, match="Embedding dimension mismatch: expected 3"):
             _validate_namespace_explicit_embedding_dimensions(

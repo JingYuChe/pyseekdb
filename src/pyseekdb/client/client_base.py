@@ -234,20 +234,33 @@ _DEFAULT_PARTITION_COUNT = 1000
 _NS_DATA_CONTENT_ID_EXPR = "JSON_UNQUOTE(JSON_EXTRACT(data_content, '$.id'))"
 
 
-def _build_default_ltable_schema() -> dict:
-    """Return the default logical-table schema (metadata/content/embedding columns and indexes)."""
+def _build_default_ltable_schema(
+    *,
+    has_fulltext: bool = False,
+    has_ivf: bool = False,
+) -> dict:
+    """Return the logical-table schema matching the indexes actually provisioned."""
+    index_info: list[dict[str, Any]] = [
+        {"index_seq": 0, "index_type": "PRIMARY", "indexed_columns": []},
+        {"index_seq": 1, "index_type": "SEARCH_INDEX", "indexed_columns": [1]},
+    ]
+    next_seq = 2
+    if has_fulltext:
+        index_info.append(
+            {"index_seq": next_seq, "index_type": "FULLTEXT", "indexed_columns": [2]}
+        )
+        next_seq += 1
+    if has_ivf:
+        index_info.append(
+            {"index_seq": next_seq, "index_type": "IVF", "indexed_columns": [3]}
+        )
     return {
         "col_info": [
-            {"col_idx": 1, "col_name": "metadata",  "col_type": "JSON"},
-            {"col_idx": 2, "col_name": "content",   "col_type": "TEXT"},
+            {"col_idx": 1, "col_name": "metadata", "col_type": "JSON"},
+            {"col_idx": 2, "col_name": "content", "col_type": "TEXT"},
             {"col_idx": 3, "col_name": "embedding", "col_type": "VECTOR"},
         ],
-        "index_info": [
-            {"index_seq": 0, "index_type": "PRIMARY",      "indexed_columns": []},
-            {"index_seq": 1, "index_type": "SEARCH_INDEX",  "indexed_columns": [1]},
-            {"index_seq": 2, "index_type": "FULLTEXT",      "indexed_columns": [2]},
-            {"index_seq": 3, "index_type": "IVF",           "indexed_columns": [3]},
-        ],
+        "index_info": index_info,
     }
 
 
@@ -1129,6 +1142,8 @@ class BaseClient(BaseConnection, AdminAPI):
                 settings["dense_index_type"] = "ivf"
                 if ivf_config.centroids_fresh_mode is not None:
                     settings["centroids_fresh_mode"] = ivf_config.centroids_fresh_mode
+            if schema.fulltext_index is not None:
+                settings["has_fulltext_index"] = True
             if dense_embedding_function is not None and EmbeddingFunction.support_persistence(dense_embedding_function):
                 settings["embedding_function"] = {
                     "name": dense_embedding_function.name(),
@@ -1815,6 +1830,33 @@ class BaseClient(BaseConnection, AdminAPI):
                 raise
         return self._fetch_ns_ltable_id(collection_id, namespace_id, ltable_name)
 
+    def _resolve_ns_ltable_index_layout(self, collection_id: str) -> tuple[bool, bool]:
+        """Infer which optional indexes exist for a namespace collection."""
+        collection_id_escaped = escape_string(collection_id)
+        rows = self._execute(
+            f"SELECT settings FROM {self._qtable(CollectionNames.sdk_collections_table_name())} "
+            f"WHERE collection_id = '{collection_id_escaped}'"
+        )
+        settings: dict[str, Any] = {}
+        if rows:
+            raw = rows[0]["settings"] if isinstance(rows[0], dict) else rows[0][0]
+            settings = json.loads(raw) if raw else {}
+        has_ivf = settings.get("dense_index_type") == "ivf"
+        if "has_fulltext_index" in settings:
+            has_fulltext = bool(settings["has_fulltext_index"])
+        else:
+            data_table = NamespaceCollectionNames.data_table_name(collection_id)
+            if self._table_exists(data_table):
+                index_rows = self._execute(f"SHOW INDEX FROM `{data_table}`")
+                index_names = {
+                    (row.get("Key_name") if isinstance(row, dict) else row[2])
+                    for row in (index_rows or [])
+                }
+                has_fulltext = "idx_fts" in index_names
+            else:
+                has_fulltext = False
+        return has_fulltext, has_ivf
+
     def _finalize_ns_namespace_meta(
         self,
         collection_id: str,
@@ -1827,7 +1869,10 @@ class BaseClient(BaseConnection, AdminAPI):
         schema_table = self._qtable(
             NamespaceCollectionNames.logic_schema_table_name(collection_id)
         )
-        schema_content = json.dumps(_build_default_ltable_schema())
+        has_fulltext, has_ivf = self._resolve_ns_ltable_index_layout(collection_id)
+        schema_content = json.dumps(
+            _build_default_ltable_schema(has_fulltext=has_fulltext, has_ivf=has_ivf)
+        )
         with contextlib.suppress(Exception):
             self._execute(
                 f"INSERT INTO {schema_table} (namespace_id, ltable_id, schema_content) "

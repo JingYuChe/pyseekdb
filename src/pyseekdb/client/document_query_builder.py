@@ -13,8 +13,14 @@ _QUERY_STRING_RESERVED_RE = re.compile(r'([+\-=&|><!(){}\[\]^"~*?:\\/])')
 
 def _escape_query_string_term(text: str) -> str:
     """Escape Lucene ``query_string`` syntax characters in a user term."""
-    escaped = text.replace("\\", "\\\\")
-    return _QUERY_STRING_RESERVED_RE.sub(r"\\\1", escaped)
+    return _QUERY_STRING_RESERVED_RE.sub(r"\\\1", text)
+
+
+def _is_atomic_query_string_term(text: str) -> bool:
+    """Return whether *text* is a single token safe for fast-path ``$and``/``$or`` joining."""
+    if not text or re.search(r"\s", text):
+        return False
+    return _QUERY_STRING_RESERVED_RE.search(text) is None
 
 
 def _query_string_contains(query: str, *, boost: float | None = None) -> dict[str, Any]:
@@ -147,7 +153,13 @@ def _combine_document_bool(
 ) -> dict[str, Any] | None:
     """Combine child ``where_document`` clauses with AND or OR."""
     if combiner == "and":
-        if all(isinstance(c, dict) and "$contains" in c and isinstance(c["$contains"], str) for c in conditions):
+        if all(
+            isinstance(c, dict)
+            and "$contains" in c
+            and isinstance(c["$contains"], str)
+            and _is_atomic_query_string_term(c["$contains"])
+            for c in conditions
+        ):
             queries = [c["$contains"] for c in conditions if isinstance(c, dict)]
             body: dict[str, Any] = {
                 "fields": [_DOCUMENT_FIELD],
@@ -171,7 +183,13 @@ def _combine_document_bool(
             }
 
     if combiner == "or":
-        if all(isinstance(c, dict) and "$contains" in c and isinstance(c["$contains"], str) for c in conditions):
+        if all(
+            isinstance(c, dict)
+            and "$contains" in c
+            and isinstance(c["$contains"], str)
+            and _is_atomic_query_string_term(c["$contains"])
+            for c in conditions
+        ):
             queries = [c["$contains"] for c in conditions if isinstance(c, dict)]
             body: dict[str, Any] = {
                 "fields": [_DOCUMENT_FIELD],
