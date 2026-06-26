@@ -110,6 +110,7 @@ class TestQueryWhereDocumentOperators:
                 include=["documents"],
             )
             docs = result.get("documents", [[]])[0] or []
+            assert docs, "expected at least one hit for $not_contains 'machine'"
             violations = [d for d in docs if "machine" in d.lower()]
             assert not violations, (
                 f"$not_contains 'machine' should exclude docs with 'machine', "
@@ -135,6 +136,7 @@ class TestQueryWhereDocumentOperators:
                 include=["documents"],
             )
             docs = result.get("documents", [[]])[0] or []
+            assert docs, "expected at least one hit for $and machine+learning"
             violations = [
                 d for d in docs
                 if not ("machine" in d.lower() and "learning" in d.lower())
@@ -163,6 +165,7 @@ class TestQueryWhereDocumentOperators:
                 include=["documents"],
             )
             docs = result.get("documents", [[]])[0] or []
+            assert docs, "expected at least one hit for $or blockchain|Kubernetes"
             violations = [
                 d for d in docs
                 if not ("blockchain" in d.lower() or "kubernetes" in d.lower())
@@ -189,6 +192,7 @@ class TestQueryWhereDocumentOperators:
                 include=["documents"],
             )
             docs = result.get("documents", [[]])[0] or []
+            assert docs, "expected at least one hit for $regex machine.*learning"
             violations = [
                 d for d in docs
                 if "machine" not in d.lower() or "learning" not in d.lower()
@@ -225,6 +229,7 @@ class TestQueryWhereDocumentOperators:
                 include=["documents"],
             )
             docs = result.get("documents", [[]])[0] or []
+            assert docs, "expected at least one hit for nested $and($or)"
             violations = [
                 d for d in docs
                 if not (
@@ -269,6 +274,7 @@ class TestQueryWhereDocumentOperators:
                 include=["documents"],
             )
             docs = result.get("documents", [[]])[0] or []
+            assert docs, "expected at least one hit for nested $or($and)"
             violations = [
                 d for d in docs
                 if not (

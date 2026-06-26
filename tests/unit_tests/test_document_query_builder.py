@@ -34,9 +34,35 @@ class TestBuildDocumentHybridExpression:
                 {"$contains": "c"},
             ]
         })
-        assert expr is not None
-        assert "bool" in expr
-        assert "must" in expr["bool"]
+        assert expr == {
+            "bool": {
+                "must": [
+                    {
+                        "query_string": {
+                            "fields": ["document"],
+                            "query": "a b",
+                            "default_operator": "or",
+                        }
+                    },
+                    {
+                        "query_string": {
+                            "fields": ["document"],
+                            "query": "c",
+                        }
+                    },
+                ]
+            }
+        }
+
+    def test_query_string_escapes_reserved_characters(self):
+        """Reserved Lucene characters are escaped in query_string terms."""
+        expr = build_document_hybrid_expression({"$contains": "C++"})
+        assert expr == {
+            "query_string": {
+                "fields": ["document"],
+                "query": r"C\+\+",
+            }
+        }
 
     def test_regex_leaf(self):
         """Test regex leaf."""
@@ -52,6 +78,9 @@ class TestDocumentExprAsKnnFilter:
         expr = build_document_hybrid_expression({"$not_contains": "x"})
         wrapped = document_expr_as_knn_filter(expr)
         assert wrapped is not None
+        assert wrapped["bool"]["must_not"] == [
+            {"query_string": {"fields": ["document"], "query": "x"}},
+        ]
         assert wrapped["bool"]["filter"] == [{"exists": {"field": "document"}}]
 
     def test_contains_wrapped_in_bool_must(self):

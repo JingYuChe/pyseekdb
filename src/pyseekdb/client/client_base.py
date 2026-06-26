@@ -21,7 +21,6 @@ from .document_query_builder import (
     build_document_hybrid_expression,
     doc_matches_where_document,
     document_expr_as_knn_filter,
-    merge_into_knn_filter,
     where_document_knn_prefilterable,
 )
 from .kernel_errors import maybe_reraise_friendly_kernel_error, namespace_kernel_error_guard
@@ -150,7 +149,7 @@ def _reraise_unless_unique_index_exists(exc: BaseException) -> None:
         "already exists" in message
         or "duplicate key name" in message
         or "code=1061" in message
-        or "1061" in message and "duplicate" in message
+        or ("1061" in message and "duplicate" in message)
     ):
         return
     raise exc

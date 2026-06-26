@@ -61,7 +61,7 @@ def _is_namespace_dropping_error(exc: BaseException) -> bool:
         _has_ob_error_code(exc, 4109)
         or "namespace is dropping" in text
         or "namespace is in drop" in text
-        or "being dropped" in text and "namespace" in text
+        or ("being dropped" in text and "namespace" in text)
     )
 
 

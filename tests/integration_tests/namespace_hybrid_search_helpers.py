@@ -136,7 +136,7 @@ def count_corpus_matches(corpus: list[CorpusRecord], where: dict[str, Any]) -> i
 
 def l2_squared(a: list[float], b: list[float]) -> float:
     """L2 squared."""
-    return sum((x - y) ** 2 for x, y in zip(a, b))
+    return sum((x - y) ** 2 for x, y in zip(a, b, strict=True))
 
 
 def _vector_l2_norm(vec: list[float]) -> float:

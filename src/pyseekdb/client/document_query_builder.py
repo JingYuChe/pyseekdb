@@ -5,17 +5,23 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from pymysql.converters import escape_string
-
 _DOCUMENT_FIELD = "document"
 _SCORING_LEAF_KEYS = frozenset({"query_string", "match", "multi_match", "match_phrase"})
+# Lucene query_string reserved characters (Elasticsearch-style).
+_QUERY_STRING_RESERVED_RE = re.compile(r'([+\-=&|><!(){}\[\]^"~*?:\\/])')
+
+
+def _escape_query_string_term(text: str) -> str:
+    """Escape Lucene ``query_string`` syntax characters in a user term."""
+    escaped = text.replace("\\", "\\\\")
+    return _QUERY_STRING_RESERVED_RE.sub(r"\\\1", escaped)
 
 
 def _query_string_contains(query: str, *, boost: float | None = None) -> dict[str, Any]:
     """Build a ``query_string`` leaf for document full-text match."""
     body: dict[str, Any] = {
         "fields": [_DOCUMENT_FIELD],
-        "query": escape_string(query),
+        "query": _escape_query_string_term(query),
     }
     if boost is not None:
         body["boost"] = boost
@@ -145,7 +151,7 @@ def _combine_document_bool(
             queries = [c["$contains"] for c in conditions if isinstance(c, dict)]
             body: dict[str, Any] = {
                 "fields": [_DOCUMENT_FIELD],
-                "query": " ".join(escape_string(q) for q in queries),
+                "query": " ".join(_escape_query_string_term(q) for q in queries),
                 "default_operator": "and",
             }
             if boost is not None:
@@ -169,7 +175,7 @@ def _combine_document_bool(
             queries = [c["$contains"] for c in conditions if isinstance(c, dict)]
             body: dict[str, Any] = {
                 "fields": [_DOCUMENT_FIELD],
-                "query": " ".join(escape_string(q) for q in queries),
+                "query": " ".join(_escape_query_string_term(q) for q in queries),
                 "default_operator": "or",
             }
             if boost is not None:
@@ -249,27 +255,3 @@ def document_expr_as_knn_filter(doc_expr: dict[str, Any] | None) -> dict[str, An
         return {"bool": {"must": [doc_expr]}}
 
     return doc_expr
-
-
-def merge_into_knn_filter(
-    knn_expr: dict[str, Any] | list[dict[str, Any]],
-    extra_filter: dict[str, Any] | None,
-) -> dict[str, Any] | list[dict[str, Any]]:
-    """Append *extra_filter* to every knn expression's ``filter`` list."""
-    if extra_filter is None:
-        return knn_expr
-
-    def _merge_one(expr: dict[str, Any]) -> dict[str, Any]:
-        """Merge one knn expression."""
-        existing = expr.get("filter")
-        if existing is None:
-            expr["filter"] = [extra_filter]
-        elif isinstance(existing, list):
-            expr["filter"] = [*existing, extra_filter]
-        else:
-            expr["filter"] = [existing, extra_filter]
-        return expr
-
-    if isinstance(knn_expr, list):
-        return [_merge_one(item) for item in knn_expr]
-    return _merge_one(knn_expr)
