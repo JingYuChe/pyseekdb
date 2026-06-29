@@ -21,7 +21,11 @@ from pyseekdb.client.client_base import BaseClient  # noqa: E402
 from pyseekdb.client.collection import Collection  # noqa: E402
 from pyseekdb.client.configuration import HNSWConfiguration, IVFIndexType, VectorIndexConfig  # noqa: E402
 from pyseekdb.client.namespace import Namespace  # noqa: E402
-from pyseekdb.client.validators import _validate_include, _validate_n_results  # noqa: E402
+from pyseekdb.client.validators import (  # noqa: E402
+    _validate_include,
+    _validate_namespace_name,
+    _validate_n_results,
+)
 
 # ==================== IVFConfiguration Tests ====================
 
@@ -953,74 +957,52 @@ class TestValidateNamespaceName:
 
     def test_valid_simple_name(self):
         """Test valid simple name."""
-        from pyseekdb.client.client_base import _validate_namespace_name
-
         _validate_namespace_name("my_namespace")
 
     def test_valid_with_digits_and_underscore(self):
         """Test valid with digits and underscore."""
-        from pyseekdb.client.client_base import _validate_namespace_name
-
         _validate_namespace_name("tenant_123_abc")
 
     def test_valid_single_char(self):
         """Test valid single char."""
-        from pyseekdb.client.client_base import _validate_namespace_name
-
         _validate_namespace_name("a")
 
     def test_valid_boundary_256_chars(self):
         """Test valid boundary 256 chars."""
-        from pyseekdb.client.client_base import _validate_namespace_name
-
         _validate_namespace_name("a" * 256)
 
     def test_empty_name_raises(self):
         """Test empty name raises."""
-        from pyseekdb.client.client_base import _validate_namespace_name
-
         with pytest.raises(ValueError, match="must not be empty"):
             _validate_namespace_name("")
 
     def test_non_string_raises(self):
         """Test non string raises."""
-        from pyseekdb.client.client_base import _validate_namespace_name
-
         with pytest.raises(TypeError, match="must be a string"):
             _validate_namespace_name(123)
 
     def test_too_long_raises(self):
         """Test too long raises."""
-        from pyseekdb.client.client_base import _validate_namespace_name
-
         with pytest.raises(ValueError, match="too long"):
             _validate_namespace_name("a" * 257)
 
     def test_hyphen_raises(self):
         """Test hyphen raises."""
-        from pyseekdb.client.client_base import _validate_namespace_name
-
         with pytest.raises(ValueError, match="invalid characters"):
             _validate_namespace_name("my-namespace")
 
     def test_space_raises(self):
         """Test space raises."""
-        from pyseekdb.client.client_base import _validate_namespace_name
-
         with pytest.raises(ValueError, match="invalid characters"):
             _validate_namespace_name("my namespace")
 
     def test_dot_raises(self):
         """Test dot raises."""
-        from pyseekdb.client.client_base import _validate_namespace_name
-
         with pytest.raises(ValueError, match="invalid characters"):
             _validate_namespace_name("my.namespace")
 
     def test_chinese_raises(self):
         """Test chinese raises."""
-        from pyseekdb.client.client_base import _validate_namespace_name
-
         with pytest.raises(ValueError, match="invalid characters"):
             _validate_namespace_name("命名空间")
 
