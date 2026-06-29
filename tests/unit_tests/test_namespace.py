@@ -21,7 +21,7 @@ from pyseekdb.client.client_base import BaseClient  # noqa: E402
 from pyseekdb.client.collection import Collection  # noqa: E402
 from pyseekdb.client.configuration import HNSWConfiguration, IVFIndexType, VectorIndexConfig  # noqa: E402
 from pyseekdb.client.namespace import Namespace  # noqa: E402
-from pyseekdb.client.validators import _validate_include, _validate_namespace_name, _validate_n_results  # noqa: E402
+from pyseekdb.client.validators import _validate_include, _validate_n_results, _validate_namespace_name  # noqa: E402
 
 # ==================== IVFConfiguration Tests ====================
 
