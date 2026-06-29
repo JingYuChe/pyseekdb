@@ -1411,7 +1411,7 @@ class TestUseNamespaceValidation:
                 ivf=IVFConfiguration(dimension=3, centroids_fresh_mode="spfresh"), embedding_function=None
             )
         )
-        with pytest.raises(ValueError, match="only supported on OceanBase"):
+        with pytest.raises(ValueError, match="only supported on LakeBase"):
             c._create_namespace_collection("test", schema)
 
     def test_create_namespace_collection_without_ivf_skips_vector_index(self):
@@ -1420,6 +1420,7 @@ class TestUseNamespaceValidation:
 
         c = FakeClient()
         c.detect_db_type_and_version = MagicMock(return_value=("oceanbase", Version("4.6.1.0")))
+        c._is_lakebase_cluster = MagicMock(return_value=True)
         c._is_shared_storage_mode = MagicMock(return_value=False)
         c._create_ns_collection_meta = MagicMock(return_value={"collection_id": "abc123"})
         c._ensure_namespace_catalogs = MagicMock()
@@ -1441,6 +1442,7 @@ class TestUseNamespaceValidation:
 
         c = FakeClient()
         c.detect_db_type_and_version = MagicMock(return_value=("oceanbase", Version("4.6.1.0")))
+        c._is_lakebase_cluster = MagicMock(return_value=True)
         c._is_shared_storage_mode = MagicMock(return_value=False)
         c._create_ns_collection_meta = MagicMock(return_value={"collection_id": "abc123"})
         c._ensure_namespace_catalogs = MagicMock()

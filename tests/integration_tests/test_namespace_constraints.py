@@ -2,7 +2,7 @@
 Namespace constraint integration tests.
 
 Covers two SDK-level constraints for use_namespace=True collections:
-1. Minimum OceanBase version: namespace-enabled collections require OB >= 4.6.1.
+1. Minimum LakeBase version: namespace-enabled collections require LakeBase (OceanBase Database AI) >= 4.6.1.
 2. Vector index type: only IVF_FLAT is currently supported; ivf_sq8 / ivf_pq are
    rejected at the SDK layer before any DDL is issued.
 """
@@ -13,7 +13,7 @@ import pytest
 from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT
 
 from pyseekdb import IVFConfiguration
-from pyseekdb.client.client_base import NAMESPACE_MIN_OB_VERSION
+from pyseekdb.client.client_base import NAMESPACE_MIN_LAKEBASE_VERSION, NAMESPACE_MIN_OB_VERSION
 from pyseekdb.client.configuration import VectorIndexConfig
 from pyseekdb.client.schema import Schema
 from pyseekdb.client.version import Version
@@ -129,12 +129,13 @@ class TestNamespaceIvfDimensionConstraint:
 class TestNamespaceMinVersionConstraint:
     """TestNamespaceMinVersionConstraint class."""
 
-    def test_connected_ob_meets_min_version(self, oceanbase_client):
-        """The kernel under test must already be >= 4.6.1, and creation succeeds."""
+    def test_connected_lakebase_meets_min_version(self, oceanbase_client):
+        """The kernel under test must be LakeBase >= 4.6.1, and creation succeeds."""
         db_type, version = oceanbase_client._server.detect_db_type_and_version()
         assert db_type.lower() == "oceanbase"
-        assert version >= NAMESPACE_MIN_OB_VERSION, (
-            f"connected OB version {version} < required {NAMESPACE_MIN_OB_VERSION}"
+        assert oceanbase_client._server._is_lakebase_cluster() is True
+        assert version >= NAMESPACE_MIN_LAKEBASE_VERSION, (
+            f"connected LakeBase version {version} < required {NAMESPACE_MIN_LAKEBASE_VERSION}"
         )
 
         name = _unique_name("_ver_ok")
@@ -149,16 +150,26 @@ class TestNamespaceMinVersionConstraint:
         finally:
             oceanbase_client.delete_collection(name=name)
 
-    def test_old_ob_version_rejected(self, oceanbase_client, monkeypatch):
-        """Simulate an older OB kernel: namespace creation must fail with a clear error."""
+    def test_standard_oceanbase_rejected(self, oceanbase_client, monkeypatch):
+        """Standard OceanBase (without Database AI) must be rejected even when version is new enough."""
         server = oceanbase_client._server
+        monkeypatch.setattr(type(server), "_is_lakebase_cluster", lambda self: False)
+        name = _unique_name("_not_lakebase")
+        with pytest.raises(ValueError, match="only supported on LakeBase"):
+            oceanbase_client.create_collection(name=name, schema=_make_schema("ivf_flat"), use_namespace=True)
+        assert not oceanbase_client.has_collection(name)
+
+    def test_old_lakebase_version_rejected(self, oceanbase_client, monkeypatch):
+        """Simulate an older LakeBase kernel: namespace creation must fail with a clear error."""
+        server = oceanbase_client._server
+        monkeypatch.setattr(type(server), "_is_lakebase_cluster", lambda self: True)
         monkeypatch.setattr(
             type(server),
             "detect_db_type_and_version",
             lambda self: ("oceanbase", Version("4.6.0.0")),
         )
         name = _unique_name("_ver_old")
-        with pytest.raises(ValueError, match=r"requires OceanBase version >= 4\.6\.1"):
+        with pytest.raises(ValueError, match=r"requires LakeBase version >= 4\.6\.1"):
             oceanbase_client.create_collection(name=name, schema=_make_schema("ivf_flat"), use_namespace=True)
         # restore before checking leftovers
         monkeypatch.undo()
@@ -166,4 +177,4 @@ class TestNamespaceMinVersionConstraint:
 
     def test_min_version_constant(self):
         """Test min version constant."""
-        assert Version("4.6.1.0") == NAMESPACE_MIN_OB_VERSION
+        assert Version("4.6.1.0") == NAMESPACE_MIN_LAKEBASE_VERSION == NAMESPACE_MIN_OB_VERSION

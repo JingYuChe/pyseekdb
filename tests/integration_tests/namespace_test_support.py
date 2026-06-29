@@ -8,17 +8,16 @@ from pathlib import Path
 
 import pytest
 
-from pyseekdb.client.client_base import NAMESPACE_MIN_OB_VERSION
+from pyseekdb.client.client_base import NAMESPACE_MIN_LAKEBASE_VERSION
 
 _OB_NAMESPACE_SUPPORT: tuple[bool, str] | None = None
 
 # Tests that must not be short-circuited by the OB version gate.
-_VERSION_SKIP_EXEMPT_TEST_NAMES = frozenset(
-    {
-        "test_old_ob_version_rejected",
-        "test_min_version_constant",
-    }
-)
+_VERSION_SKIP_EXEMPT_TEST_NAMES = frozenset({
+    "test_old_lakebase_version_rejected",
+    "test_standard_oceanbase_rejected",
+    "test_min_version_constant",
+})
 
 
 def is_namespace_integration_test(nodeid: str, fspath: str | Path) -> bool:
@@ -80,6 +79,7 @@ def probe_oceanbase_namespace_support() -> tuple[bool, str]:
             password=password,
         )
         db_type, version = client._server.detect_db_type_and_version()
+        is_lakebase = client._server._is_lakebase_cluster()
     except Exception as exc:
         _OB_NAMESPACE_SUPPORT = (False, f"OceanBase unavailable for namespace tests ({host}:{port}): {exc}")
         return _OB_NAMESPACE_SUPPORT
@@ -91,12 +91,17 @@ def probe_oceanbase_namespace_support() -> tuple[bool, str]:
     if db_type.lower() != "oceanbase":
         _OB_NAMESPACE_SUPPORT = (
             False,
-            f"namespace tests require OceanBase, got {db_type}",
+            f"namespace tests require LakeBase (OceanBase Database AI), got {db_type}",
         )
-    elif version < NAMESPACE_MIN_OB_VERSION:
+    elif not is_lakebase:
         _OB_NAMESPACE_SUPPORT = (
             False,
-            f"namespace tests require OceanBase >= {NAMESPACE_MIN_OB_VERSION}, current {version}",
+            "namespace tests require LakeBase (OceanBase Database AI); connected cluster is standard OceanBase",
+        )
+    elif version < NAMESPACE_MIN_LAKEBASE_VERSION:
+        _OB_NAMESPACE_SUPPORT = (
+            False,
+            f"namespace tests require LakeBase >= {NAMESPACE_MIN_LAKEBASE_VERSION}, current {version}",
         )
     else:
         _OB_NAMESPACE_SUPPORT = (True, "")
