@@ -4,7 +4,6 @@ Verifies add/update/upsert/delete isolation via get.
 """
 
 import pytest
-
 from namespace_dml_helpers import (
     assert_get_absent,
     assert_get_present,
@@ -14,8 +13,8 @@ from namespace_dml_helpers import (
 
 
 class TestNamespaceDMLMultiNs:
-
     """TestNamespaceDMLMultiNs class."""
+
     def test_add_isolation(self, db_client):
         """Test add isolation."""
         collection = create_ns_collection(db_client, suffix="_mns_add")

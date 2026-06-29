@@ -45,15 +45,16 @@ class TestNamespaceKernelErrorDetection:
 
     def test_maps_duplicate_namespace_to_friendly_message(self):
         """Duplicate sdk_namespaces insert is handled in create path, not here."""
-        exc = IntegrityError(
-            '(1062, "Duplicate entry \'cid-demo_ns\' for key \'uk_sdk_ns_coll_name\'")'
+        exc = IntegrityError("(1062, \"Duplicate entry 'cid-demo_ns' for key 'uk_sdk_ns_coll_name'\")")
+        assert (
+            _friendly_kernel_error_message(
+                exc,
+                namespace_name="demo_ns",
+                collection_name="coll",
+                collection_id="cid",
+            )
+            is None
         )
-        assert _friendly_kernel_error_message(
-            exc,
-            namespace_name="demo_ns",
-            collection_name="coll",
-            collection_id="cid",
-        ) is None
 
 
 class TestNamespaceKernelErrorTranslation:
@@ -62,35 +63,41 @@ class TestNamespaceKernelErrorTranslation:
     def test_wraps_namespace_dropping_error(self):
         """Test wraps namespace dropping error."""
         exc = Exception("prewarm failed, errcode=-4109")
-        with namespace_kernel_error_scope(
-            namespace_name="demo_ns",
-            collection_name="coll",
-            collection_id="cid",
+        with (
+            namespace_kernel_error_scope(
+                namespace_name="demo_ns",
+                collection_name="coll",
+                collection_id="cid",
+            ),
+            pytest.raises(ValueError, match="being dropped"),
         ):
-            with pytest.raises(ValueError, match="being dropped"):
-                maybe_reraise_friendly_kernel_error(exc)
+            maybe_reraise_friendly_kernel_error(exc)
 
     def test_wraps_namespace_missing_error(self):
         """Test wraps namespace missing error."""
         exc = Exception("namespace does not exist, code=4018")
-        with namespace_kernel_error_scope(
-            namespace_name="demo_ns",
-            collection_name="coll",
-            collection_id="cid",
+        with (
+            namespace_kernel_error_scope(
+                namespace_name="demo_ns",
+                collection_name="coll",
+                collection_id="cid",
+            ),
+            pytest.raises(ValueError, match="no longer exists"),
         ):
-            with pytest.raises(ValueError, match="no longer exists"):
-                maybe_reraise_friendly_kernel_error(exc)
+            maybe_reraise_friendly_kernel_error(exc)
 
     def test_wraps_missing_collection_physical_error(self):
         """Test wraps missing collection physical error."""
         exc = Exception("Table 'abc123_logic_data_table' doesn't exist")
-        with namespace_kernel_error_scope(
-            namespace_name="demo_ns",
-            collection_name="coll",
-            collection_id="abc123",
+        with (
+            namespace_kernel_error_scope(
+                namespace_name="demo_ns",
+                collection_name="coll",
+                collection_id="abc123",
+            ),
+            pytest.raises(ValueError, match="Collection 'coll' does not exist"),
         ):
-            with pytest.raises(ValueError, match="Collection 'coll' does not exist"):
-                maybe_reraise_friendly_kernel_error(exc)
+            maybe_reraise_friendly_kernel_error(exc)
 
     def test_leaves_unrelated_errors_untouched(self):
         """Test leaves unrelated errors untouched."""

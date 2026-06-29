@@ -2,7 +2,7 @@
 
 import warnings
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Any, TypedDict
 
 from pyseekdb.client.embedding_function import DefaultEmbeddingFunction, EmbeddingFunction
@@ -202,7 +202,7 @@ def _validate_hnsw_configuration(config: "HNSWConfiguration") -> None:
         raise TypeError(f"bq_use_fht must be a bool, got {type(config.bq_use_fht).__name__}")
 
 
-class DistanceMetric(str, Enum):
+class DistanceMetric(StrEnum):
     """
     Distance metric constants for vector similarity calculation.
 
@@ -214,7 +214,7 @@ class DistanceMetric(str, Enum):
     INNER_PRODUCT = "inner_product"
 
 
-class HNSWIndexType(str, Enum):
+class HNSWIndexType(StrEnum):
     """Supported HNSW index subtypes."""
 
     HNSW = "hnsw"
@@ -222,13 +222,13 @@ class HNSWIndexType(str, Enum):
     HNSW_BQ = "hnsw_bq"
 
 
-class HNSWIndexLib(str, Enum):
+class HNSWIndexLib(StrEnum):
     """Supported HNSW index libraries."""
 
     VSAG = "vsag"
 
 
-class IVFIndexType(str, Enum):
+class IVFIndexType(StrEnum):
     """Supported IVF index subtypes for namespace-enabled collections."""
 
     IVF_FLAT = "ivf_flat"
@@ -236,14 +236,14 @@ class IVFIndexType(str, Enum):
     IVF_PQ = "ivf_pq"
 
 
-class IVFIndexLib(str, Enum):
+class IVFIndexLib(StrEnum):
     """Supported IVF index libraries."""
 
     OB = "ob"
     VSAG = "vsag"
 
 
-class FulltextAnalyzer(str, Enum):
+class FulltextAnalyzer(StrEnum):
     """Supported fulltext analyzers."""
 
     SPACE = "space"
@@ -253,14 +253,14 @@ class FulltextAnalyzer(str, Enum):
     NGRAM2 = "ngram2"
 
 
-class IKMode(str, Enum):
+class IKMode(StrEnum):
     """Supported IK analyzer segmentation modes."""
 
     SMART = "smart"
     MAX_WORD = "max_word"
 
 
-class BQRefineType(str, Enum):
+class BQRefineType(StrEnum):
     """Supported binary-quantization refine types for HNSW BQ indexes."""
 
     SQ8 = "sq8"
@@ -415,9 +415,7 @@ class IVFConfiguration:
             raise ValueError(f"lib must be one of {valid_libs}, got {self.lib}")
 
         if self.centroids_fresh_mode is not None and not isinstance(self.centroids_fresh_mode, str):
-            raise TypeError(
-                f"centroids_fresh_mode must be a str, got {type(self.centroids_fresh_mode).__name__}"
-            )
+            raise TypeError(f"centroids_fresh_mode must be a str, got {type(self.centroids_fresh_mode).__name__}")
 
         _ensure_primitive_properties(self.properties)
 

@@ -26,7 +26,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from .configuration import FulltextIndexConfig, HNSWConfiguration, IVFConfiguration, SparseVectorIndexConfig, VectorIndexConfig
+from .configuration import (
+    FulltextIndexConfig,
+    HNSWConfiguration,
+    IVFConfiguration,
+    SparseVectorIndexConfig,
+    VectorIndexConfig,
+)
 
 
 class Schema:

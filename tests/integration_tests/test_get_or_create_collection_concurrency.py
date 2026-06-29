@@ -9,10 +9,9 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import pytest
+from pymysql.converters import escape_string
 
 import pyseekdb
-from pymysql.converters import escape_string
 
 
 def _make_oceanbase_client():
@@ -33,8 +32,7 @@ def _count_sdk_collections(client, collection_name: str) -> int:
     """Count sdk collections."""
     name_escaped = escape_string(collection_name)
     rows = client._server._execute(
-        "SELECT COUNT(*) AS cnt FROM sdk_collections "
-        f"WHERE collection_name = '{name_escaped}'"
+        f"SELECT COUNT(*) AS cnt FROM sdk_collections WHERE collection_name = '{name_escaped}'"
     )
     row = rows[0]
     return int(row["cnt"] if isinstance(row, dict) else row[0])
@@ -52,6 +50,7 @@ def _has_unique_name_index(client) -> bool:
 
 class TestGetOrCreateCollectionConcurrencyOceanBase:
     """TestGetOrCreateCollectionConcurrencyOceanBase class."""
+
     def test_concurrent_get_or_create_collection_is_idempotent(self, oceanbase_client):
         """8 independent clients race on get_or_create_collection with the same name."""
         owner = oceanbase_client
@@ -74,7 +73,7 @@ class TestGetOrCreateCollectionConcurrencyOceanBase:
                     "collection_id": str(coll.id),
                     "name": coll.name,
                 }
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 errors.append(f"thread {thread_id}: {exc!r}")
             finally:
                 if hasattr(client, "close"):

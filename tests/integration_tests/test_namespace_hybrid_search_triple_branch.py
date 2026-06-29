@@ -25,10 +25,9 @@ import time
 from typing import Any, ClassVar
 
 import pytest
-
 from namespace_hybrid_search_helpers import (
-    TRIPLE_BRANCH_CASES,
     TOKEN_ZPX,
+    TRIPLE_BRANCH_CASES,
     VectorDistanceMetric,
     ensure_shared_hybrid_search_collection,
     get_triple_branch_case,
@@ -52,9 +51,7 @@ class TestNamespaceHybridSearchTripleBranch:
         request: pytest.FixtureRequest,
     ) -> None:
         """Bind shared collection."""
-        entry = ensure_shared_hybrid_search_collection(
-            self._shared_by_mode, db_client, request, vector_distance
-        )
+        entry = ensure_shared_hybrid_search_collection(self._shared_by_mode, db_client, request, vector_distance)
         self._corpus = entry["corpus"]
         self._collection = entry["collection"]
         self._vector_distance = vector_distance
@@ -107,9 +104,7 @@ class TestNamespaceHybridSearchTripleBranch:
         assert len(ids) > 0, "expected at least one hybrid FTS+KNN hit"
         docs = result.get("documents", [[]])[0]
         for doc_id, doc_text in zip(ids, docs, strict=True):
-            assert TOKEN_ZPX.lower() in (doc_text or "").lower(), (
-                f"id={doc_id!r} must contain {TOKEN_ZPX!r}"
-            )
+            assert TOKEN_ZPX.lower() in (doc_text or "").lower(), f"id={doc_id!r} must contain {TOKEN_ZPX!r}"
 
 
 if __name__ == "__main__":

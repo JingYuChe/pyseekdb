@@ -4,6 +4,7 @@ Shared helpers for namespace DML integration tests.
 
 from __future__ import annotations
 
+import contextlib
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -31,6 +32,7 @@ FILTER_MULTI_NS_PURGE = 500
 @dataclass(frozen=True)
 class DmlRecord:
     """DmlRecord class."""
+
     doc_id: str
     embedding: list[float]
     document: str
@@ -52,7 +54,9 @@ def create_ns_collection(client: Any, suffix: str = "") -> Any:
     """Create ns collection."""
     name = f"test_ns_dml_{int(time.time() * 1000)}{suffix}"
     return client.create_collection(
-        name=name, schema=ns_schema(), use_namespace=True,
+        name=name,
+        schema=ns_schema(),
+        use_namespace=True,
         partition_count=NAMESPACE_TEST_PARTITION_COUNT,
     )
 
@@ -60,10 +64,8 @@ def create_ns_collection(client: Any, suffix: str = "") -> Any:
 def cleanup(client: Any, *collections: Any) -> None:
     """Cleanup."""
     for collection in collections:
-        try:
+        with contextlib.suppress(Exception):
             client.delete_collection(name=collection.name)
-        except Exception:
-            pass
 
 
 def build_large_dml_corpus(
@@ -132,9 +134,7 @@ def build_filter_corpus(
         meta: dict[str, Any] = {"tag": "keep", "category": category, "seq": i}
         if ns_tag is not None:
             meta["ns_tag"] = ns_tag
-        records.append(
-            DmlRecord(f"{id_prefix}_keep_{i:04d}", _filter_embedding(idx), document, meta)
-        )
+        records.append(DmlRecord(f"{id_prefix}_keep_{i:04d}", _filter_embedding(idx), document, meta))
         idx += 1
 
     for i in range(purge_count):
@@ -217,14 +217,9 @@ def assert_get_where_document_count(
     if substring and result.get("documents"):
         for i, doc in enumerate(result["documents"]):
             if doc is None:
-                raise AssertionError(
-                    f"{prefix}document at index {i} is None for id={ids[i]!r}"
-                )
+                raise AssertionError(f"{prefix}document at index {i} is None for id={ids[i]!r}")
             if substring not in doc.lower():
-                raise AssertionError(
-                    f"{prefix}id={ids[i]!r} document={doc!r} "
-                    f"does not contain substring {substring!r}"
-                )
+                raise AssertionError(f"{prefix}id={ids[i]!r} document={doc!r} does not contain substring {substring!r}")
     return result
 
 
@@ -309,9 +304,7 @@ def load_dml_corpus(
     if assert_count:
         expected = len(corpus)
         actual = namespace.count()
-        assert actual == expected, (
-            f"namespace {namespace.name!r} expected count {expected}, got {actual}"
-        )
+        assert actual == expected, f"namespace {namespace.name!r} expected count {expected}, got {actual}"
 
 
 def assert_peek_result(

@@ -15,7 +15,6 @@ from __future__ import annotations
 import time
 
 import pytest
-
 from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT
 from namespace_fts_helpers import (
     CORPUS_SIZE,
@@ -47,18 +46,10 @@ _INDEX_SETTLE_SECONDS = 3
 _FTS_TRIPLE_CASE_NAMES: tuple[str, ...] = tuple(
     c.name for c in TRIPLE_BRANCH_CASES if c.verify in ("fts", "not_contains")
 )
-_SI_TRIPLE_CASE_NAMES: tuple[str, ...] = tuple(
-    c.name for c in TRIPLE_BRANCH_CASES if c.verify == "search_index"
-)
-_KNN_TRIPLE_CASE_NAMES: tuple[str, ...] = tuple(
-    c.name for c in TRIPLE_BRANCH_CASES if c.verify == "knn"
-)
-_INTERSECTION_CASE_NAMES: tuple[str, ...] = tuple(
-    c.name for c in TRIPLE_BRANCH_CASES if c.verify == "intersection"
-)
-_RRF_CASE_NAMES: tuple[str, ...] = tuple(
-    c.name for c in TRIPLE_BRANCH_CASES if c.verify == "rrf_fusion"
-)
+_SI_TRIPLE_CASE_NAMES: tuple[str, ...] = tuple(c.name for c in TRIPLE_BRANCH_CASES if c.verify == "search_index")
+_KNN_TRIPLE_CASE_NAMES: tuple[str, ...] = tuple(c.name for c in TRIPLE_BRANCH_CASES if c.verify == "knn")
+_INTERSECTION_CASE_NAMES: tuple[str, ...] = tuple(c.name for c in TRIPLE_BRANCH_CASES if c.verify == "intersection")
+_RRF_CASE_NAMES: tuple[str, ...] = tuple(c.name for c in TRIPLE_BRANCH_CASES if c.verify == "rrf_fusion")
 
 
 def _namespace_corpus(base_corpus: list[CorpusRecord], key: str) -> list[CorpusRecord]:
@@ -120,14 +111,11 @@ def _setup_multi_coll_multi_ns_isolation_triple(
 
 class TestNamespaceHybridSearchTripleBranchMultiCollMultiNs:
     """TestNamespaceHybridSearchTripleBranchMultiCollMultiNs class."""
+
     @pytest.mark.parametrize("vector_distance", ["l2", "cosine"])
-    def test_cross_quadrant_triple_branch_isolation(
-        self, db_client, vector_distance: VectorDistanceMetric
-    ):
+    def test_cross_quadrant_triple_branch_isolation(self, db_client, vector_distance: VectorDistanceMetric):
         """Loaded namespaces return only their own rows; empty namespaces stay empty."""
-        ctx = _setup_multi_coll_multi_ns_isolation_triple(
-            db_client, distance=vector_distance
-        )
+        ctx = _setup_multi_coll_multi_ns_isolation_triple(db_client, distance=vector_distance)
         try:
             case = get_triple_branch_case("intersection_both_tokens")
             for key in MULTI_COLL_MULTI_NS_QUADRANT_KEYS:
@@ -166,13 +154,9 @@ class TestNamespaceHybridSearchTripleBranchMultiCollMultiNs:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)
 
     @pytest.mark.parametrize("vector_distance", ["l2", "cosine"])
-    def test_triple_branch_top1_fts_all_quadrants(
-        self, db_client, vector_distance: VectorDistanceMetric
-    ):
+    def test_triple_branch_top1_fts_all_quadrants(self, db_client, vector_distance: VectorDistanceMetric):
         """Test triple branch top1 fts all quadrants."""
-        ctx = _setup_multi_coll_multi_ns_isolation_triple(
-            db_client, distance=vector_distance
-        )
+        ctx = _setup_multi_coll_multi_ns_isolation_triple(db_client, distance=vector_distance)
         try:
             for key in MULTI_COLL_MULTI_NS_QUADRANT_KEYS:
                 _, namespace = ctx[key]
@@ -206,9 +190,7 @@ class TestNamespaceHybridSearchTripleBranchMultiCollMultiNs:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)
 
     @pytest.mark.parametrize("case_name", _SI_TRIPLE_CASE_NAMES)
-    def test_hybrid_search_triple_branch_search_index_all_loaded_quadrants(
-        self, db_client, case_name: str
-    ):
+    def test_hybrid_search_triple_branch_search_index_all_loaded_quadrants(self, db_client, case_name: str):
         """Test hybrid search triple branch search index all loaded quadrants."""
         ctx = setup_multi_coll_multi_ns_fts(db_client)
         try:
@@ -224,9 +206,7 @@ class TestNamespaceHybridSearchTripleBranchMultiCollMultiNs:
         """Test hybrid search triple branch knn all loaded quadrants."""
         ctx = setup_multi_coll_multi_ns_fts(db_client, distance=vector_distance)
         try:
-            run_triple_branch_case_on_quadrants(
-                ctx, case_name, distance_metric=vector_distance
-            )
+            run_triple_branch_case_on_quadrants(ctx, case_name, distance_metric=vector_distance)
         finally:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)
 
@@ -238,9 +218,7 @@ class TestNamespaceHybridSearchTripleBranchMultiCollMultiNs:
         """Test hybrid search triple branch intersection all loaded quadrants."""
         ctx = setup_multi_coll_multi_ns_fts(db_client, distance=vector_distance)
         try:
-            run_triple_branch_case_on_quadrants(
-                ctx, case_name, distance_metric=vector_distance
-            )
+            run_triple_branch_case_on_quadrants(ctx, case_name, distance_metric=vector_distance)
         finally:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)
 
@@ -252,9 +230,7 @@ class TestNamespaceHybridSearchTripleBranchMultiCollMultiNs:
         """Test hybrid search triple branch rrf all loaded quadrants."""
         ctx = setup_multi_coll_multi_ns_fts(db_client, distance=vector_distance)
         try:
-            run_triple_branch_case_on_quadrants(
-                ctx, case_name, distance_metric=vector_distance
-            )
+            run_triple_branch_case_on_quadrants(ctx, case_name, distance_metric=vector_distance)
         finally:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)
 

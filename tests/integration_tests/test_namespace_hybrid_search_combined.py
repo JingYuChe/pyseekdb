@@ -16,7 +16,6 @@ import time
 from typing import Any, ClassVar
 
 import pytest
-
 from namespace_hybrid_search_helpers import (
     HYBRID_COMBINED_CASES,
     VectorDistanceMetric,
@@ -31,6 +30,7 @@ from namespace_hybrid_search_helpers import (
 @pytest.mark.parametrize("vector_distance", ["l2", "cosine"])
 class TestNamespaceHybridSearchCombined:
     """TestNamespaceHybridSearchCombined class."""
+
     _shared_by_mode: ClassVar[dict[str, dict[str, Any]]] = {}
 
     @pytest.fixture(autouse=True)
@@ -41,9 +41,7 @@ class TestNamespaceHybridSearchCombined:
         request: pytest.FixtureRequest,
     ) -> None:
         """Bind shared collection."""
-        entry = ensure_shared_hybrid_search_collection(
-            self._shared_by_mode, db_client, request, vector_distance
-        )
+        entry = ensure_shared_hybrid_search_collection(self._shared_by_mode, db_client, request, vector_distance)
         self._corpus = entry["corpus"]
         self._collection = entry["collection"]
         self._vector_distance = vector_distance
@@ -68,9 +66,7 @@ class TestNamespaceHybridSearchCombined:
         """Test hybrid search combined."""
         case = get_hybrid_combined_case(case_name)
         namespace = self._new_namespace(case_name)
-        run_hybrid_combined_case(
-            namespace, self._corpus, case, distance_metric=self._vector_distance
-        )
+        run_hybrid_combined_case(namespace, self._corpus, case, distance_metric=self._vector_distance)
 
 
 if __name__ == "__main__":

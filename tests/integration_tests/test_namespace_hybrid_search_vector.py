@@ -11,7 +11,6 @@ import time
 from typing import Any, ClassVar
 
 import pytest
-
 from namespace_hybrid_search_helpers import (
     KNN_QUERY_VECTOR,
     VECTOR_KNN_CASES,
@@ -39,9 +38,7 @@ class TestNamespaceHybridSearchVector:
         request: pytest.FixtureRequest,
     ) -> None:
         """Bind shared collection."""
-        entry = ensure_shared_hybrid_search_collection(
-            self._shared_by_mode, db_client, request, vector_distance
-        )
+        entry = ensure_shared_hybrid_search_collection(self._shared_by_mode, db_client, request, vector_distance)
         self._corpus = entry["corpus"]
         self._collection = entry["collection"]
         self._vector_distance = vector_distance
@@ -85,12 +82,15 @@ class TestNamespaceHybridSearchVector:
             n_results=1,
             include=["distances"],
         )
-        assert result["ids"][0][0] == expected_knn_ids(
-            self._corpus,
-            KNN_QUERY_VECTOR,
-            1,
-            distance_metric=self._vector_distance,
-        )[0]
+        assert (
+            result["ids"][0][0]
+            == expected_knn_ids(
+                self._corpus,
+                KNN_QUERY_VECTOR,
+                1,
+                distance_metric=self._vector_distance,
+            )[0]
+        )
 
 
 if __name__ == "__main__":

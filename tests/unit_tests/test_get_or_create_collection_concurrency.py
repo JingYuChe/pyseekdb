@@ -22,15 +22,16 @@ from pyseekdb.client.types import _NOT_PROVIDED  # noqa: E402
 
 class TestCollectionCatalogConflictDetection:
     """TestCollectionCatalogConflictDetection class."""
+
     def test_detects_integrity_error_on_sdk_collections(self):
         """Test detects integrity error on sdk collections."""
+
         class IntegrityError(Exception):
             """IntegrityError class."""
+
             pass
 
-        exc = IntegrityError(
-            '(1062, "Duplicate entry \'my_coll\' for key \'uk_sdk_coll_name\'")'
-        )
+        exc = IntegrityError("(1062, \"Duplicate entry 'my_coll' for key 'uk_sdk_coll_name'\")")
         assert _is_sdk_collection_catalog_conflict_error(exc)
 
     def test_ignores_unrelated_errors(self):
@@ -40,6 +41,7 @@ class TestCollectionCatalogConflictDetection:
 
 class TestCollectionCatalogInsertRecovery:
     """TestCollectionCatalogInsertRecovery class."""
+
     def test_insert_conflict_reuses_existing_collection_id(self):
         """Test insert conflict reuses existing collection id."""
         client = MagicMock(spec=BaseClient)
@@ -49,14 +51,13 @@ class TestCollectionCatalogInsertRecovery:
 
         class IntegrityError(Exception):
             """IntegrityError class."""
+
             pass
 
         def execute_side_effect(sql):
             """Execute side effect."""
             if "INSERT INTO" in sql:
-                raise IntegrityError(
-                    '(1062, "Duplicate entry \'items\' for key \'uk_sdk_coll_name\'")'
-                )
+                raise IntegrityError("(1062, \"Duplicate entry 'items' for key 'uk_sdk_coll_name'\")")
             return []
 
         client._execute.side_effect = execute_side_effect
@@ -75,22 +76,23 @@ class TestCollectionCatalogInsertRecovery:
         result = BaseClient._create_collection_meta_v2(client, "items", None)
 
         assert result["collection_id"] == "existing_id"
-        insert_calls = [
-            call for call in client._execute.call_args_list if "INSERT INTO" in str(call)
-        ]
+        insert_calls = [call for call in client._execute.call_args_list if "INSERT INTO" in str(call)]
         assert not insert_calls
 
 
 class TestCollectionConflictDetection:
     """TestCollectionConflictDetection class."""
+
     def test_detects_value_error_for_existing_collection(self):
         """Test detects value error for existing collection."""
         assert _is_collection_conflict_error(ValueError("Collection 'items' already exists"))
 
     def test_detects_seekdb_table_exists_error(self):
         """Test detects seekdb table exists error."""
+
         class SeekdbError(Exception):
             """SeekdbError class."""
+
             pass
 
         exc = SeekdbError("Table 'c$v2$abc' already exists failed: code=1050")
@@ -116,11 +118,12 @@ class TestCollectionConflictDetection:
 
 class TestGetOrCreateCollectionRecovery:
     """TestGetOrCreateCollectionRecovery class."""
+
     @staticmethod
     def _bind_resume_helper(client):
         """Bind resume helper."""
-        client._get_or_resume_existing_collection = (
-            BaseClient._get_or_resume_existing_collection.__get__(client, BaseClient)
+        client._get_or_resume_existing_collection = BaseClient._get_or_resume_existing_collection.__get__(
+            client, BaseClient
         )
 
     def test_returns_existing_collection_after_create_conflict(self):
@@ -214,6 +217,7 @@ class TestGetOrCreateCollectionRecovery:
 
 class TestListNsNamespacesRecyclebinFilter:
     """TestListNsNamespacesRecyclebinFilter class."""
+
     def test_sql_excludes_recyclebin_rows(self):
         """Test sql excludes recyclebin rows."""
         client = MagicMock(spec=BaseClient)

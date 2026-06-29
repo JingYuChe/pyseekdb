@@ -189,9 +189,7 @@ class FilterBuilder:
                 params.append(value)
 
             elif key == "$not_contains":
-                clauses.append(
-                    f"NOT (MATCH({document_column}) AGAINST (%s IN NATURAL LANGUAGE MODE))"
-                )
+                clauses.append(f"NOT (MATCH({document_column}) AGAINST (%s IN NATURAL LANGUAGE MODE))")
                 params.append(value)
 
             elif key == "$regex":

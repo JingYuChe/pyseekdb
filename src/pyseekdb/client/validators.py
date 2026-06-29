@@ -7,18 +7,16 @@ _MAX_NAME_LENGTH = 512
 _MAX_NAMESPACE_NAME_LENGTH = 256
 _MAX_NAMESPACE_BATCH_SIZE = 100
 _MAX_N_RESULTS = 16384  # OceanBase vector-search k upper bound
-_VALID_INCLUDE_FIELDS = frozenset(
-    {
-        "documents",
-        "document",
-        "metadatas",
-        "metadata",
-        "embeddings",
-        "embedding",
-        "distances",
-        "distance",
-    }
-)
+_VALID_INCLUDE_FIELDS = frozenset({
+    "documents",
+    "document",
+    "metadatas",
+    "metadata",
+    "embeddings",
+    "embedding",
+    "distances",
+    "distance",
+})
 
 
 def _validate_include(include: list[str] | None) -> None:
@@ -26,9 +24,7 @@ def _validate_include(include: list[str] | None) -> None:
     if include is None:
         return
     if not isinstance(include, list):
-        raise TypeError(
-            f"include must be a list[str] or None, got {type(include).__name__}"
-        )
+        raise TypeError(f"include must be a list[str] or None, got {type(include).__name__}")
     invalid = [field for field in include if field not in _VALID_INCLUDE_FIELDS]
     if invalid:
         allowed = "documents, metadatas, embeddings, distances"
@@ -42,9 +38,7 @@ def _validate_include(include: list[str] | None) -> None:
 def _validate_namespace_name(name: str) -> None:
     """Validate a namespace name for type, length, and allowed characters."""
     if not isinstance(name, str):
-        raise TypeError(
-            f"Invalid namespace name: '{name}'. Namespace name must be a string, got {type(name).__name__}"
-        )
+        raise TypeError(f"Invalid namespace name: '{name}'. Namespace name must be a string, got {type(name).__name__}")
     if not name:
         raise ValueError(f"Invalid namespace name: '{name}'. Namespace name must not be empty")
     if len(name) > _MAX_NAMESPACE_NAME_LENGTH:
@@ -61,9 +55,7 @@ def _validate_namespace_name(name: str) -> None:
 def _validate_database_name(name: str) -> None:
     """Validate a SQL database identifier for catalog table qualification."""
     if not isinstance(name, str):
-        raise TypeError(
-            f"Invalid database name: '{name}'. Database name must be a string, got {type(name).__name__}"
-        )
+        raise TypeError(f"Invalid database name: '{name}'. Database name must be a string, got {type(name).__name__}")
     if not name:
         raise ValueError(f"Invalid database name: '{name}'. Database name must not be empty")
     if _NAME_PATTERN.match(name) is None:
@@ -84,22 +76,17 @@ def _validate_n_results(n_results: int, *, max_results: int = _MAX_N_RESULTS) ->
         raise ValueError(f"n_results must be an integer >= 1, got {n_results!r}")
     if n_results > max_results:
         raise ValueError(
-            f"n_results must be <= {max_results}, got {n_results}. "
-            "Use a smaller value or paginate with offset/limit."
+            f"n_results must be <= {max_results}, got {n_results}. Use a smaller value or paginate with offset/limit."
         )
 
 
 def _validate_record_ids(ids: list[str]) -> None:
     """Validate namespace/collection record id list shape and per-id constraints."""
     if not isinstance(ids, list):
-        raise TypeError(
-            f"Invalid record ids: expected list[str], got {type(ids).__name__}"
-        )
+        raise TypeError(f"Invalid record ids: expected list[str], got {type(ids).__name__}")
     for rid in ids:
         if not isinstance(rid, str):
-            raise TypeError(
-                f"Invalid record id: '{rid}'. Record id must be a string, got {type(rid).__name__}"
-            )
+            raise TypeError(f"Invalid record id: '{rid}'. Record id must be a string, got {type(rid).__name__}")
         if not rid:
             raise ValueError("Invalid record id: Record id must not be empty")
         if len(rid) > _MAX_NAME_LENGTH:
@@ -127,8 +114,7 @@ def _validate_namespace_explicit_embedding_dimensions(
         if actual != expected_dimension:
             if has_vector_index:
                 raise ValueError(
-                    f"Embedding dimension mismatch: expected {expected_dimension}, "
-                    f"got {actual} at index {i}."
+                    f"Embedding dimension mismatch: expected {expected_dimension}, got {actual} at index {i}."
                 )
             raise ValueError(
                 f"Collections without a vector index store embeddings as "

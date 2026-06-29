@@ -14,12 +14,11 @@ import time
 from typing import Any, ClassVar
 
 import pytest
-
 from namespace_fts_helpers import (
     TOKEN_ZPX,
     CorpusRecord,
-    get_fts_case,
     assert_not_contains_no_token_leak,
+    get_fts_case,
     run_hybrid_search_fts_case,
     setup_fts_namespace_with_corpus,
     setup_large_fts_collection,
@@ -129,9 +128,7 @@ class TestNamespaceHybridSearchFulltext:
         """``$and`` on ``where_document`` combined with ``has_both`` metadata filter."""
         self._run_fts_case("and_zpx_alp_filter_has_both")
 
-    def test_hybrid_search_fulltext_contains_zpx_filter_zpx_hint_and_alp_zero(
-        self, db_client
-    ):
+    def test_hybrid_search_fulltext_contains_zpx_filter_zpx_hint_and_alp_zero(self, db_client):
         """``where_document`` + ``where`` ``$and``: ``zpx_hint`` range and ``alp_hint`` equality."""
         self._run_fts_case("contains_zpx_filter_zpx_hint_and_alp_zero")
 

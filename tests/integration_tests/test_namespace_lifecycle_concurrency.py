@@ -9,9 +9,9 @@ import time
 from unittest.mock import patch
 
 import pytest
+from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT, cleanup, ns_schema
 
 import pyseekdb
-from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT, cleanup, ns_schema
 
 
 def _unique_name(prefix: str) -> str:
@@ -52,7 +52,7 @@ def test_multi_client_has_false_after_drop_returns(oceanbase_client):
             """Drop worker."""
             try:
                 clients[0].get_collection(collection.name).delete_namespace(ns_name)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 errors.append(exc)
             finally:
                 drop_done.set()
@@ -64,7 +64,7 @@ def test_multi_client_has_false_after_drop_returns(oceanbase_client):
                 drop_done.wait(timeout=60)
                 for _ in range(30):
                     post_drop_has.append(coll.has_namespace(ns_name))
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 errors.append(exc)
 
         drop_thread = threading.Thread(target=_drop_worker)
@@ -120,7 +120,7 @@ def test_multi_client_has_does_not_error_during_drop(oceanbase_client):
             try:
                 with patch.object(clients[0]._server, "_execute", side_effect=_slow_drop_execute):
                     dropper.delete_namespace(ns_name)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 errors.append(exc)
 
         def _has_worker() -> None:
@@ -131,7 +131,7 @@ def test_multi_client_has_does_not_error_during_drop(oceanbase_client):
                     has_results.append(checker.has_namespace(ns_name))
                     has_completed_while_drop_blocked.set()
                     time.sleep(0.05)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 errors.append(exc)
 
         drop_thread = threading.Thread(target=_drop_worker)

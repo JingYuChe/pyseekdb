@@ -7,7 +7,6 @@ Extends FTS multi-coll coverage with search-index, KNN, and combined scenarios.
 from __future__ import annotations
 
 import pytest
-
 from namespace_fts_helpers import (
     MULTI_COLL_MULTI_NS_QUADRANT_KEYS,
     VectorDistanceMetric,
@@ -22,8 +21,8 @@ from namespace_hybrid_search_helpers import (
     get_search_index_case,
     get_vector_knn_case,
     run_hybrid_combined_case,
-    run_hybrid_search_index_case,
     run_hybrid_knn_case,
+    run_hybrid_search_index_case,
     run_knn_case_on_quadrants,
     run_search_index_case_on_quadrants,
     setup_multi_coll_multi_ns_fts,
@@ -34,6 +33,7 @@ from namespace_hybrid_search_helpers import (
 
 class TestNamespaceHybridSearchMultiCollMultiNs:
     """TestNamespaceHybridSearchMultiCollMultiNs class."""
+
     def test_cross_quadrant_search_index_isolation(self, db_client):
         """Only the loaded quadrant returns ``has_both`` rows."""
         ctx = setup_multi_coll_multi_ns_fts_single_loaded(db_client, loaded_quadrant="c1_x")
@@ -60,9 +60,7 @@ class TestNamespaceHybridSearchMultiCollMultiNs:
                 if key == "c1_x":
                     continue
                 _, namespace = ctx[key]
-                assert_hybrid_search_no_hits(
-                    namespace, case.where_document, n_results=case.n_results
-                )
+                assert_hybrid_search_no_hits(namespace, case.where_document, n_results=case.n_results)
         finally:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)
 
@@ -122,41 +120,31 @@ class TestNamespaceHybridSearchMultiCollMultiNs:
         try:
             for key in ("c1_x", "c2_y"):
                 corpus, namespace = ctx[key]
-                run_hybrid_search_fts_case(
-                    namespace, corpus, get_fts_case("contains_zpx_filter_has_both")
-                )
+                run_hybrid_search_fts_case(namespace, corpus, get_fts_case("contains_zpx_filter_has_both"))
         finally:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)
 
     @pytest.mark.parametrize("vector_distance", ["l2", "cosine"])
-    def test_hybrid_search_combined_rrf_multi_coll(
-        self, db_client, vector_distance: VectorDistanceMetric
-    ):
+    def test_hybrid_search_combined_rrf_multi_coll(self, db_client, vector_distance: VectorDistanceMetric):
         """Test hybrid search combined rrf multi coll."""
         ctx = setup_multi_coll_multi_ns_fts(db_client, distance=vector_distance)
         try:
             case = get_hybrid_combined_case("fts_zpx_filter_gte_knn")
             for key in ("c1_x", "c2_y"):
                 corpus, namespace = ctx[key]
-                run_hybrid_combined_case(
-                    namespace, corpus, case, distance_metric=vector_distance
-                )
+                run_hybrid_combined_case(namespace, corpus, case, distance_metric=vector_distance)
         finally:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)
 
     @pytest.mark.parametrize("vector_distance", ["l2", "cosine"])
-    def test_hybrid_search_vector_plus_search_index_multi_coll(
-        self, db_client, vector_distance: VectorDistanceMetric
-    ):
+    def test_hybrid_search_vector_plus_search_index_multi_coll(self, db_client, vector_distance: VectorDistanceMetric):
         """Test hybrid search vector plus search index multi coll."""
         ctx = setup_multi_coll_multi_ns_fts(db_client, distance=vector_distance)
         try:
             knn_case = get_vector_knn_case("knn_filter_has_both")
             for key in ("c1_x", "c2_y"):
                 corpus, namespace = ctx[key]
-                run_hybrid_knn_case(
-                    namespace, corpus, knn_case, distance_metric=vector_distance
-                )
+                run_hybrid_knn_case(namespace, corpus, knn_case, distance_metric=vector_distance)
         finally:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)
 

@@ -11,7 +11,6 @@ Covers:
 from __future__ import annotations
 
 import pytest
-
 from namespace_dml_helpers import (
     FILTER_MULTI_NS_KEEP,
     FILTER_MULTI_NS_PURGE,
@@ -28,7 +27,7 @@ from namespace_dml_helpers import (
 
 
 class TestNamespaceDeleteWhere:
-    """P0 #1–#2: conditional delete on namespace."""
+    """P0 #1-#2: conditional delete on namespace."""
 
     def test_delete_where_metadata_tag(self, db_client):
         """Test delete where metadata tag."""
@@ -93,7 +92,7 @@ class TestNamespaceDeleteWhere:
 
 
 class TestNamespaceGetWhere:
-    """P0 #3–#4: conditional get on namespace."""
+    """P0 #3-#4: conditional get on namespace."""
 
     def test_get_where_metadata_category_ai(self, db_client):
         """Test get where metadata category ai."""

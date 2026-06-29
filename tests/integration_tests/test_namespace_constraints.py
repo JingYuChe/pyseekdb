@@ -10,8 +10,8 @@ Covers two SDK-level constraints for use_namespace=True collections:
 import time
 
 import pytest
-
 from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT
+
 from pyseekdb import IVFConfiguration
 from pyseekdb.client.client_base import NAMESPACE_MIN_OB_VERSION
 from pyseekdb.client.configuration import VectorIndexConfig
@@ -36,14 +36,13 @@ def _unique_name(suffix: str) -> str:
 
 class TestNamespaceIvfTypeConstraint:
     """TestNamespaceIvfTypeConstraint class."""
+
     @pytest.mark.parametrize("ivf_type", ["ivf_pq", "ivf_sq8"])
     def test_non_ivf_flat_rejected(self, oceanbase_client, ivf_type):
         """Non-ivf_flat IVF types must be rejected at the SDK layer."""
         name = _unique_name(f"_{ivf_type}")
         with pytest.raises(ValueError, match="only supports IVF index type 'ivf_flat'"):
-            oceanbase_client.create_collection(
-                name=name, schema=_make_schema(ivf_type), use_namespace=True
-            )
+            oceanbase_client.create_collection(name=name, schema=_make_schema(ivf_type), use_namespace=True)
         # Rejection happens before any DDL: no collection metadata is left behind.
         assert not oceanbase_client.has_collection(name)
 
@@ -51,7 +50,9 @@ class TestNamespaceIvfTypeConstraint:
         """Positive control: ivf_flat namespace collection creation succeeds."""
         name = _unique_name("_ivf_flat")
         collection = oceanbase_client.create_collection(
-            name=name, schema=_make_schema("ivf_flat"), use_namespace=True,
+            name=name,
+            schema=_make_schema("ivf_flat"),
+            use_namespace=True,
             partition_count=NAMESPACE_TEST_PARTITION_COUNT,
         )
         try:
@@ -74,7 +75,10 @@ class TestNamespaceIvfDimensionConstraint:
             ),
         )
         collection = oceanbase_client.create_collection(
-            name=name, schema=schema, use_namespace=True, partition_count=1,
+            name=name,
+            schema=schema,
+            use_namespace=True,
+            partition_count=1,
         )
         try:
             assert collection.dimension == 2049
@@ -91,7 +95,10 @@ class TestNamespaceIvfDimensionConstraint:
             ),
         )
         collection = oceanbase_client.create_collection(
-            name=name, schema=schema, use_namespace=True, partition_count=1,
+            name=name,
+            schema=schema,
+            use_namespace=True,
+            partition_count=1,
         )
         try:
             assert collection.dimension == 4096
@@ -107,7 +114,9 @@ class TestNamespaceIvfDimensionConstraint:
                 schema=Schema(
                     vector_index=VectorIndexConfig(
                         ivf=IVFConfiguration(
-                            dimension=4097, distance="cosine", centroids_fresh_mode="spfresh",
+                            dimension=4097,
+                            distance="cosine",
+                            centroids_fresh_mode="spfresh",
                         ),
                         embedding_function=None,
                     ),
@@ -119,6 +128,7 @@ class TestNamespaceIvfDimensionConstraint:
 
 class TestNamespaceMinVersionConstraint:
     """TestNamespaceMinVersionConstraint class."""
+
     def test_connected_ob_meets_min_version(self, oceanbase_client):
         """The kernel under test must already be >= 4.6.1, and creation succeeds."""
         db_type, version = oceanbase_client._server.detect_db_type_and_version()
@@ -129,7 +139,9 @@ class TestNamespaceMinVersionConstraint:
 
         name = _unique_name("_ver_ok")
         collection = oceanbase_client.create_collection(
-            name=name, schema=_make_schema("ivf_flat"), use_namespace=True,
+            name=name,
+            schema=_make_schema("ivf_flat"),
+            use_namespace=True,
             partition_count=NAMESPACE_TEST_PARTITION_COUNT,
         )
         try:
@@ -147,13 +159,11 @@ class TestNamespaceMinVersionConstraint:
         )
         name = _unique_name("_ver_old")
         with pytest.raises(ValueError, match=r"requires OceanBase version >= 4\.6\.1"):
-            oceanbase_client.create_collection(
-                name=name, schema=_make_schema("ivf_flat"), use_namespace=True
-            )
+            oceanbase_client.create_collection(name=name, schema=_make_schema("ivf_flat"), use_namespace=True)
         # restore before checking leftovers
         monkeypatch.undo()
         assert not oceanbase_client.has_collection(name)
 
     def test_min_version_constant(self):
         """Test min version constant."""
-        assert NAMESPACE_MIN_OB_VERSION == Version("4.6.1.0")
+        assert Version("4.6.1.0") == NAMESPACE_MIN_OB_VERSION

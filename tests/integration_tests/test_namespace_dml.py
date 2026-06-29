@@ -8,7 +8,6 @@ Large-scale (>=1000 rows): count / peek boundaries and multi-namespace orthogona
 from __future__ import annotations
 
 import pytest
-
 from namespace_dml_helpers import (
     LARGE_DML_CORPUS_SIZE,
     assert_get_absent,
@@ -18,7 +17,6 @@ from namespace_dml_helpers import (
     cleanup,
     corpus_id_set,
     create_ns_collection,
-    insert_dml_corpus_in_batches,
     load_dml_corpus,
 )
 
@@ -36,7 +34,7 @@ class TestNamespaceDML:
     def test_add_single(self, db_client):
         """Test add single."""
         collection = create_ns_collection(db_client, suffix="_add1")
-        ns = _create_namespace(collection,"dml_ns")
+        ns = _create_namespace(collection, "dml_ns")
         try:
             ns.add(ids="d1", embeddings=[1.0, 2.0, 3.0], documents="Hello", metadatas={"tag": "a"})
             result = ns.get(ids="d1")
@@ -71,15 +69,15 @@ class TestNamespaceDML:
         ns = _create_namespace(collection, "dml_ns")
         ns.add(ids="d1", embeddings=[1.0, 2.0, 3.0])
         db_client.delete_collection(name=collection.name)
-        with pytest.raises(ValueError, match="no longer exists|does not exist"):
+        with pytest.raises(ValueError, match=r"no longer exists|does not exist"):
             ns.add(ids="d2", embeddings=[4.0, 5.0, 6.0])
-        with pytest.raises(ValueError, match="no longer exists|does not exist"):
+        with pytest.raises(ValueError, match=r"no longer exists|does not exist"):
             ns.query(query_embeddings=[1.0, 2.0, 3.0], n_results=1)
 
     def test_add_batch(self, db_client):
         """Test add batch."""
         collection = create_ns_collection(db_client, suffix="_addb")
-        ns = _create_namespace(collection,"dml_ns")
+        ns = _create_namespace(collection, "dml_ns")
         try:
             ns.add(
                 ids=["d1", "d2", "d3"],
@@ -95,7 +93,7 @@ class TestNamespaceDML:
     def test_get_by_id(self, db_client):
         """Test get by id."""
         collection = create_ns_collection(db_client, suffix="_getid")
-        ns = _create_namespace(collection,"dml_ns")
+        ns = _create_namespace(collection, "dml_ns")
         try:
             ns.add(
                 ids=["g1", "g2"],
@@ -113,7 +111,7 @@ class TestNamespaceDML:
     def test_get_with_limit(self, db_client):
         """Test get with limit."""
         collection = create_ns_collection(db_client, suffix="_getlim")
-        ns = _create_namespace(collection,"dml_ns")
+        ns = _create_namespace(collection, "dml_ns")
         try:
             ns.add(
                 ids=["l1", "l2", "l3"],
@@ -127,7 +125,7 @@ class TestNamespaceDML:
     def test_update_metadata(self, db_client):
         """Test update metadata."""
         collection = create_ns_collection(db_client, suffix="_upd")
-        ns = _create_namespace(collection,"dml_ns")
+        ns = _create_namespace(collection, "dml_ns")
         try:
             ns.add(ids="u1", embeddings=[1.0, 2.0, 3.0], metadatas={"score": 10})
             ns.update(ids="u1", metadatas={"score": 99})
@@ -139,7 +137,7 @@ class TestNamespaceDML:
     def test_update_document_and_embedding(self, db_client):
         """Test update document and embedding."""
         collection = create_ns_collection(db_client, suffix="_upddoc")
-        ns = _create_namespace(collection,"dml_ns")
+        ns = _create_namespace(collection, "dml_ns")
         try:
             ns.add(ids="u2", embeddings=[1.0, 2.0, 3.0], documents="Original")
             ns.update(ids="u2", embeddings=[9.0, 8.0, 7.0], documents="Updated")
@@ -151,7 +149,7 @@ class TestNamespaceDML:
     def test_upsert_existing(self, db_client):
         """Test upsert existing."""
         collection = create_ns_collection(db_client, suffix="_upsex")
-        ns = _create_namespace(collection,"dml_ns")
+        ns = _create_namespace(collection, "dml_ns")
         try:
             ns.add(ids="up1", embeddings=[1.0, 2.0, 3.0], metadatas={"v": 1})
             ns.upsert(ids="up1", embeddings=[4.0, 5.0, 6.0], metadatas={"v": 2})
@@ -163,7 +161,7 @@ class TestNamespaceDML:
     def test_upsert_new(self, db_client):
         """Test upsert new."""
         collection = create_ns_collection(db_client, suffix="_upsnew")
-        ns = _create_namespace(collection,"dml_ns")
+        ns = _create_namespace(collection, "dml_ns")
         try:
             ns.upsert(ids="up_new", embeddings=[1.0, 1.0, 1.0], metadatas={"fresh": True})
             result = ns.get(ids="up_new", include=["metadatas"])
@@ -175,7 +173,7 @@ class TestNamespaceDML:
     def test_delete_by_ids(self, db_client):
         """Test delete by ids."""
         collection = create_ns_collection(db_client, suffix="_del")
-        ns = _create_namespace(collection,"dml_ns")
+        ns = _create_namespace(collection, "dml_ns")
         try:
             ns.add(
                 ids=["del1", "del2"],
@@ -195,7 +193,7 @@ class TestNamespaceDMLCountPeekAtScale:
     def large_ns(self, db_client):
         """Large ns."""
         collection = create_ns_collection(db_client, suffix="_large_cp")
-        ns = _create_namespace(collection,"large_ns")
+        ns = _create_namespace(collection, "large_ns")
         corpus = build_large_dml_corpus(LARGE_DML_CORPUS_SIZE, id_prefix="large")
         load_dml_corpus(ns, corpus)
         yield collection, ns, corpus
@@ -204,7 +202,7 @@ class TestNamespaceDMLCountPeekAtScale:
     def test_count_empty_namespace(self, db_client):
         """Test count empty namespace."""
         collection = create_ns_collection(db_client, suffix="_cnt_empty")
-        ns = _create_namespace(collection,"empty_ns")
+        ns = _create_namespace(collection, "empty_ns")
         try:
             assert ns.count() == 0
         finally:
@@ -227,7 +225,7 @@ class TestNamespaceDMLCountPeekAtScale:
     def test_peek_empty_namespace(self, db_client):
         """Test peek empty namespace."""
         collection = create_ns_collection(db_client, suffix="_peek_empty")
-        ns = _create_namespace(collection,"peek_empty")
+        ns = _create_namespace(collection, "peek_empty")
         try:
             result = ns.peek(limit=10)
             assert_peek_result(result, expected_len=0)
@@ -285,14 +283,10 @@ class TestNamespaceDMLCountPeekMultiNs:
     def dual_ns_ctx(self, db_client):
         """Dual ns ctx."""
         collection = create_ns_collection(db_client, suffix="_dual_cp")
-        ns_a = _create_namespace(collection,"ns_alpha")
-        ns_b = _create_namespace(collection,"ns_beta")
-        corpus_a = build_large_dml_corpus(
-            self.NS_A_SIZE, id_prefix="alpha", ns_tag="alpha"
-        )
-        corpus_b = build_large_dml_corpus(
-            self.NS_B_SIZE, id_prefix="beta", ns_tag="beta"
-        )
+        ns_a = _create_namespace(collection, "ns_alpha")
+        ns_b = _create_namespace(collection, "ns_beta")
+        corpus_a = build_large_dml_corpus(self.NS_A_SIZE, id_prefix="alpha", ns_tag="alpha")
+        corpus_b = build_large_dml_corpus(self.NS_B_SIZE, id_prefix="beta", ns_tag="beta")
         load_dml_corpus(ns_a, corpus_a)
         load_dml_corpus(ns_b, corpus_b)
         ctx = {
@@ -393,7 +387,7 @@ class TestNamespaceDMLFullCycle:
     def test_full_dml_cycle_verified_by_get(self, db_client):
         """Test full dml cycle verified by get."""
         collection = create_ns_collection(db_client, suffix="_cycle")
-        ns = _create_namespace(collection,"cycle_ns")
+        ns = _create_namespace(collection, "cycle_ns")
         doc_id = "cycle_doc"
         try:
             ns.add(
@@ -447,7 +441,7 @@ class TestNamespaceDMLFullCycle:
     def test_batch_add_then_get_each(self, db_client):
         """Test batch add then get each."""
         collection = create_ns_collection(db_client, suffix="_batch")
-        ns = _create_namespace(collection,"batch_ns")
+        ns = _create_namespace(collection, "batch_ns")
         try:
             ns.add(
                 ids=["b1", "b2", "b3"],

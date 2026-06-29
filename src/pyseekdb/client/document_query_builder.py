@@ -76,10 +76,7 @@ def build_document_hybrid_expression(
             return _combine_document_bool(value, combiner="or", boost=boost)
 
     # Multiple top-level keys: treat as implicit AND.
-    parts = [
-        build_document_hybrid_expression({key: val}, boost=boost)
-        for key, val in where_document.items()
-    ]
+    parts = [build_document_hybrid_expression({key: val}, boost=boost) for key, val in where_document.items()]
     parts = [part for part in parts if part is not None]
     if not parts:
         return None
@@ -116,9 +113,7 @@ def where_document_knn_prefilterable(where_document: dict[str, Any] | str | None
         return False
     if _contains_operator(where_document, "$not_contains"):
         return False
-    if _contains_operator(where_document, "$regex"):
-        return False
-    return True
+    return not _contains_operator(where_document, "$regex")
 
 
 def doc_matches_where_document(document: str, where_document: dict[str, Any] | str) -> bool:
@@ -133,15 +128,9 @@ def doc_matches_where_document(document: str, where_document: dict[str, Any] | s
     if "$regex" in where_document:
         return re.search(str(where_document["$regex"]), document) is not None
     if "$and" in where_document:
-        return all(
-            doc_matches_where_document(document, sub)
-            for sub in where_document["$and"]
-        )
+        return all(doc_matches_where_document(document, sub) for sub in where_document["$and"])
     if "$or" in where_document:
-        return any(
-            doc_matches_where_document(document, sub)
-            for sub in where_document["$or"]
-        )
+        return any(doc_matches_where_document(document, sub) for sub in where_document["$or"])
     raise ValueError(f"Unsupported where_document: {where_document!r}")
 
 
@@ -170,7 +159,9 @@ def _combine_document_bool(
                 body["boost"] = boost
             return {"query_string": body}
 
-        if all(isinstance(c, dict) and "$not_contains" in c and isinstance(c["$not_contains"], str) for c in conditions):
+        if all(
+            isinstance(c, dict) and "$not_contains" in c and isinstance(c["$not_contains"], str) for c in conditions
+        ):
             return {
                 "bool": {
                     "must_not": [
@@ -182,23 +173,22 @@ def _combine_document_bool(
                 }
             }
 
-    if combiner == "or":
-        if all(
-            isinstance(c, dict)
-            and "$contains" in c
-            and isinstance(c["$contains"], str)
-            and _is_atomic_query_string_term(c["$contains"])
-            for c in conditions
-        ):
-            queries = [c["$contains"] for c in conditions if isinstance(c, dict)]
-            body: dict[str, Any] = {
-                "fields": [_DOCUMENT_FIELD],
-                "query": " ".join(_escape_query_string_term(q) for q in queries),
-                "default_operator": "or",
-            }
-            if boost is not None:
-                body["boost"] = boost
-            return {"query_string": body}
+    if combiner == "or" and all(
+        isinstance(c, dict)
+        and "$contains" in c
+        and isinstance(c["$contains"], str)
+        and _is_atomic_query_string_term(c["$contains"])
+        for c in conditions
+    ):
+        queries = [c["$contains"] for c in conditions if isinstance(c, dict)]
+        body: dict[str, Any] = {
+            "fields": [_DOCUMENT_FIELD],
+            "query": " ".join(_escape_query_string_term(q) for q in queries),
+            "default_operator": "or",
+        }
+        if boost is not None:
+            body["boost"] = boost
+        return {"query_string": body}
 
     child_exprs: list[dict[str, Any]] = []
     for condition in conditions:

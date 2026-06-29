@@ -6,7 +6,8 @@ import contextlib
 import contextvars
 import functools
 import re
-from typing import Any, Callable, Iterator, TypeVar
+from collections.abc import Callable, Iterator
+from typing import Any, TypeVar
 
 _NS_KERNEL_ERROR_CTX: contextvars.ContextVar[dict[str, str] | None] = contextvars.ContextVar(
     "ns_kernel_error_ctx", default=None
@@ -145,13 +146,11 @@ def namespace_kernel_error_scope(
     collection_id: str | None = None,
 ):
     """Attach namespace/collection context used to translate kernel SQL errors."""
-    token = _NS_KERNEL_ERROR_CTX.set(
-        {
-            "namespace_name": namespace_name or "",
-            "collection_name": collection_name or "",
-            "collection_id": collection_id or "",
-        }
-    )
+    token = _NS_KERNEL_ERROR_CTX.set({
+        "namespace_name": namespace_name or "",
+        "collection_name": collection_name or "",
+        "collection_id": collection_id or "",
+    })
     try:
         yield
     finally:
@@ -163,6 +162,7 @@ _F = TypeVar("_F", bound=Callable[..., Any])
 
 def namespace_kernel_error_guard(method: _F) -> _F:
     """Decorator for ``BaseClient._namespace_*`` methods with standard leading args."""
+
     @functools.wraps(method)
     def wrapper(
         self,

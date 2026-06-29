@@ -17,6 +17,7 @@ def client():
 
 class TestBuildQueryExpressionNotContains:
     """TestBuildQueryExpressionNotContains class."""
+
     def test_not_contains_with_metadata_filter_hoists_must_not(self, client):
         """$not_contains + where must not nest a must_not-only bool inside must."""
         where = {"seq": {"$gte": 43}}
@@ -85,6 +86,7 @@ class TestBuildQueryExpressionNotContains:
 
 class TestBuildQueryExpressionMetadataNe:
     """TestBuildQueryExpressionMetadataNe class."""
+
     def test_ne_with_fts_hoists_must_not_from_filter(self, client):
         """$ne in where must not appear as a must_not-only bool inside filter."""
         with patch.object(

@@ -4,7 +4,7 @@ Unit tests for concurrent-safe get_or_create_namespace helpers.
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -20,26 +20,27 @@ from pyseekdb.client.client_base import (  # noqa: E402
 
 class TestNamespaceCatalogConflictDetection:
     """TestNamespaceCatalogConflictDetection class."""
+
     def test_detects_integrity_error_on_sdk_namespaces(self):
         """Test detects integrity error on sdk namespaces."""
+
         class IntegrityError(Exception):
             """IntegrityError class."""
+
             pass
 
-        exc = IntegrityError(
-            '(1062, "Duplicate entry \'cid-ns_shared\' for key \'uk_sdk_ns_coll_name\'")'
-        )
+        exc = IntegrityError("(1062, \"Duplicate entry 'cid-ns_shared' for key 'uk_sdk_ns_coll_name'\")")
         assert _is_namespace_catalog_conflict_error(exc)
 
     def test_detects_integrity_error_on_sdk_ltables(self):
         """Test detects integrity error on sdk ltables."""
+
         class IntegrityError(Exception):
             """IntegrityError class."""
+
             pass
 
-        exc = IntegrityError(
-            '(1062, "Duplicate entry \'cid-1-default\' for key \'uk_sdk_lt_coll_ns_name\'")'
-        )
+        exc = IntegrityError("(1062, \"Duplicate entry 'cid-1-default' for key 'uk_sdk_lt_coll_ns_name'\")")
         assert _is_namespace_catalog_conflict_error(exc)
 
     def test_ignores_unrelated_errors(self):
@@ -49,6 +50,7 @@ class TestNamespaceCatalogConflictDetection:
 
 class TestGetOrCreateNamespaceMetaRecovery:
     """TestGetOrCreateNamespaceMetaRecovery class."""
+
     def test_idempotent_insert_reuses_existing_namespace(self):
         """Test idempotent insert reuses existing namespace."""
         client = MagicMock(spec=BaseClient)
@@ -64,12 +66,8 @@ class TestGetOrCreateNamespaceMetaRecovery:
         result = BaseClient._get_or_create_ns_namespace_meta(client, "cid", "ns_shared")
 
         assert result["namespace_id"] == "42"
-        client._insert_ns_namespace_catalog_row.assert_called_once_with(
-            "cid", "ns_shared", idempotent=True
-        )
-        client._insert_ns_ltable_catalog_row.assert_called_once_with(
-            "cid", 42, idempotent=True
-        )
+        client._insert_ns_namespace_catalog_row.assert_called_once_with("cid", "ns_shared", idempotent=True)
+        client._insert_ns_ltable_catalog_row.assert_called_once_with("cid", 42, idempotent=True)
 
     def test_existing_namespace_without_ltable_creates_default_ltable(self):
         """Test existing namespace without ltable creates default ltable."""
@@ -89,9 +87,7 @@ class TestGetOrCreateNamespaceMetaRecovery:
 
         assert result["ltable_id"] == "7"
         client._insert_ns_namespace_catalog_row.assert_not_called()
-        client._insert_ns_ltable_catalog_row.assert_called_once_with(
-            "cid", 42, idempotent=True
-        )
+        client._insert_ns_ltable_catalog_row.assert_called_once_with("cid", 42, idempotent=True)
 
 
 if __name__ == "__main__":

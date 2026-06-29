@@ -14,13 +14,14 @@ import time
 from dataclasses import dataclass
 from typing import Any, Literal
 
-VectorDistanceMetric = Literal["l2", "cosine"]
-VECTOR_DISTANCE_METRICS: tuple[VectorDistanceMetric, ...] = ("l2", "cosine")
-
 from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT
+
 from pyseekdb import IVFConfiguration
 from pyseekdb.client.configuration import FulltextIndexConfig, VectorIndexConfig
 from pyseekdb.client.schema import Schema
+
+VectorDistanceMetric = Literal["l2", "cosine"]
+VECTOR_DISTANCE_METRICS: tuple[VectorDistanceMetric, ...] = ("l2", "cosine")
 
 # Rare ASCII tokens to reduce IK segmentation surprises in assertions.
 TOKEN_ZPX = "TOKENZPX"
@@ -38,6 +39,7 @@ INDEX_SETTLE_SECONDS = 3
 @dataclass(frozen=True)
 class CorpusRecord:
     """CorpusRecord class."""
+
     doc_id: str
     document: str
     embedding: list[float]
@@ -48,6 +50,7 @@ class CorpusRecord:
 @dataclass(frozen=True)
 class FtsQueryCase:
     """FtsQueryCase class."""
+
     name: str
     where_document: dict[str, Any] | str
     n_results: int
@@ -191,15 +194,9 @@ def doc_matches_where_document(document: str, where_document: dict[str, Any] | s
     if "$not_contains" in where_document:
         return where_document["$not_contains"].lower() not in text
     if "$and" in where_document:
-        return all(
-            doc_matches_where_document(document, sub)
-            for sub in where_document["$and"]
-        )
+        return all(doc_matches_where_document(document, sub) for sub in where_document["$and"])
     if "$or" in where_document:
-        return any(
-            doc_matches_where_document(document, sub)
-            for sub in where_document["$or"]
-        )
+        return any(doc_matches_where_document(document, sub) for sub in where_document["$or"])
     raise ValueError(f"Unsupported where_document for hybrid_search: {where_document!r}")
 
 
@@ -246,9 +243,7 @@ def corpus_matches_fts(
     """Corpus matches fts."""
     if not doc_matches_where_document(record.document, where_document):
         return False
-    if where is not None and not doc_matches_where_metadata(record.metadata, where):
-        return False
-    return True
+    return not (where is not None and not doc_matches_where_metadata(record.metadata, where))
 
 
 def effective_rel_hint(record: CorpusRecord, where_document: dict[str, Any] | str) -> int:
@@ -348,7 +343,7 @@ def assert_hybrid_fulltext_result(
 ) -> None:
     """Assert hybrid fulltext result."""
     assert result is not None
-    assert "ids" in result and result["ids"]
+    assert result.get("ids")
     ids = result["ids"][0]
     distances = result.get("distances", [[]])[0] if result.get("distances") else []
     documents = result.get("documents", [[]])[0] if result.get("documents") else []
@@ -364,7 +359,7 @@ def assert_hybrid_fulltext_result(
     id_to_meta = {rec.doc_id: rec.metadata for rec in corpus}
 
     meta_rows = metadatas if metadatas else [None] * len(ids)
-    for doc_id, doc_text, meta in zip(ids, documents, meta_rows):
+    for doc_id, doc_text, meta in zip(ids, documents, meta_rows, strict=False):
         assert doc_id in id_to_doc, f"unknown id {doc_id!r} in search results"
         body = doc_text if doc_text is not None else id_to_doc[doc_id]
         assert doc_matches_where_document(body, where_document), (
@@ -525,7 +520,9 @@ def setup_large_fts_collection(
 
     name = f"test_ns_hs_ft_{distance}_{int(time.time() * 1000)}"
     collection = db_client.create_collection(
-        name=name, schema=ns_schema(distance), use_namespace=True,
+        name=name,
+        schema=ns_schema(distance),
+        use_namespace=True,
         partition_count=NAMESPACE_TEST_PARTITION_COUNT,
     )
     return corpus, collection
@@ -551,14 +548,12 @@ def setup_fts_namespace_with_corpus(
     return namespace
 
 
-def setup_large_fts_namespace(db_client: Any, *, namespace_name: str = "ns_hs_ft_large") -> tuple[
-    list[CorpusRecord], Any, Any
-]:
+def setup_large_fts_namespace(
+    db_client: Any, *, namespace_name: str = "ns_hs_ft_large"
+) -> tuple[list[CorpusRecord], Any, Any]:
     """Create collection + namespace with corpus (single-test convenience wrapper)."""
     corpus, collection = setup_large_fts_collection(db_client)
-    namespace = setup_fts_namespace_with_corpus(
-        collection, corpus, namespace_name=namespace_name
-    )
+    namespace = setup_fts_namespace_with_corpus(collection, corpus, namespace_name=namespace_name)
     return corpus, collection, namespace
 
 
@@ -621,9 +616,7 @@ def setup_multi_coll_multi_ns_fts(
     only the namespace that received the bulk insert is expected to serve hybrid_search FTS
     (see ``setup_same_collection_both_ns_fts`` for same-collection multi-ns behavior).
     """
-    ctx = _create_multi_coll_multi_ns_layout(
-        db_client, name_prefix="test_ns_hs_ft_mcmn", distance=distance
-    )
+    ctx = _create_multi_coll_multi_ns_layout(db_client, name_prefix="test_ns_hs_ft_mcmn", distance=distance)
     corpus = build_large_fts_corpus(CORPUS_SIZE)
     if len(corpus) <= 1000:
         raise ValueError(f"corpus must exceed 1000 rows, got {len(corpus)}")
@@ -680,9 +673,7 @@ def setup_multi_coll_multi_ns_fts_single_loaded(
     if loaded_quadrant not in MULTI_COLL_MULTI_NS_QUADRANT_KEYS:
         raise ValueError(f"unknown quadrant {loaded_quadrant!r}")
 
-    ctx = _create_multi_coll_multi_ns_layout(
-        db_client, name_prefix="test_ns_hs_ft_mcmn1", distance=distance
-    )
+    ctx = _create_multi_coll_multi_ns_layout(db_client, name_prefix="test_ns_hs_ft_mcmn1", distance=distance)
     corpus = build_large_fts_corpus(CORPUS_SIZE)
     insert_corpus_in_batches(ctx[loaded_quadrant], corpus)
 
@@ -717,9 +708,7 @@ def assert_hybrid_search_no_hits(
         include=["documents"],
     )
     ids = result.get("ids", [[]])[0] if result.get("ids") else []
-    assert len(ids) == 0, (
-        f"expected no full-text hits in namespace {namespace.name!r}, got {len(ids)} ids: {ids[:5]!r}"
-    )
+    assert len(ids) == 0, f"expected no full-text hits in namespace {namespace.name!r}, got {len(ids)} ids: {ids[:5]!r}"
     return result
 
 
@@ -778,10 +767,6 @@ def assert_not_contains_no_token_leak(
 ) -> None:
     """Assert not contains no token leak."""
     result_ids = set(result["ids"][0])
-    forbidden_ids = {
-        rec.doc_id
-        for rec in corpus
-        if forbidden_token.lower() in rec.document.lower()
-    }
+    forbidden_ids = {rec.doc_id for rec in corpus if forbidden_token.lower() in rec.document.lower()}
     leaked = result_ids & forbidden_ids
     assert not leaked, f"$not_contains leaked forbidden ids: {sorted(leaked)[:10]}"

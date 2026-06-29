@@ -3,7 +3,6 @@ Remote server mode client - based on pymysql
 Supports both seekdb Server and OceanBase Server
 """
 
-import contextlib
 import logging
 from collections.abc import Sequence
 
@@ -221,7 +220,9 @@ class RemoteServerClient(BaseClient):
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._use_catalog_database()
         self._set_session_ns_context(
-            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
+            collection_id=collection_id,
+            namespace_id=int(namespace_id),
+            ltable_id=ltable_id,
         )
         sql = f"CALL DBMS_LOGIC_TABLE.PREWARM('{collection_id}', {namespace_id})"
         self._execute(sql)

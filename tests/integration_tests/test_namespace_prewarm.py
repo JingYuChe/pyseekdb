@@ -16,8 +16,8 @@ from pyseekdb.client.schema import Schema
 
 
 class TestNamespacePrewarm:
-
     """TestNamespacePrewarm class."""
+
     def _create_ns_collection_and_namespace(self, client):
         """Create ns collection and namespace."""
         from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT
@@ -30,7 +30,9 @@ class TestNamespacePrewarm:
             ),
         )
         collection = client.create_collection(
-            name=name, schema=schema, use_namespace=True,
+            name=name,
+            schema=schema,
+            use_namespace=True,
             partition_count=NAMESPACE_TEST_PARTITION_COUNT,
         )
         namespace = collection.create_namespace("pw_ns")

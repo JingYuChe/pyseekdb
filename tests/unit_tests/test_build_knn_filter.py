@@ -17,6 +17,7 @@ def client():
 
 class TestBuildKnnFilterNe:
     """TestBuildKnnFilterNe class."""
+
     def test_ne_hoists_must_not_in_knn_filter(self, client):
         """Test ne hoists must not in knn filter."""
         with patch.object(
@@ -29,9 +30,11 @@ class TestBuildKnnFilterNe:
                 dimension=3,
             )
 
-        assert knn_expr["filter"] == [{
-            "bool": {
-                "filter": [{"range": {"data_content.metadata.zpx_hint": {"gte": -9223372036854775808}}}],
-                "must_not": [{"term": {"data_content.metadata.zpx_hint": 0}}],
+        assert knn_expr["filter"] == [
+            {
+                "bool": {
+                    "filter": [{"range": {"data_content.metadata.zpx_hint": {"gte": -9223372036854775808}}}],
+                    "must_not": [{"term": {"data_content.metadata.zpx_hint": 0}}],
+                }
             }
-        }]
+        ]

@@ -63,6 +63,7 @@ OB_SYS_PASSWORD = os.environ.get("OB_SYS_PASSWORD", "")
 
 # ==================== SQL observability helpers ====================
 
+
 def _exec(client, sql):
     """Exec."""
     return client._server._execute(sql)
@@ -125,16 +126,17 @@ def _flush_tenant_macro_cache():
         return False
     try:
         conn = pymysql.connect(
-            host=OB_HOST, port=OB_PORT, user=OB_SYS_USER,
-            password=OB_SYS_PASSWORD, autocommit=True,
+            host=OB_HOST,
+            port=OB_PORT,
+            user=OB_SYS_USER,
+            password=OB_SYS_PASSWORD,
+            autocommit=True,
         )
     except Exception:
         return False
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                f"ALTER SYSTEM FLUSH SS_LOCAL_CACHE TENANT = {OB_TENANT} CACHE = macro_cache"
-            )
+            cur.execute(f"ALTER SYSTEM FLUSH SS_LOCAL_CACHE TENANT = {OB_TENANT} CACHE = macro_cache")
         return True
     except Exception:
         return False
@@ -189,9 +191,10 @@ def _grep_lob_prewarm_log(lob_meta_tablet_ids):
 
 # ==================== Fixtures / collection helpers ====================
 
-class _BaseLobPrewarm:
 
+class _BaseLobPrewarm:
     """BaseLobPrewarm class."""
+
     def _make_collection(self, client, name, partitions):
         """Make collection."""
         schema = Schema(
@@ -200,9 +203,7 @@ class _BaseLobPrewarm:
                 embedding_function=None,
             ),
         )
-        return client.create_collection(
-            name=name, schema=schema, use_namespace=True, partition_count=partitions
-        )
+        return client.create_collection(name=name, schema=schema, use_namespace=True, partition_count=partitions)
 
     def _force_out_of_row_lob(self, client, collection_id, namespace_id):
         """Insert several >0.75MB incompressible kv_values so they spill out-of-row
@@ -219,8 +220,7 @@ class _BaseLobPrewarm:
         with raw.cursor() as cur:
             for i in range(LOB_PROBE_ROWS):
                 cur.execute(
-                    f"INSERT INTO `{kv_table}` (namespace_id, kv_key, kv_value) "
-                    f"VALUES ({namespace_id}, %s, %s)",
+                    f"INSERT INTO `{kv_table}` (namespace_id, kv_key, kv_value) VALUES ({namespace_id}, %s, %s)",
                     (f"__lob_probe_{i}__", os.urandom(LARGE_BLOB_BYTES)),
                 )
         raw.commit()
@@ -231,9 +231,10 @@ class _BaseLobPrewarm:
 
 # ==================== Tier 1 + structural multi-namespace ====================
 
-class TestLobPrewarmStructural(_BaseLobPrewarm):
 
+class TestLobPrewarmStructural(_BaseLobPrewarm):
     """TestLobPrewarmStructural class."""
+
     def test_kv_table_has_lob_meta_tablet(self, oceanbase_client):
         """Tier 1: the prewarm target (kv_data_table) owns an aux LOB-meta tablet."""
         name = f"lob_pw_struct_{int(time.time() * 1000)}"
@@ -243,8 +244,7 @@ class TestLobPrewarmStructural(_BaseLobPrewarm):
             kv_table_id = _resolve_table_id(oceanbase_client, kv_table)
             lob_tablets = _resolve_lob_meta_tablets(oceanbase_client, kv_table_id)
             assert len(lob_tablets) == 1, (
-                f"single-partition kv table should have exactly 1 lob meta tablet, "
-                f"got {lob_tablets}"
+                f"single-partition kv table should have exactly 1 lob meta tablet, got {lob_tablets}"
             )
         finally:
             oceanbase_client.delete_collection(name=collection.name)
@@ -272,20 +272,18 @@ class TestLobPrewarmStructural(_BaseLobPrewarm):
             recorded = {int(r["namespace_id"]) for r in rows}
             expected = {int(ns._namespace_id) for ns in namespaces}
             assert expected.issubset(recorded), (
-                f"every prewarmed namespace must have a hot_table row: "
-                f"expected {expected}, got {recorded}"
+                f"every prewarmed namespace must have a hot_table row: expected {expected}, got {recorded}"
             )
 
             cache = _ss_cache_blocks_for_tablets(oceanbase_client, own_lob_tablets)
             if cache:
-                assert set(cache).issubset(own_lob_tablets), (
-                    "cached lob tablets must belong to this collection only"
-                )
+                assert set(cache).issubset(own_lob_tablets), "cached lob tablets must belong to this collection only"
         finally:
             oceanbase_client.delete_collection(name=collection.name)
 
 
 # ==================== Tier 2 + Tier 3: real LOB caching ====================
+
 
 class TestLobPrewarmCaching(_BaseLobPrewarm):
     """TestLobPrewarmCaching class."""

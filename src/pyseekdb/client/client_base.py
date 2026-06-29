@@ -17,13 +17,6 @@ from typing import Any
 
 from pymysql.converters import escape_string
 
-from .document_query_builder import (
-    build_document_hybrid_expression,
-    doc_matches_where_document,
-    document_expr_as_knn_filter,
-    where_document_knn_prefilterable,
-)
-from .kernel_errors import maybe_reraise_friendly_kernel_error, namespace_kernel_error_guard
 from .admin_client import DEFAULT_TENANT, AdminAPI
 from .base_connection import BaseConnection
 from .collection import Collection
@@ -42,6 +35,12 @@ from .configuration import (
     VectorIndexConfig,
 )
 from .database import Database
+from .document_query_builder import (
+    build_document_hybrid_expression,
+    doc_matches_where_document,
+    document_expr_as_knn_filter,
+    where_document_knn_prefilterable,
+)
 from .embedding_function import (
     Documents as EmbeddingDocuments,
 )
@@ -51,6 +50,7 @@ from .embedding_function import (
     get_default_embedding_function,
 )
 from .filters import FilterBuilder
+from .kernel_errors import maybe_reraise_friendly_kernel_error, namespace_kernel_error_guard
 from .meta_info import CollectionFieldNames, CollectionNames, NamespaceCollectionNames, NamespaceFieldNames
 from .query_types import QueryHint
 from .schema import Schema, SparseVectorIndexConfig
@@ -62,6 +62,14 @@ from .sparse_embedding_function import (
 )
 from .sql_utils import _query_hint_to_sql, is_query_sql
 from .types import K as FieldKey
+from .validators import (
+    _MAX_N_RESULTS,
+    _MAX_NAMESPACE_BATCH_SIZE,
+    _quote_sql_identifier,
+    _validate_database_name,
+    _validate_namespace_explicit_embedding_dimensions,
+    _validate_record_ids,
+)
 from .version import Version
 
 # Type alias for embedding_function parameter that can be EmbeddingFunction, None, or sentinel
@@ -109,13 +117,8 @@ def _is_namespace_catalog_conflict_error(exc: BaseException) -> bool:
     current: BaseException | None = exc
     while current is not None:
         message = str(current).lower()
-        if (
-            "duplicate entry" in message
-            and (
-                "uk_sdk_ns_coll_name" in message
-                or "uk_sdk_lt_coll_ns_name" in message
-                or "code=1062" in message
-            )
+        if "duplicate entry" in message and (
+            "uk_sdk_ns_coll_name" in message or "uk_sdk_lt_coll_ns_name" in message or "code=1062" in message
         ):
             return True
         if type(current).__name__ == "IntegrityError" and "1062" in message:
@@ -129,14 +132,11 @@ def _is_sdk_collection_catalog_conflict_error(exc: BaseException) -> bool:
     current: BaseException | None = exc
     while current is not None:
         message = str(current).lower()
-        if (
-            "duplicate entry" in message
-            and (
-                "uk_sdk_coll_name" in message
-                or "idx_name" in message
-                or "collection_name" in message
-                or "code=1062" in message
-            )
+        if "duplicate entry" in message and (
+            "uk_sdk_coll_name" in message
+            or "idx_name" in message
+            or "collection_name" in message
+            or "code=1062" in message
         ):
             return True
         if type(current).__name__ == "IntegrityError" and "1062" in message:
@@ -217,17 +217,6 @@ def _validate_collection_name(name: str) -> None:
         )
 
 
-from .validators import (  # noqa: F401
-    _MAX_N_RESULTS,
-    _MAX_NAMESPACE_BATCH_SIZE,
-    _quote_sql_identifier,
-    _validate_database_name,
-    _validate_namespace_name,
-    _validate_namespace_no_index_explicit_embeddings,
-    _validate_namespace_explicit_embedding_dimensions,
-    _validate_record_ids,
-)
-
 _DEFAULT_PARTITION_COUNT = 1000
 # Unquoted id for WHERE/CASE; plain JSON_EXTRACT returns a quoted JSON string and
 # can route through SEARCH INDEX on SS logic tables, breaking cross-namespace id lookups.
@@ -246,14 +235,10 @@ def _build_default_ltable_schema(
     ]
     next_seq = 2
     if has_fulltext:
-        index_info.append(
-            {"index_seq": next_seq, "index_type": "FULLTEXT", "indexed_columns": [2]}
-        )
+        index_info.append({"index_seq": next_seq, "index_type": "FULLTEXT", "indexed_columns": [2]})
         next_seq += 1
     if has_ivf:
-        index_info.append(
-            {"index_seq": next_seq, "index_type": "IVF", "indexed_columns": [3]}
-        )
+        index_info.append({"index_seq": next_seq, "index_type": "IVF", "indexed_columns": [3]})
     return {
         "col_info": [
             {"col_idx": 1, "col_name": "metadata", "col_type": "JSON"},
@@ -538,9 +523,7 @@ class BaseClient(BaseConnection, AdminAPI):
             return cached
         result = False
         try:
-            rows = self._execute(
-                "SELECT VALUE FROM oceanbase.GV$OB_PARAMETERS WHERE name = 'ob_startup_mode'"
-            )
+            rows = self._execute("SELECT VALUE FROM oceanbase.GV$OB_PARAMETERS WHERE name = 'ob_startup_mode'")
             if rows:
                 val = rows[0][0] if isinstance(rows[0], (list, tuple)) else rows[0]["VALUE"]
                 result = str(val).upper() == "SHARED_STORAGE"
@@ -559,7 +542,7 @@ class BaseClient(BaseConnection, AdminAPI):
             return 'STORAGE_CACHE_POLICY = (GLOBAL = "hot")'
         return ""
 
-    def detect_db_type_and_version(self) -> tuple[str, "Version"]:  # noqa: C901
+    def detect_db_type_and_version(self) -> tuple[str, "Version"]:
         """
         Detect database type and version.
 
@@ -816,7 +799,7 @@ class BaseClient(BaseConnection, AdminAPI):
 
     # ==================== Collection Management (User-facing) ====================
 
-    def _prepare_schema_parameters(  # noqa: C901
+    def _prepare_schema_parameters(
         self,
         configuration: ConfigurationParam = _NOT_PROVIDED,
         embedding_function: EmbeddingFunctionParam = _NOT_PROVIDED,
@@ -985,13 +968,8 @@ class BaseClient(BaseConnection, AdminAPI):
             )
         # Only fully initialized collections (metadata + physical table) count as existing.
         # Metadata without a table is treated as an incomplete create and repaired below.
-        if self.has_collection(name):
-            # A namespace collection whose catalog row exists but whose physical
-            # tables are incomplete (e.g. a crash interrupted creation) is allowed
-            # through so the create can be resumed/finished idempotently. A complete
-            # collection still errors as "already exists".
-            if not (use_namespace and self._is_incomplete_ns_collection(name)):
-                raise ValueError(f"Collection '{name}' already exists")
+        if self.has_collection(name) and not (use_namespace and self._is_incomplete_ns_collection(name)):
+            raise ValueError(f"Collection '{name}' already exists")
 
         # Resolve schema: either use the provided schema or build one from legacy params
         if schema is not None:
@@ -1028,9 +1006,7 @@ class BaseClient(BaseConnection, AdminAPI):
 
         dimension = hnsw_config.dimension
         if dimension < 1 or dimension > MAX_HNSW_VECTOR_DIMENSION:
-            raise ValueError(
-                f"Dimension must be between 1 and {MAX_HNSW_VECTOR_DIMENSION}, got {dimension}"
-            )
+            raise ValueError(f"Dimension must be between 1 and {MAX_HNSW_VECTOR_DIMENSION}, got {dimension}")
 
         # Extract fulltext parser configuration
         fulltext_index_clause = _get_fulltext_index_sql(schema.fulltext_index)
@@ -1084,7 +1060,9 @@ class BaseClient(BaseConnection, AdminAPI):
             **kwargs,
         )
 
-    def _create_namespace_collection(self, name: str, schema: Schema, partition_count: int | None = None, **kwargs) -> "Collection":
+    def _create_namespace_collection(
+        self, name: str, schema: Schema, partition_count: int | None = None, **kwargs
+    ) -> "Collection":
         """Create a namespace-enabled collection and its catalog/physical tables."""
         dense_embedding_function = schema.vector_index.embedding_function
         ivf_config = schema.vector_index.ivf
@@ -1237,9 +1215,7 @@ class BaseClient(BaseConnection, AdminAPI):
             ) COMMENT='Settings of collections created by SDK' ORGANIZATION INDEX {scp};"""
             self._execute(create_table_sql)
             try:
-                self._execute(
-                    f"CREATE UNIQUE INDEX uk_sdk_coll_name ON {sdk_coll} (collection_name)"
-                )
+                self._execute(f"CREATE UNIQUE INDEX uk_sdk_coll_name ON {sdk_coll} (collection_name)")
             except Exception as exc:
                 _reraise_unless_unique_index_exists(exc)
         except Exception as e:
@@ -1380,8 +1356,7 @@ class BaseClient(BaseConnection, AdminAPI):
         self._execute(namespaces_stats_sql)
         try:
             self._execute(
-                f"CREATE UNIQUE INDEX uk_sdk_ns_coll_name ON {ns_namespaces_q} "
-                f"(collection_id, namespace_name)"
+                f"CREATE UNIQUE INDEX uk_sdk_ns_coll_name ON {ns_namespaces_q} (collection_id, namespace_name)"
             )
         except Exception as exc:
             _reraise_unless_unique_index_exists(exc)
@@ -1407,9 +1382,7 @@ class BaseClient(BaseConnection, AdminAPI):
         collection_name_escaped = escape_string(collection_name)
         sdk_coll = self._qtable(CollectionNames.sdk_collections_table_name())
         insert_sql = (
-            f"INSERT INTO {sdk_coll} "
-            f"(collection_name, settings) "
-            f"VALUES ('{collection_name_escaped}', '{settings_str}')"
+            f"INSERT INTO {sdk_coll} (collection_name, settings) VALUES ('{collection_name_escaped}', '{settings_str}')"
         )
         try:
             self._execute(insert_sql)
@@ -1421,8 +1394,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 with contextlib.suppress(Exception):
                     conn_getter().rollback()
         rows = self._execute(
-            f"SELECT collection_id FROM {sdk_coll} "
-            f"WHERE collection_name = '{collection_name_escaped}'"
+            f"SELECT collection_id FROM {sdk_coll} WHERE collection_name = '{collection_name_escaped}'"
         )
         collection_id = str(rows[0][0] if isinstance(rows[0], (list, tuple)) else rows[0]["collection_id"])
         self._set_session_ns_context(collection_id=collection_id)
@@ -1595,7 +1567,7 @@ class BaseClient(BaseConnection, AdminAPI):
             NamespaceCollectionNames.data_table_name,
             NamespaceCollectionNames.logic_schema_table_name,
             NamespaceCollectionNames.kv_data_table_name,
-            NamespaceCollectionNames.hot_table_name
+            NamespaceCollectionNames.hot_table_name,
         ]:
             with contextlib.suppress(Exception):
                 self._execute(f"DROP TABLE IF EXISTS `{suffix_fn(collection_id)}`")
@@ -1618,14 +1590,10 @@ class BaseClient(BaseConnection, AdminAPI):
         """Whether `tablegroup_name` exists in the current OceanBase tenant."""
         name_escaped = escape_string(tablegroup_name)
         try:
-            rows = self._execute(
-                "SELECT 1 FROM oceanbase.DBA_OB_TABLEGROUPS "
-                f"WHERE TABLEGROUP_NAME = '{name_escaped}'"
-            )
+            rows = self._execute(f"SELECT 1 FROM oceanbase.DBA_OB_TABLEGROUPS WHERE TABLEGROUP_NAME = '{name_escaped}'")
             return bool(rows)
         except Exception:
             return False
-
 
     def _ns_missing_physical_resources(self, collection_id: str, is_shared_storage: bool) -> list[str]:
         """Return expected tablegroup/tables that are absent for this namespace collection."""
@@ -1639,11 +1607,7 @@ class BaseClient(BaseConnection, AdminAPI):
             resources.append((NamespaceCollectionNames.hot_table_name(collection_id), False))
         missing: list[str] = []
         for resource_name, is_tablegroup in resources:
-            exists = (
-                self._tablegroup_exists(resource_name)
-                if is_tablegroup
-                else self._table_exists(resource_name)
-            )
+            exists = self._tablegroup_exists(resource_name) if is_tablegroup else self._table_exists(resource_name)
             if not exists:
                 missing.append(resource_name)
         return missing
@@ -1660,9 +1624,7 @@ class BaseClient(BaseConnection, AdminAPI):
         self._use_catalog_database()
         return len(self._ns_missing_physical_resources(meta["collection_id"], is_ss)) > 0
 
-    def _purge_broken_ns_collection_if_incomplete(
-        self, collection_name: str, meta: dict | None = None
-    ) -> bool:
+    def _purge_broken_ns_collection_if_incomplete(self, collection_name: str, meta: dict | None = None) -> bool:
         """Purge a namespace collection whose catalog row exists but physical resources are incomplete.
 
         Returns True when the collection was purged and should be treated as non-existent.
@@ -1686,9 +1648,7 @@ class BaseClient(BaseConnection, AdminAPI):
         self._delete_ns_collection_meta(collection_name)
         return True
 
-    def _resolve_namespace_ltable_id(
-        self, collection_id: str, namespace_id: int
-    ) -> int:
+    def _resolve_namespace_ltable_id(self, collection_id: str, namespace_id: int) -> int:
         """Resolve the default ltable_id for (collection_id, namespace_id) from
         sdk_ltables. Cached per (collection_id, namespace_id) on the client
         instance to avoid the extra round-trip on every DML/DQL call.
@@ -1712,17 +1672,14 @@ class BaseClient(BaseConnection, AdminAPI):
         )
         if not rows:
             raise ValueError(
-                f"No default ltable found for collection_id={collection_id}, "
-                f"namespace_id={namespace_id} in sdk_ltables"
+                f"No default ltable found for collection_id={collection_id}, namespace_id={namespace_id} in sdk_ltables"
             )
         row = rows[0]
         lt_id = int(row[0] if isinstance(row, (list, tuple)) else row["ltable_id"])
         cache[key] = lt_id
         return lt_id
 
-    def _cache_namespace_ltable_id(
-        self, collection_id: str, namespace_id: int, ltable_id: int
-    ) -> None:
+    def _cache_namespace_ltable_id(self, collection_id: str, namespace_id: int, ltable_id: int) -> None:
         """Cache the resolved logical-table id for a namespace."""
         key = (str(collection_id), int(namespace_id))
         cache = getattr(self, "_ns_ltable_id_cache", None)
@@ -1848,10 +1805,7 @@ class BaseClient(BaseConnection, AdminAPI):
             data_table = NamespaceCollectionNames.data_table_name(collection_id)
             if self._table_exists(data_table):
                 index_rows = self._execute(f"SHOW INDEX FROM `{data_table}`")
-                index_names = {
-                    (row.get("Key_name") if isinstance(row, dict) else row[2])
-                    for row in (index_rows or [])
-                }
+                index_names = {(row.get("Key_name") if isinstance(row, dict) else row[2]) for row in (index_rows or [])}
                 has_fulltext = "idx_fts" in index_names
             else:
                 has_fulltext = False
@@ -1866,13 +1820,9 @@ class BaseClient(BaseConnection, AdminAPI):
     ) -> dict:
         """Finalize namespace metadata after catalog rows and physical tables are created."""
         self._cache_namespace_ltable_id(collection_id, namespace_id, ltable_id)
-        schema_table = self._qtable(
-            NamespaceCollectionNames.logic_schema_table_name(collection_id)
-        )
+        schema_table = self._qtable(NamespaceCollectionNames.logic_schema_table_name(collection_id))
         has_fulltext, has_ivf = self._resolve_ns_ltable_index_layout(collection_id)
-        schema_content = json.dumps(
-            _build_default_ltable_schema(has_fulltext=has_fulltext, has_ivf=has_ivf)
-        )
+        schema_content = json.dumps(_build_default_ltable_schema(has_fulltext=has_fulltext, has_ivf=has_ivf))
         with contextlib.suppress(Exception):
             self._execute(
                 f"INSERT INTO {schema_table} (namespace_id, ltable_id, schema_content) "
@@ -1886,18 +1836,12 @@ class BaseClient(BaseConnection, AdminAPI):
         if self._get_ns_namespace_meta(collection_id, namespace_name) is not None:
             raise ValueError(f"Namespace '{namespace_name}' already exists")
         try:
-            ns_id = self._insert_ns_namespace_catalog_row(
-                collection_id, namespace_name, idempotent=False
-            )
-            lt_id = self._insert_ns_ltable_catalog_row(
-                collection_id, ns_id, idempotent=False
-            )
+            ns_id = self._insert_ns_namespace_catalog_row(collection_id, namespace_name, idempotent=False)
+            lt_id = self._insert_ns_ltable_catalog_row(collection_id, ns_id, idempotent=False)
         except Exception as exc:
             if _is_namespace_catalog_conflict_error(exc):
                 self._rollback_connection_if_supported()
-                raise ValueError(
-                    f"Namespace '{namespace_name}' already exists"
-                ) from exc
+                raise ValueError(f"Namespace '{namespace_name}' already exists") from exc
             raise
         return self._finalize_ns_namespace_meta(collection_id, namespace_name, ns_id, lt_id)
 
@@ -1907,18 +1851,10 @@ class BaseClient(BaseConnection, AdminAPI):
         if meta is not None:
             if meta.get("ltable_id") is not None:
                 return meta
-            lt_id = self._insert_ns_ltable_catalog_row(
-                collection_id, int(meta["namespace_id"]), idempotent=True
-            )
-            return self._finalize_ns_namespace_meta(
-                collection_id, namespace_name, int(meta["namespace_id"]), lt_id
-            )
-        ns_id = self._insert_ns_namespace_catalog_row(
-            collection_id, namespace_name, idempotent=True
-        )
-        lt_id = self._insert_ns_ltable_catalog_row(
-            collection_id, ns_id, idempotent=True
-        )
+            lt_id = self._insert_ns_ltable_catalog_row(collection_id, int(meta["namespace_id"]), idempotent=True)
+            return self._finalize_ns_namespace_meta(collection_id, namespace_name, int(meta["namespace_id"]), lt_id)
+        ns_id = self._insert_ns_namespace_catalog_row(collection_id, namespace_name, idempotent=True)
+        lt_id = self._insert_ns_ltable_catalog_row(collection_id, ns_id, idempotent=True)
         return self._finalize_ns_namespace_meta(collection_id, namespace_name, ns_id, lt_id)
 
     def _get_ns_namespace_meta(self, collection_id: str, namespace_name: str) -> dict | None:
@@ -1991,12 +1927,8 @@ class BaseClient(BaseConnection, AdminAPI):
         collection_id_escaped = escape_string(collection_id)
         # PL reads session database_name; must match where catalog tables live.
         self._use_catalog_database()
-        self._set_session_ns_context(
-            collection_id=collection_id, namespace_id=int(ns_id), ltable_id=lt_id
-        )
-        self._execute(
-            f"CALL DBMS_LOGIC_TABLE.DROP_NAMESPACE('{collection_id_escaped}', {ns_id})"
-        )
+        self._set_session_ns_context(collection_id=collection_id, namespace_id=int(ns_id), ltable_id=lt_id)
+        self._execute(f"CALL DBMS_LOGIC_TABLE.DROP_NAMESPACE('{collection_id_escaped}', {ns_id})")
 
     def _list_ns_namespaces(self, collection_id: str) -> list[dict]:
         """List namespaces registered for a collection."""
@@ -2027,10 +1959,8 @@ class BaseClient(BaseConnection, AdminAPI):
     def get_collection(self, name: str, embedding_function: EmbeddingFunctionParam = _NOT_PROVIDED) -> "Collection":
         """Get an existing collection by name."""
         ns_meta = None
-        try:
+        with contextlib.suppress(Exception):
             ns_meta = self._get_ns_collection_meta(name)
-        except Exception:
-            pass
         if ns_meta is not None:
             if self._purge_broken_ns_collection_if_incomplete(collection_name=name, meta=ns_meta):
                 ns_meta = None
@@ -2089,7 +2019,7 @@ class BaseClient(BaseConnection, AdminAPI):
             raise ValueError(f"Failed to resolve collection metadata from sdk_collections table: {e}") from e
         return None
 
-    def _resolve_collection_metadata_from_table(self, table_name: str, collection_name: str) -> dict[str, Any]:  # noqa: C901
+    def _resolve_collection_metadata_from_table(self, table_name: str, collection_name: str) -> dict[str, Any]:
         """
         Resolve collection metadata infromation from collection table (not sdk_collections table)
         """
@@ -2397,10 +2327,7 @@ class BaseClient(BaseConnection, AdminAPI):
             check_result = self._execute(check_sql)
             if not check_result:
                 return result
-            rows = self._execute(
-                f"SELECT collection_id, collection_name, settings "
-                f"FROM `{sdk_table}`"
-            )
+            rows = self._execute(f"SELECT collection_id, collection_name, settings FROM `{sdk_table}`")
             for row in rows:
                 try:
                     if isinstance(row, dict):
@@ -2425,7 +2352,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 except Exception as e:
                     logger.warning(f"Failed to build namespace collection from row: {e}")
         except Exception:
-            pass
+            logger.debug("Failed to list namespace collections from catalog", exc_info=True)
         return result
 
     def _list_collections_v2(self) -> list["Collection"]:
@@ -2698,9 +2625,7 @@ class BaseClient(BaseConnection, AdminAPI):
         """Return an existing collection or resume an incomplete namespace-enabled one."""
         if use_namespace:
             if self._get_ns_collection_meta(name) is None:
-                raise ValueError(
-                    f"Collection '{name}' conflicted during create but namespace metadata is missing"
-                )
+                raise ValueError(f"Collection '{name}' conflicted during create but namespace metadata is missing")
             if self._is_incomplete_ns_collection(name):
                 return self.create_collection(
                     name=name,
@@ -2822,7 +2747,7 @@ class BaseClient(BaseConnection, AdminAPI):
 
     # -------------------- DML Operations --------------------
 
-    def _generate_sparse_embeddings(  # noqa: C901
+    def _generate_sparse_embeddings(
         self,
         sparse_config: SparseVectorIndexConfig,
         documents: list[str] | None,
@@ -2892,7 +2817,7 @@ class BaseClient(BaseConnection, AdminAPI):
             logger.debug(f"✅ Successfully generated {len(sparse_vectors)} sparse embeddings")
             return sparse_vectors
 
-    def _collection_add(  # noqa: C901
+    def _collection_add(
         self,
         collection_id: str | None,
         collection_name: str,
@@ -3076,7 +3001,7 @@ class BaseClient(BaseConnection, AdminAPI):
         self._execute(sql)
         logger.debug(f"✅ Successfully added {num_items} item(s) to collection '{collection_name}'")
 
-    def _collection_update(  # noqa: C901
+    def _collection_update(
         self,
         collection_id: str | None,
         collection_name: str,
@@ -3239,7 +3164,7 @@ class BaseClient(BaseConnection, AdminAPI):
 
         logger.debug(f"✅ Successfully updated {len(ids)} item(s) in collection '{collection_name}'")
 
-    def _collection_upsert(  # noqa: C901
+    def _collection_upsert(
         self,
         collection_id: str | None,
         collection_name: str,
@@ -3906,7 +3831,7 @@ class BaseClient(BaseConnection, AdminAPI):
 
     # -------------------- DQL Operations (Common Implementation) --------------------
 
-    def _collection_query(  # noqa: C901
+    def _collection_query(
         self,
         collection_id: str | None,
         collection_name: str,
@@ -4128,7 +4053,7 @@ class BaseClient(BaseConnection, AdminAPI):
         )
         return result
 
-    def _collection_query_sparse(  # noqa: C901
+    def _collection_query_sparse(
         self,
         conn,
         table_name: str,
@@ -4287,7 +4212,7 @@ class BaseClient(BaseConnection, AdminAPI):
         )
         return result
 
-    def _collection_get(  # noqa: C901
+    def _collection_get(
         self,
         collection_id: str | None,
         collection_name: str,
@@ -4539,7 +4464,7 @@ class BaseClient(BaseConnection, AdminAPI):
         # Transform SQL query results to standard format
         return self._transform_sql_result(result_rows, include)
 
-    def _build_search_parm(  # noqa: C901
+    def _build_search_parm(
         self,
         query: dict[str, Any] | list[dict[str, Any]] | None,
         knn: dict[str, Any] | list[dict[str, Any]] | None,
@@ -4737,7 +4662,7 @@ class BaseClient(BaseConnection, AdminAPI):
 
         return None
 
-    def _build_document_query(  # noqa: C901
+    def _build_document_query(
         self, where_document: dict[str, Any], boost: float | None = None
     ) -> dict[str, Any] | None:
         """
@@ -4778,9 +4703,7 @@ class BaseClient(BaseConnection, AdminAPI):
             _apply_boost(expr)
             return expr
 
-        return _with_boost(
-            build_document_hybrid_expression(where_document, boost=boost)
-        )
+        return _with_boost(build_document_hybrid_expression(where_document, boost=boost))
 
     def _build_metadata_filter_for_search_parm(self, where: dict[str, Any] | None) -> list[dict[str, Any]]:
         """
@@ -4811,9 +4734,7 @@ class BaseClient(BaseConnection, AdminAPI):
             return CollectionFieldNames.ID
         return f"(JSON_EXTRACT(metadata, '$.{key}'))"
 
-    def _build_metadata_filter_conditions(  # noqa: C901
-        self, condition: dict[str, Any]
-    ) -> list[dict[str, Any]]:
+    def _build_metadata_filter_conditions(self, condition: dict[str, Any]) -> list[dict[str, Any]]:
         """
         Recursively build metadata filter conditions from nested dictionary
 
@@ -4861,9 +4782,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 # non-scoring (filter) context the kernel does not reliably apply the
                 # implicit "at least one should" default, which otherwise yields an
                 # intermittent `1210 Invalid argument`.
-                result.append(
-                    {"bool": {"should": should_conditions, "minimum_should_match": 1}}
-                )
+                result.append({"bool": {"should": should_conditions, "minimum_should_match": 1}})
             return result
 
         if "$not" in condition:
@@ -4917,7 +4836,7 @@ class BaseClient(BaseConnection, AdminAPI):
 
         return result
 
-    def _build_knn_expression(  # noqa: C901
+    def _build_knn_expression(
         self, knn: dict[str, Any], dimension: int | None = None, **kwargs
     ) -> dict[str, Any] | list[dict[str, Any]] | None:
         """
@@ -5023,14 +4942,9 @@ class BaseClient(BaseConnection, AdminAPI):
             knn_filter = pos_filters
 
         if where_document is not None and where_document_knn_prefilterable(where_document):
-            doc_filter = document_expr_as_knn_filter(
-                build_document_hybrid_expression(where_document)
-            )
+            doc_filter = document_expr_as_knn_filter(build_document_hybrid_expression(where_document))
             if doc_filter is not None:
-                if knn_filter is None:
-                    knn_filter = [doc_filter]
-                else:
-                    knn_filter = [*knn_filter, doc_filter]
+                knn_filter = [doc_filter] if knn_filter is None else [*knn_filter, doc_filter]
 
         for vector in vectors:
             expr = {"field": "embedding", "k": n_results, "query_vector": vector}
@@ -5075,20 +4989,18 @@ class BaseClient(BaseConnection, AdminAPI):
                 if len(kept_indices) >= n_results:
                     break
 
-            def _pick(key: str) -> list[Any]:
-                """Pick kept elements from one result group."""
-                groups = result.get(key)
-                if not groups or qi >= len(groups):
-                    return []
-                group = groups[qi]
-                return [group[i] for i in kept_indices if i < len(group)]
-
             filtered["ids"].append([ids[i] for i in kept_indices])
-            if "distances" in result and result["distances"]:
-                filtered["distances"].append(_pick("distances"))
+            if result.get("distances"):
+                dist_groups = result.get("distances")
+                if dist_groups and qi < len(dist_groups):
+                    group = dist_groups[qi]
+                    filtered["distances"].append([group[i] for i in kept_indices if i < len(group)])
             for optional_key in ("documents", "metadatas", "embeddings"):
                 if optional_key in filtered:
-                    filtered[optional_key].append(_pick(optional_key))
+                    groups = result.get(optional_key)
+                    if groups and qi < len(groups):
+                        group = groups[qi]
+                        filtered[optional_key].append([group[i] for i in kept_indices if i < len(group)])
 
         return filtered
 
@@ -5132,9 +5044,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 return float(val)
         return 0.0
 
-    def _transform_sql_result(  # noqa: C901
-        self, result_rows: list[dict[str, Any]], include: list[str] | None
-    ) -> dict[str, Any]:
+    def _transform_sql_result(self, result_rows: list[dict[str, Any]], include: list[str] | None) -> dict[str, Any]:
         """
         Transform SQL query results to standard format (query-compatible format)
 
@@ -5345,11 +5255,7 @@ class BaseClient(BaseConnection, AdminAPI):
         """Validate user-supplied embeddings match the collection VECTOR column dimension."""
         if not explicit_embeddings or not embeddings:
             return
-        expected = (
-            collection_dimension
-            if collection_dimension is not None
-            else DEFAULT_VECTOR_DIMENSION
-        )
+        expected = collection_dimension if collection_dimension is not None else DEFAULT_VECTOR_DIMENSION
         _validate_namespace_explicit_embedding_dimensions(
             embeddings,
             expected_dimension=expected,
@@ -5449,17 +5355,11 @@ class BaseClient(BaseConnection, AdminAPI):
             meta_val = metadatas[i] if metadatas and i < len(metadatas) else None
             emb_val = embeddings[i] if embeddings and i < len(embeddings) else None
             for attempt in range(120):
-                duplicate_count = self._count_namespace_records_by_id(
-                    table_name, ns_id, ltable_id, record_id
-                )
+                duplicate_count = self._count_namespace_records_by_id(table_name, ns_id, ltable_id, record_id)
                 if duplicate_count <= 1:
                     break
-                self._delete_namespace_records_by_id(
-                    table_name, ns_id, ltable_id, record_id
-                )
-                if self._count_namespace_records_by_id(
-                    table_name, ns_id, ltable_id, record_id
-                ) == 0:
+                self._delete_namespace_records_by_id(table_name, ns_id, ltable_id, record_id)
+                if self._count_namespace_records_by_id(table_name, ns_id, ltable_id, record_id) == 0:
                     self._namespace_add(
                         collection_id=collection_id,
                         collection_name=collection_name,
@@ -5475,12 +5375,10 @@ class BaseClient(BaseConnection, AdminAPI):
                 if attempt < 119:
                     time.sleep(0.05 * min(attempt + 1, 10))
             else:
-                raise ValueError(
-                    f"Failed to reconcile duplicate namespace rows for record_id={record_id!r}"
-                )
+                raise ValueError(f"Failed to reconcile duplicate namespace rows for record_id={record_id!r}")
 
     @namespace_kernel_error_guard
-    def _namespace_add(  # noqa: C901
+    def _namespace_add(
         self,
         collection_id: str | None,
         collection_name: str,
@@ -5563,7 +5461,9 @@ class BaseClient(BaseConnection, AdminAPI):
 
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._set_session_ns_context(
-            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
+            collection_id=collection_id,
+            namespace_id=int(namespace_id),
+            ltable_id=ltable_id,
         )
         table_name = NamespaceCollectionNames.data_table_name(collection_id)
         ns_id = int(namespace_id)
@@ -5660,7 +5560,9 @@ class BaseClient(BaseConnection, AdminAPI):
 
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._set_session_ns_context(
-            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
+            collection_id=collection_id,
+            namespace_id=int(namespace_id),
+            ltable_id=ltable_id,
         )
         table_name = NamespaceCollectionNames.data_table_name(collection_id)
         ns_id = int(namespace_id)
@@ -5719,7 +5621,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 has_doc = True
                 doc_case_parts.append(f"WHEN {id_expr} = %s THEN %s")
                 params.extend([record_id, documents[i]])
-                if record_id not in [rid for rid in batch_ids]:
+                if record_id not in list(batch_ids):
                     batch_ids.append(record_id)
             if metadatas and i < len(metadatas) and metadatas[i] is not None:
                 has_meta = True
@@ -5775,7 +5677,9 @@ class BaseClient(BaseConnection, AdminAPI):
         collection_dimension = kwargs.pop("collection_dimension", None)
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._set_session_ns_context(
-            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
+            collection_id=collection_id,
+            namespace_id=int(namespace_id),
+            ltable_id=ltable_id,
         )
         if isinstance(ids, str):
             ids = [ids]
@@ -5830,10 +5734,15 @@ class BaseClient(BaseConnection, AdminAPI):
             add_metas = [metadatas[i] for i in add_indices] if metadatas else None
             add_embs = [embeddings[i] for i in add_indices] if embeddings else None
             self._namespace_add(
-                collection_id=collection_id, collection_name=collection_name,
-                namespace_id=namespace_id, namespace_name=namespace_name,
-                ids=add_ids, embeddings=add_embs, metadatas=add_metas,
-                documents=add_docs, embedding_function=embedding_function,
+                collection_id=collection_id,
+                collection_name=collection_name,
+                namespace_id=namespace_id,
+                namespace_name=namespace_name,
+                ids=add_ids,
+                embeddings=add_embs,
+                metadatas=add_metas,
+                documents=add_docs,
+                embedding_function=embedding_function,
                 has_vector_index=has_vector_index,
                 collection_dimension=collection_dimension,
                 **kwargs,
@@ -5845,10 +5754,15 @@ class BaseClient(BaseConnection, AdminAPI):
             upd_metas = [metadatas[i] for i in update_indices] if metadatas else None
             upd_embs = [embeddings[i] for i in update_indices] if embeddings else None
             self._namespace_update(
-                collection_id=collection_id, collection_name=collection_name,
-                namespace_id=namespace_id, namespace_name=namespace_name,
-                ids=upd_ids, embeddings=upd_embs, metadatas=upd_metas,
-                documents=upd_docs, embedding_function=embedding_function,
+                collection_id=collection_id,
+                collection_name=collection_name,
+                namespace_id=namespace_id,
+                namespace_name=namespace_name,
+                ids=upd_ids,
+                embeddings=upd_embs,
+                metadatas=upd_metas,
+                documents=upd_docs,
+                embedding_function=embedding_function,
                 has_vector_index=has_vector_index,
                 collection_dimension=collection_dimension,
                 **kwargs,
@@ -5884,7 +5798,9 @@ class BaseClient(BaseConnection, AdminAPI):
         """Delete records from a namespace collection."""
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._set_session_ns_context(
-            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
+            collection_id=collection_id,
+            namespace_id=int(namespace_id),
+            ltable_id=ltable_id,
         )
         if ids is None and where is None and where_document is None:
             raise ValueError("At least one of ids, where, or where_document must be provided")
@@ -5935,7 +5851,7 @@ class BaseClient(BaseConnection, AdminAPI):
             self._execute(sql)
 
     @namespace_kernel_error_guard
-    def _namespace_query(  # noqa: C901
+    def _namespace_query(
         self,
         collection_id: str | None,
         collection_name: str,
@@ -5983,7 +5899,9 @@ class BaseClient(BaseConnection, AdminAPI):
 
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._set_session_ns_context(
-            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
+            collection_id=collection_id,
+            namespace_id=int(namespace_id),
+            ltable_id=ltable_id,
         )
         include_fields = self._normalize_include_fields(include)
 
@@ -5995,10 +5913,7 @@ class BaseClient(BaseConnection, AdminAPI):
         all_embeddings: list[list[Any]] = []
         all_distances: list[list[float]] = []
 
-        hybrid_kwargs = {
-            k: v for k, v in kwargs.items()
-            if k not in ("embedding_function", "distance", "dimension")
-        }
+        hybrid_kwargs = {k: v for k, v in kwargs.items() if k not in ("embedding_function", "distance", "dimension")}
 
         for query_vector in query_embeddings:
             knn_cfg: dict[str, Any] = {
@@ -6038,7 +5953,9 @@ class BaseClient(BaseConnection, AdminAPI):
 
             if post_filter_wd is not None:
                 batch = self._post_filter_namespace_query_result(
-                    batch, post_filter_wd, n_results=n_results,
+                    batch,
+                    post_filter_wd,
+                    n_results=n_results,
                 )
 
             batch_ids = batch.get("ids") or [[]]
@@ -6065,7 +5982,7 @@ class BaseClient(BaseConnection, AdminAPI):
         return result
 
     @namespace_kernel_error_guard
-    def _namespace_get(  # noqa: C901
+    def _namespace_get(
         self,
         collection_id: str | None,
         collection_name: str,
@@ -6082,7 +5999,9 @@ class BaseClient(BaseConnection, AdminAPI):
         """Fetch records from a namespace collection by id/where/pagination."""
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._set_session_ns_context(
-            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
+            collection_id=collection_id,
+            namespace_id=int(namespace_id),
+            ltable_id=ltable_id,
         )
         include_fields = self._normalize_include_fields(include)
         table_name = NamespaceCollectionNames.data_table_name(collection_id)
@@ -6162,18 +6081,22 @@ class BaseClient(BaseConnection, AdminAPI):
                     result_embeddings.append(emb)
             elif isinstance(row, (list, tuple)):
                 idx = 0
-                rid_raw = row[idx]; idx += 1
+                rid_raw = row[idx]
+                idx += 1
                 rid = json.loads(rid_raw) if isinstance(rid_raw, str) else rid_raw
                 result_ids.append(rid)
                 if "documents" in include_fields or "document" in include_fields or include is None:
-                    result_documents.append(row[idx]); idx += 1
+                    result_documents.append(row[idx])
+                    idx += 1
                 if "metadatas" in include_fields or "metadata" in include_fields or include is None:
-                    meta_raw = row[idx]; idx += 1
+                    meta_raw = row[idx]
+                    idx += 1
                     if isinstance(meta_raw, str):
                         meta_raw = json.loads(meta_raw)
                     result_metadatas.append(meta_raw or {})
                 if "embeddings" in include_fields or "embedding" in include_fields:
-                    emb = row[idx]; idx += 1
+                    emb = row[idx]
+                    idx += 1
                     if isinstance(emb, bytes):
                         emb = self._parse_embedding_from_bytes(emb)
                     elif isinstance(emb, str):
@@ -6201,7 +6124,9 @@ class BaseClient(BaseConnection, AdminAPI):
         """Count records in a namespace collection."""
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._set_session_ns_context(
-            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
+            collection_id=collection_id,
+            namespace_id=int(namespace_id),
+            ltable_id=ltable_id,
         )
         table_name = NamespaceCollectionNames.data_table_name(collection_id)
         ns_id = int(namespace_id)
@@ -6289,7 +6214,7 @@ class BaseClient(BaseConnection, AdminAPI):
                     if isinstance(existing, list):
                         node["filter"] = existing + ns_filter
                     else:
-                        node["filter"] = [existing] + ns_filter
+                        node["filter"] = [existing, *ns_filter]
                 else:
                     node["filter"] = list(ns_filter)
             return node
@@ -6312,7 +6237,7 @@ class BaseClient(BaseConnection, AdminAPI):
                     if isinstance(existing, list):
                         bool_node["filter"] = existing + ns_filter
                     else:
-                        bool_node["filter"] = [existing] + ns_filter
+                        bool_node["filter"] = [existing, *ns_filter]
                 else:
                     bool_node["filter"] = list(ns_filter)
                 return node
@@ -6358,14 +6283,19 @@ class BaseClient(BaseConnection, AdminAPI):
         """Run a hybrid (vector + fulltext) search against a namespace collection."""
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._set_session_ns_context(
-            collection_id=collection_id, namespace_id=int(namespace_id), ltable_id=ltable_id,
+            collection_id=collection_id,
+            namespace_id=int(namespace_id),
+            ltable_id=ltable_id,
         )
         conn = self._ensure_connection()
         table_name = NamespaceCollectionNames.data_table_name(collection_id)
         ns_id = int(namespace_id)
 
         search_parm = self._build_search_parm(
-            query, knn, rank, n_results,
+            query,
+            knn,
+            rank,
+            n_results,
             include=include,
             dimension=kwargs.get("dimension"),
             **{k: v for k, v in kwargs.items() if k != "dimension"},
@@ -6391,14 +6321,16 @@ class BaseClient(BaseConnection, AdminAPI):
 
         hint_sql = _query_hint_to_sql(query_hint, table_name=table_name) or ""
         hybrid_sql = (
-            f"SELECT {hint_sql + ' ' if hint_sql else ''}* "
-            f"FROM hybrid_search(TABLE `{table_name}`, '{escaped_params}')"
+            f"SELECT {hint_sql + ' ' if hint_sql else ''}* FROM hybrid_search(TABLE `{table_name}`, '{escaped_params}')"
         )
         result_rows = self._execute_query_with_cursor(conn, hybrid_sql, [], use_context_manager)
         if not result_rows:
             return {
-                "ids": [[]], "distances": [[]], "metadatas": [[]],
-                "documents": [[]], "embeddings": [[]],
+                "ids": [[]],
+                "distances": [[]],
+                "metadatas": [[]],
+                "documents": [[]],
+                "embeddings": [[]],
             }
         return self._transform_ns_hybrid_result(result_rows, include)
 
@@ -6408,8 +6340,11 @@ class BaseClient(BaseConnection, AdminAPI):
         """Transform raw hybrid-search rows into the public result shape."""
         if not result_rows:
             return {
-                "ids": [[]], "distances": [[]], "metadatas": [[]],
-                "documents": [[]], "embeddings": [[]],
+                "ids": [[]],
+                "distances": [[]],
+                "metadatas": [[]],
+                "documents": [[]],
+                "embeddings": [[]],
             }
 
         ids = []

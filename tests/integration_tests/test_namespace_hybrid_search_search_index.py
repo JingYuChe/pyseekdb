@@ -10,7 +10,6 @@ from __future__ import annotations
 from typing import Any, ClassVar
 
 import pytest
-
 from namespace_hybrid_search_helpers import (
     SEARCH_INDEX_CASES,
     get_search_index_case,
@@ -57,9 +56,7 @@ class TestNamespaceHybridSearchSearchIndex:
 
     def _run_case(self, case_name: str) -> None:
         """Run case."""
-        run_hybrid_search_index_case(
-            self._namespace, self._corpus, get_search_index_case(case_name)
-        )
+        run_hybrid_search_index_case(self._namespace, self._corpus, get_search_index_case(case_name))
 
     @pytest.mark.parametrize("case_name", [c.name for c in SEARCH_INDEX_CASES])
     def test_hybrid_search_search_index_operators(self, db_client, case_name: str):

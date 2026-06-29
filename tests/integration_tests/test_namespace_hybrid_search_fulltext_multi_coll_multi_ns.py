@@ -16,7 +16,6 @@ from __future__ import annotations
 import time
 
 import pytest
-
 from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT
 from namespace_fts_helpers import (
     CORPUS_SIZE,
@@ -181,8 +180,7 @@ class TestNamespaceHybridSearchFulltextMultiCollMultiNs:
                     include=["documents"],
                 )
                 assert top_result["ids"][0][0] == f"{key}_zpx_top_5", (
-                    f"[{key}] most relevant TOKEN_ZPX document must rank first, "
-                    f"got {top_result['ids'][0]}"
+                    f"[{key}] most relevant TOKEN_ZPX document must rank first, got {top_result['ids'][0]}"
                 )
         finally:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)

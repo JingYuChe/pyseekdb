@@ -11,9 +11,8 @@ Design Pattern:
 from typing import TYPE_CHECKING, Any, Optional
 
 from .validators import (
-    _MAX_N_RESULTS,
-    _validate_namespace_name,
     _validate_n_results,
+    _validate_namespace_name,
 )
 
 if TYPE_CHECKING:
@@ -144,7 +143,9 @@ class Collection:
     def _guard_namespace_enabled(self) -> None:
         """Raise if namespace APIs are used on a non-namespace collection."""
         if not self._use_namespace:
-            raise ValueError("Namespace is not enabled for this collection. Use use_namespace=True when creating the collection.")
+            raise ValueError(
+                "Namespace is not enabled for this collection. Use use_namespace=True when creating the collection."
+            )
         if not self._client._ns_collection_exists_by_id(self._id):
             raise ValueError(
                 f"Collection '{self._name}' no longer exists (it may have been deleted). "
@@ -163,6 +164,7 @@ class Collection:
         self._guard_namespace_enabled()
         _validate_namespace_name(name)
         from .namespace import Namespace
+
         meta = self._client._create_ns_namespace_meta(self._id, name)
         return Namespace(client=self._client, collection=self, name=name, namespace_id=meta["namespace_id"])
 
@@ -171,6 +173,7 @@ class Collection:
         self._guard_namespace_enabled()
         _validate_namespace_name(name)
         from .namespace import Namespace
+
         meta = self._client._get_ns_namespace_meta(self._id, name)
         if meta is None:
             raise ValueError(f"Namespace '{name}' not found")
@@ -181,6 +184,7 @@ class Collection:
         self._guard_namespace_enabled()
         _validate_namespace_name(name)
         from .namespace import Namespace
+
         meta = self._client._get_or_create_ns_namespace_meta(self._id, name)
         return Namespace(client=self._client, collection=self, name=name, namespace_id=meta["namespace_id"])
 
@@ -194,6 +198,7 @@ class Collection:
         """List all active namespaces in this collection."""
         self._guard_namespace_enabled()
         from .namespace import Namespace
+
         metas = self._client._list_ns_namespaces(self._id)
         return [
             Namespace(client=self._client, collection=self, name=m["namespace_name"], namespace_id=m["namespace_id"])

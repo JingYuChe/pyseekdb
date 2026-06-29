@@ -270,5 +270,3 @@ def oceanbase_admin_client():
     with contextlib.suppress(Exception):
         if hasattr(client, "close"):
             client.close()
-
-

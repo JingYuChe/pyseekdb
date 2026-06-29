@@ -8,16 +8,16 @@ during namespace collection and namespace creation/retrieval.
 import time
 
 import pytest
-
 from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT
+
 from pyseekdb import IVFConfiguration
 from pyseekdb.client.configuration import VectorIndexConfig
 from pyseekdb.client.schema import Schema
 
 
 class TestNamespaceSessionVars:
-
     """TestNamespaceSessionVars class."""
+
     def _create_ns_collection(self, client):
         """Create ns collection."""
         name = f"test_ns_sessvar_{int(time.time() * 1000)}"
@@ -28,15 +28,15 @@ class TestNamespaceSessionVars:
             ),
         )
         return client.create_collection(
-            name=name, schema=schema, use_namespace=True,
+            name=name,
+            schema=schema,
+            use_namespace=True,
             partition_count=NAMESPACE_TEST_PARTITION_COUNT,
         )
 
     def _query_session_vars(self, client):
         """Query session vars."""
-        rows = client._server._execute(
-            "SELECT @collection_id AS cid, @namespace_id AS nsid, @ltable_id AS ltid"
-        )
+        rows = client._server._execute("SELECT @collection_id AS cid, @namespace_id AS nsid, @ltable_id AS ltid")
         row = rows[0]
         if isinstance(row, (list, tuple)):
             return {"cid": row[0], "nsid": row[1], "ltid": row[2]}

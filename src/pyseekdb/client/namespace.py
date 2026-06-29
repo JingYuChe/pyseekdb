@@ -22,7 +22,7 @@ class Namespace:
     def __init__(
         self,
         client: Any,
-        collection: "Collection",
+        collection: Collection,
         name: str,
         namespace_id: str,
     ):
@@ -43,20 +43,19 @@ class Namespace:
         return self._namespace_id
 
     @property
-    def collection(self) -> "Collection":
+    def collection(self) -> Collection:
         """Parent collection that owns this namespace."""
         return self._collection
 
     @property
-    def embedding_function(self) -> "EmbeddingFunction | None":
+    def embedding_function(self) -> EmbeddingFunction | None:
         """Embedding function inherited from the parent collection."""
         return self._collection.embedding_function
 
     def __repr__(self) -> str:
         """Return a debug-friendly representation of this namespace."""
         return (
-            f"Namespace(name='{self._name}', namespace_id={self._namespace_id}, "
-            f"collection='{self._collection.name}')"
+            f"Namespace(name='{self._name}', namespace_id={self._namespace_id}, collection='{self._collection.name}')"
         )
 
     def _dml_collection_context(self) -> dict[str, Any]:

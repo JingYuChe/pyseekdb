@@ -10,8 +10,9 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import pyseekdb
 from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT, ns_schema
+
+import pyseekdb
 
 
 def _make_oceanbase_client():
@@ -51,6 +52,7 @@ def _count_sdk_ltables(client, collection_id: str, namespace_id: int) -> int:
 
 class TestLogicTableMonitoringP1:
     """TestLogicTableMonitoringP1 class."""
+
     def test_concurrent_get_or_create_same_namespace_is_idempotent(self, oceanbase_client):
         """8 threads with independent clients race on the same namespace name."""
         owner = oceanbase_client
@@ -78,7 +80,7 @@ class TestLogicTableMonitoringP1:
                     "namespace_id": str(ns.namespace_id),
                     "name": ns.name,
                 }
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 errors.append(f"thread {thread_id}: {exc!r}")
             finally:
                 if hasattr(client, "close"):

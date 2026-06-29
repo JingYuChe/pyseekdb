@@ -4,7 +4,6 @@ Verifies collection-level isolation via get.
 """
 
 import pytest
-
 from namespace_dml_helpers import (
     assert_get_absent,
     assert_get_present,
@@ -14,8 +13,8 @@ from namespace_dml_helpers import (
 
 
 class TestNamespaceDMLMultiColl:
-
     """TestNamespaceDMLMultiColl class."""
+
     def test_same_namespace_name_across_collections(self, db_client):
         """Test same namespace name across collections."""
         coll_a = create_ns_collection(db_client, suffix="_mc_a")
@@ -38,12 +37,8 @@ class TestNamespaceDMLMultiColl:
                 metadatas={"coll": "B"},
             )
 
-            assert_get_present(
-                ns_a, "doc1", documents="Data in coll A", metadatas={"coll": "A"}
-            )
-            assert_get_present(
-                ns_b, "doc1", documents="Data in coll B", metadatas={"coll": "B"}
-            )
+            assert_get_present(ns_a, "doc1", documents="Data in coll A", metadatas={"coll": "A"})
+            assert_get_present(ns_b, "doc1", documents="Data in coll B", metadatas={"coll": "B"})
         finally:
             cleanup(db_client, coll_a, coll_b)
 

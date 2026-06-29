@@ -6,16 +6,16 @@ Tests vector similarity query, metadata filtering, include control, and multi-na
 import time
 
 import pytest
-
 from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT
+
 from pyseekdb import IVFConfiguration
 from pyseekdb.client.configuration import FulltextIndexConfig, VectorIndexConfig
 from pyseekdb.client.schema import Schema
 
 
 class TestNamespaceQuery:
-
     """TestNamespaceQuery class."""
+
     def _setup(self, client, suffix=""):
         """Setup."""
         name = f"test_ns_q_{int(time.time() * 1000)}{suffix}"
@@ -27,7 +27,9 @@ class TestNamespaceQuery:
             fulltext_index=FulltextIndexConfig(analyzer="ik"),
         )
         collection = client.create_collection(
-            name=name, schema=schema, use_namespace=True,
+            name=name,
+            schema=schema,
+            use_namespace=True,
             partition_count=NAMESPACE_TEST_PARTITION_COUNT,
         )
         return collection
@@ -86,7 +88,7 @@ class TestNamespaceQuery:
             )
             assert result is not None
             assert len(result["ids"][0]) > 0
-            if "metadatas" in result and result["metadatas"]:
+            if result.get("metadatas"):
                 for meta in result["metadatas"][0]:
                     assert meta["category"] == "AI"
         finally:
@@ -208,7 +210,6 @@ class TestNamespaceQuery:
             assert res_y["metadatas"][0]["src"] == "Y"
         finally:
             db_client.delete_collection(name=collection.name)
-
 
     # ==================== hybrid_search tests ====================
 

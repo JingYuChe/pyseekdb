@@ -1,6 +1,6 @@
 """Unit tests for BaseClient._build_document_query DSL generation."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -16,8 +16,8 @@ def client():
 
 
 class TestBuildDocumentQuery:
-
     """TestBuildDocumentQuery class."""
+
     def test_and_contains_has_default_operator_and(self, client):
         """Test and contains has default operator and."""
         where_document = {"$and": [{"$contains": "TOKENZPX"}, {"$contains": "TOKENALP"}]}

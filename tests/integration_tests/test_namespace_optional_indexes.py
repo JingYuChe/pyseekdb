@@ -20,8 +20,8 @@ from typing import Any
 
 import pymysql.err
 import pytest
-
 from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT
+
 from pyseekdb import IVFConfiguration
 from pyseekdb.client.configuration import FulltextIndexConfig, VectorIndexConfig
 from pyseekdb.client.meta_info import NamespaceCollectionNames
@@ -60,9 +60,7 @@ def _index_names(client: Any, collection_id: str) -> set[str]:
 
 def _collection_settings(client: Any, collection_id: str) -> dict:
     """Collection settings."""
-    rows = client._server._execute(
-        f"SELECT settings FROM sdk_collections WHERE collection_id = '{collection_id}'"
-    )
+    rows = client._server._execute(f"SELECT settings FROM sdk_collections WHERE collection_id = '{collection_id}'")
     raw = rows[0]["settings"] if isinstance(rows[0], dict) else rows[0][0]
     return json.loads(raw) if raw else {}
 
@@ -71,7 +69,9 @@ def _create_collection(client: Any, label: str, schema: Schema) -> Any:
     """Create collection."""
     name = f"test_ns_opt_idx_{label}_{int(time.time() * 1000)}"
     return client.create_collection(
-        name=name, schema=schema, use_namespace=True,
+        name=name,
+        schema=schema,
+        use_namespace=True,
         partition_count=NAMESPACE_TEST_PARTITION_COUNT,
     )
 

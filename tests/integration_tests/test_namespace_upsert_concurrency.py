@@ -6,12 +6,10 @@ import contextlib
 import os
 import threading
 import time
-import uuid
 
-import pytest
+from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT, cleanup, ns_schema
 
 import pyseekdb
-from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT, cleanup, ns_schema
 
 
 def _unique_name(prefix: str) -> str:
@@ -44,10 +42,7 @@ def test_multi_client_concurrent_upsert_same_new_id_should_keep_single_record(
     clients = [_new_oceanbase_client() for _ in range(4)]
     try:
         ns = collection.create_namespace("race_ns")
-        namespaces = [
-            client.get_collection(collection.name).get_namespace("race_ns")
-            for client in clients
-        ]
+        namespaces = [client.get_collection(collection.name).get_namespace("race_ns") for client in clients]
         barrier = threading.Barrier(len(namespaces))
         errors: list[Exception] = []
 
@@ -61,12 +56,11 @@ def test_multi_client_concurrent_upsert_same_new_id_should_keep_single_record(
                     documents=f"written by client {idx}",
                     metadatas={"client": idx},
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 errors.append(exc)
 
         threads = [
-            threading.Thread(target=_upsert_once, args=(target_ns, idx))
-            for idx, target_ns in enumerate(namespaces)
+            threading.Thread(target=_upsert_once, args=(target_ns, idx)) for idx, target_ns in enumerate(namespaces)
         ]
         for thread in threads:
             thread.start()

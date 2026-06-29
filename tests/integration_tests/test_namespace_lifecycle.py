@@ -7,18 +7,17 @@ import contextlib
 import time
 
 import pytest
+from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT
 
 import pyseekdb
-from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT
 from pyseekdb import IVFConfiguration
 from pyseekdb.client.configuration import VectorIndexConfig
 from pyseekdb.client.schema import Schema
 
 
-
 class TestNamespaceLifecycle:
-
     """TestNamespaceLifecycle class."""
+
     def _create_ns_collection(self, client, suffix=""):
         """Create ns collection."""
         name = f"test_ns_lc_{int(time.time() * 1000)}{suffix}"
@@ -29,7 +28,9 @@ class TestNamespaceLifecycle:
             ),
         )
         collection = client.create_collection(
-            name=name, schema=schema, use_namespace=True,
+            name=name,
+            schema=schema,
+            use_namespace=True,
             partition_count=NAMESPACE_TEST_PARTITION_COUNT,
         )
         return collection
@@ -66,8 +67,10 @@ class TestNamespaceLifecycle:
                 embedding_function=ef,
             ),
         )
-        collection = db_client.create_collection(
-            name=name, schema=schema, use_namespace=True,
+        db_client.create_collection(
+            name=name,
+            schema=schema,
+            use_namespace=True,
             partition_count=NAMESPACE_TEST_PARTITION_COUNT,
         )
         try:
@@ -165,7 +168,7 @@ class TestNamespaceLifecycle:
         ns = collection.create_namespace("prewarm_del")
         try:
             collection.delete_namespace("prewarm_del")
-            with pytest.raises(ValueError, match="no longer exists|being dropped"):
+            with pytest.raises(ValueError, match=r"no longer exists|being dropped"):
                 ns.prewarm()
         finally:
             db_client.delete_collection(name=collection.name)
@@ -194,9 +197,7 @@ class TestNamespaceLifecycle:
                 embedding_function=None,
             ),
         )
-        collection = client.create_collection(
-            name=name, schema=schema, use_namespace=True, partition_count=4
-        )
+        collection = client.create_collection(name=name, schema=schema, use_namespace=True, partition_count=4)
         try:
             cid = collection.id
             # Simulate an interrupted create: drop one physical table.
@@ -205,9 +206,7 @@ class TestNamespaceLifecycle:
             assert srv._is_incomplete_ns_collection(name) is True
 
             # Re-create resumes (same id, rebuilds the missing table) instead of raising.
-            resumed = client.create_collection(
-                name=name, schema=schema, use_namespace=True, partition_count=4
-            )
+            resumed = client.create_collection(name=name, schema=schema, use_namespace=True, partition_count=4)
             assert resumed.id == cid
             assert srv._is_incomplete_ns_collection(name) is False
 
@@ -218,9 +217,7 @@ class TestNamespaceLifecycle:
 
             # A complete collection still rejects a duplicate create.
             with pytest.raises(ValueError, match="already exists"):
-                client.create_collection(
-                    name=name, schema=schema, use_namespace=True, partition_count=4
-                )
+                client.create_collection(name=name, schema=schema, use_namespace=True, partition_count=4)
         finally:
             client.delete_collection(name=name)
 
@@ -238,9 +235,7 @@ class TestNamespaceLifecycle:
                 embedding_function=None,
             ),
         )
-        collection = client.create_collection(
-            name=name, schema=schema, use_namespace=True, partition_count=4
-        )
+        collection = client.create_collection(name=name, schema=schema, use_namespace=True, partition_count=4)
         cid = collection.id
         try:
             srv._use_catalog_database()
@@ -299,14 +294,12 @@ class TestNamespaceLifecycle:
                 db_client.delete_collection(name=name)
             except (ValueError, RuntimeError):
                 db_client._server._execute(f"DROP TABLE IF EXISTS `{name}`")
-                db_client._server._execute(
-                    f"DELETE FROM `sdk_collections` WHERE COLLECTION_NAME = '{name}'"
-                )
-
+                db_client._server._execute(f"DELETE FROM `sdk_collections` WHERE COLLECTION_NAME = '{name}'")
 
     def test_create_namespace_collection_with_hnsw_raises(self, db_client):
         """Test create namespace collection with hnsw raises."""
         from pyseekdb.client.configuration import HNSWConfiguration
+
         name = f"test_ns_hnsw_{int(time.time() * 1000)}"
         schema = Schema(
             vector_index=VectorIndexConfig(
@@ -321,13 +314,12 @@ class TestNamespaceLifecycle:
         """Verify hot_table is created when _is_shared_storage_mode returns True (SS mode)."""
         import json
         from unittest.mock import patch
+
         from pyseekdb.client.meta_info import NamespaceCollectionNames
 
         client = oceanbase_client
 
-        with patch.object(
-            type(client._server), "_is_shared_storage_mode", return_value=True
-        ):
+        with patch.object(type(client._server), "_is_shared_storage_mode", return_value=True):
             name = f"test_ns_ss_{int(time.time() * 1000)}"
             schema = Schema(
                 vector_index=VectorIndexConfig(
@@ -336,7 +328,9 @@ class TestNamespaceLifecycle:
                 ),
             )
             collection = client.create_collection(
-                name=name, schema=schema, use_namespace=True,
+                name=name,
+                schema=schema,
+                use_namespace=True,
                 partition_count=NAMESPACE_TEST_PARTITION_COUNT,
             )
 
@@ -361,11 +355,11 @@ class TestNamespaceLifecycle:
         finally:
             client.delete_collection(name=name)
 
-
     def test_custom_collection_partition_count(self, oceanbase_client):
         """Verify create_collection(partition_count=...) controls the PARTITIONS clause
         and is exposed via collection.partition_count."""
         import re
+
         from pyseekdb.client.meta_info import NamespaceCollectionNames
 
         name = f"test_ns_lc_pc_{int(time.time() * 1000)}"
@@ -375,9 +369,7 @@ class TestNamespaceLifecycle:
                 embedding_function=None,
             ),
         )
-        collection = oceanbase_client.create_collection(
-            name=name, schema=schema, use_namespace=True, partition_count=4
-        )
+        collection = oceanbase_client.create_collection(name=name, schema=schema, use_namespace=True, partition_count=4)
         try:
             assert collection.partition_count == 4
             # Reopened handle restores partition_count from settings.
@@ -387,9 +379,7 @@ class TestNamespaceLifecycle:
             rows = oceanbase_client._server._execute(f"SHOW CREATE TABLE `{data_table}`")
             create_sql = rows[0].get("Create Table", "") if rows else ""
             partitions = re.findall(r"partition `p\d+`", create_sql)
-            assert len(partitions) == 4, (
-                f"Expected 4 partitions, found {len(partitions)}: {create_sql[-300:]}"
-            )
+            assert len(partitions) == 4, f"Expected 4 partitions, found {len(partitions)}: {create_sql[-300:]}"
         finally:
             oceanbase_client.delete_collection(name=collection.name)
 

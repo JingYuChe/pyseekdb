@@ -147,7 +147,7 @@ def _require_embedded_pylibseekdb() -> None:
         )
 
 
-def _run_processes(  # noqa: C901
+def _run_processes(
     target: Callable[..., None],
     args_list: list[tuple[Any, ...]],
     expected_count: int,
@@ -566,6 +566,7 @@ def _seed_collection_rows(
 
 class TestGetOrCreateCollectionMultiprocess:
     """TestGetOrCreateCollectionMultiprocess class."""
+
     def test_concurrent_get_or_create_collection(self, multiprocess_db, _mode):
         """Test concurrent get or create collection."""
         client_config = multiprocess_db
@@ -590,12 +591,9 @@ class TestGetOrCreateCollectionMultiprocess:
             collection = _get_collection(client, collection_name)
             assert collection.name == collection_name
             rows = client._server._execute(
-                "SELECT collection_id FROM sdk_collections "
-                f"WHERE collection_name = '{collection_name}'"
+                f"SELECT collection_id FROM sdk_collections WHERE collection_name = '{collection_name}'"
             )
-            assert len(rows) == 1, (
-                f"expected exactly one sdk_collections row for {collection_name!r}, got {len(rows)}"
-            )
+            assert len(rows) == 1, f"expected exactly one sdk_collections row for {collection_name!r}, got {len(rows)}"
             row = rows[0]
             catalog_id = row["collection_id"] if isinstance(row, dict) else row[0]
             assert str(catalog_id) == str(collection.id)
@@ -606,6 +604,7 @@ class TestGetOrCreateCollectionMultiprocess:
 
 class TestMultiprocessMultithreadCrud:
     """TestMultiprocessMultithreadCrud class."""
+
     def test_concurrent_add(self, crud_collection, _mode):
         """Test concurrent add."""
         client_config, collection_name = crud_collection

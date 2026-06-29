@@ -15,6 +15,7 @@ from pyseekdb.client.client_base import BaseClient  # noqa: E402
 
 class TestNamespaceLifecycleWithoutGetLock:
     """TestNamespaceLifecycleWithoutGetLock class."""
+
     def test_has_namespace_queries_catalog_directly(self):
         """Test has namespace queries catalog directly."""
         client = MagicMock(spec=BaseClient)

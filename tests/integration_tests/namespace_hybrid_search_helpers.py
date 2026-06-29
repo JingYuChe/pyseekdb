@@ -16,32 +16,28 @@ from namespace_fts_helpers import (
     BATCH_SIZE,
     CORPUS_SIZE,
     INDEX_SETTLE_SECONDS,
+    MULTI_COLL_MULTI_NS_FTS_LOADED_QUADRANTS,
+    MULTI_COLL_MULTI_NS_QUADRANT_KEYS,
     TOKEN_ALP,
     TOKEN_ZPX,
     VECTOR_DISTANCE_METRICS,
-    VectorDistanceMetric,
     CorpusRecord,
+    VectorDistanceMetric,
     assert_hybrid_fulltext_result,
     assert_not_contains_no_token_leak,
     build_large_fts_corpus,
-    corpus_matches_fts,
     doc_matches_where_document,
     doc_matches_where_metadata,
-    get_fts_case,
-    insert_corpus_in_batches,
-    insert_corpus_into_collection,
-    insert_corpus_into_namespace,
-    run_hybrid_search_fts_case,
-    ns_schema,
     flat_hybrid_search_schema,
+    get_fts_case,
+    insert_corpus_into_collection,
+    run_hybrid_search_fts_case,
     setup_fts_namespace_with_corpus,
     setup_large_fts_collection,
     setup_multi_coll_multi_ns_fts,
     setup_multi_coll_multi_ns_fts_single_loaded,
     teardown_large_fts_collection,
     teardown_multi_coll_multi_ns_fts,
-    MULTI_COLL_MULTI_NS_FTS_LOADED_QUADRANTS,
-    MULTI_COLL_MULTI_NS_QUADRANT_KEYS,
 )
 
 # Fixed query vector for KNN tests (same dimension as corpus embeddings).
@@ -67,6 +63,7 @@ WHERE_NOT_BOTH_TOKENS_NUMERIC: dict[str, Any] = {
 @dataclass(frozen=True)
 class SearchIndexQueryCase:
     """SearchIndexQueryCase class."""
+
     name: str
     where: dict[str, Any]
     n_results: int
@@ -77,6 +74,7 @@ class SearchIndexQueryCase:
 @dataclass(frozen=True)
 class VectorKnnCase:
     """VectorKnnCase class."""
+
     name: str
     query_vector: list[float]
     n_results: int
@@ -157,7 +155,7 @@ def knn_compare_distance(
         norm_b = _vector_l2_norm(b)
         if norm_a == 0.0 or norm_b == 0.0:
             return 2.0
-        cos_sim = sum(x * y for x, y in zip(a, b)) / (norm_a * norm_b)
+        cos_sim = sum(x * y for x, y in zip(a, b, strict=False)) / (norm_a * norm_b)
         return 1.0 - cos_sim
     raise ValueError(f"unsupported vector distance metric: {metric!r}")
 
@@ -169,16 +167,10 @@ def ensure_shared_hybrid_search_collection(
     vector_distance: VectorDistanceMetric,
 ) -> dict[str, Any]:
     """Return or create a shared (db mode, distance metric) corpus + collection entry."""
-    mode = (
-        request.node.callspec.params["db_client"]
-        if request.node.callspec
-        else "default"
-    )
+    mode = request.node.callspec.params["db_client"] if request.node.callspec else "default"
     cache_key = f"{mode}:{vector_distance}"
     if cache_key not in shared_cache:
-        corpus, collection = setup_large_fts_collection(
-            db_client, distance=vector_distance
-        )
+        corpus, collection = setup_large_fts_collection(db_client, distance=vector_distance)
         shared_cache[cache_key] = {
             "db_client": db_client,
             "corpus": corpus,
@@ -203,13 +195,11 @@ def _knn_scored_rows(
         seq = rec.metadata.get("seq", 0)
         if not isinstance(seq, int):
             seq = 0
-        rows.append(
-            (
-                rec.doc_id,
-                knn_compare_distance(rec.embedding, query_vector, distance_metric),
-                seq,
-            )
-        )
+        rows.append((
+            rec.doc_id,
+            knn_compare_distance(rec.embedding, query_vector, distance_metric),
+            seq,
+        ))
     return rows
 
 
@@ -222,9 +212,7 @@ def nearest_knn_doc_ids(
     tol: float = 1e-9,
 ) -> set[str]:
     """Doc ids at minimum compare distance (ties allowed)."""
-    scored = _knn_scored_rows(
-        corpus, query_vector, where, distance_metric=distance_metric
-    )
+    scored = _knn_scored_rows(corpus, query_vector, where, distance_metric=distance_metric)
     if not scored:
         return set()
     min_d = min(d for _, d, _ in scored)
@@ -240,9 +228,7 @@ def expected_knn_ids(
     distance_metric: VectorDistanceMetric = "l2",
 ) -> list[str]:
     """Expected knn ids."""
-    scored = _knn_scored_rows(
-        corpus, query_vector, where, distance_metric=distance_metric
-    )
+    scored = _knn_scored_rows(corpus, query_vector, where, distance_metric=distance_metric)
     # Tie-break: distance, then seq (matches OB hybrid_search), then doc_id.
     scored.sort(key=lambda item: (item[1], item[2], item[0]))
     return [doc_id for doc_id, _, _ in scored[:n_results]]
@@ -259,7 +245,7 @@ def assert_hybrid_search_index_result(
 ) -> None:
     """Assert hybrid search index result."""
     assert result is not None
-    assert "ids" in result and result["ids"]
+    assert result.get("ids")
     ids = result["ids"][0]
     assert len(ids) <= n_results
     assert len(ids) >= min_hits, f"expected at least {min_hits} search-index hits"
@@ -267,9 +253,9 @@ def assert_hybrid_search_index_result(
     id_to_meta = {rec.doc_id: rec.metadata for rec in corpus}
     for doc_id in ids:
         assert doc_id in id_to_meta, f"unknown id {doc_id!r}"
-        assert corpus_matches_where(
-            next(rec for rec in corpus if rec.doc_id == doc_id), where
-        ), f"id={doc_id!r} does not satisfy where={where!r}"
+        assert corpus_matches_where(next(rec for rec in corpus if rec.doc_id == doc_id), where), (
+            f"id={doc_id!r} does not satisfy where={where!r}"
+        )
 
     total_matches = count_corpus_matches(corpus, where)
     if exact_match_count is not None:
@@ -278,9 +264,7 @@ def assert_hybrid_search_index_result(
         )
     if exact_match_count is not None and exact_match_count <= n_results:
         assert len(ids) == exact_match_count
-        expected_ids = {
-            rec.doc_id for rec in corpus if corpus_matches_where(rec, where)
-        }
+        expected_ids = {rec.doc_id for rec in corpus if corpus_matches_where(rec, where)}
         assert set(ids) == expected_ids
     elif len(ids) == n_results and total_matches > n_results:
         # No higher-priority scalar key — every returned row is valid; ensure we did not
@@ -306,7 +290,7 @@ def assert_hybrid_knn_result(
     corpus ``distance_metric`` ground truth.
     """
     assert result is not None
-    assert "ids" in result and result["ids"]
+    assert result.get("ids")
     ids = result["ids"][0]
     scores = result.get("distances", [[]])[0] if result.get("distances") else []
     assert len(ids) <= n_results
@@ -316,33 +300,23 @@ def assert_hybrid_knn_result(
     for doc_id in ids:
         rec = corpus_by_id[doc_id]
         if where is not None:
-            assert corpus_matches_where(rec, where), (
-                f"id={doc_id!r} metadata does not satisfy knn.where={where!r}"
-            )
+            assert corpus_matches_where(rec, where), f"id={doc_id!r} metadata does not satisfy knn.where={where!r}"
 
     if scores:
         assert len(scores) == len(ids)
         if check_score_order:
             for i in range(len(scores) - 1):
-                assert scores[i] >= scores[i + 1] or math.isclose(
-                    scores[i], scores[i + 1]
-                ), (
-                    f"KNN scores should be non-increasing (higher = nearer, "
-                    f"{distance_metric} index): {scores!r}"
+                assert scores[i] >= scores[i + 1] or math.isclose(scores[i], scores[i + 1]), (
+                    f"KNN scores should be non-increasing (higher = nearer, {distance_metric} index): {scores!r}"
                 )
 
-    expected = expected_knn_ids(
-        corpus, query_vector, n_results, where, distance_metric=distance_metric
-    )
+    expected = expected_knn_ids(corpus, query_vector, n_results, where, distance_metric=distance_metric)
     if len(ids) == len(expected):
         assert ids == expected, (
-            f"KNN id order mismatch ({distance_metric} ground truth): "
-            f"got {ids!r} expected {expected!r}"
+            f"KNN id order mismatch ({distance_metric} ground truth): got {ids!r} expected {expected!r}"
         )
     elif check_top1 and expected:
-        nearest = nearest_knn_doc_ids(
-            corpus, query_vector, where, distance_metric=distance_metric
-        )
+        nearest = nearest_knn_doc_ids(corpus, query_vector, where, distance_metric=distance_metric)
         assert ids[0] in nearest, (
             f"top-1 KNN must be among nearest neighbors ({distance_metric} tie set), "
             f"got {ids[0]!r} expected one of {sorted(nearest)[:8]!r}"
@@ -350,20 +324,11 @@ def assert_hybrid_knn_result(
         )
 
     if len(ids) == n_results:
-        scored = _knn_scored_rows(
-            corpus, query_vector, where, distance_metric=distance_metric
-        )
-        if scored:
-            worst_d = max(
-                d for doc_id, d, _ in scored if doc_id in ids
-            )
-        else:
-            worst_d = float("inf")
+        scored = _knn_scored_rows(corpus, query_vector, where, distance_metric=distance_metric)
+        worst_d = max(d for doc_id, d, _ in scored if doc_id in ids) if scored else float("inf")
         for doc_id, d, _ in scored:
             if doc_id not in ids and d < worst_d - 1e-9:
-                raise AssertionError(
-                    f"closer match {doc_id!r} ({distance_metric}={d}) missing from top-{n_results}"
-                )
+                raise AssertionError(f"closer match {doc_id!r} ({distance_metric}={d}) missing from top-{n_results}")
 
 
 def run_hybrid_search_index_case(
@@ -477,9 +442,7 @@ def run_hybrid_combined_case(
             check_ranking=case.check_fts_ranking,
         )
     elif case.where is not None:
-        assert_hybrid_search_index_result(
-            corpus, result, case.where, case.n_results
-        )
+        assert_hybrid_search_index_result(corpus, result, case.where, case.n_results)
     return result
 
 
@@ -739,12 +702,10 @@ def corpus_matches_triple_intersection(
     case: HybridTripleBranchCase,
 ) -> bool:
     """Corpus matches triple intersection."""
-    if case.where_document is not None:
-        if not doc_matches_where_document(record.document, case.where_document):
-            return False
-    if case.where is not None:
-        if not corpus_matches_where(record, case.where):
-            return False
+    if case.where_document is not None and not doc_matches_where_document(record.document, case.where_document):
+        return False
+    if case.where is not None and not corpus_matches_where(record, case.where):
+        return False
     if case.knn is not None:
         knn_where = case.knn.get("where")
         if knn_where is not None and not corpus_matches_where(record, knn_where):
@@ -768,11 +729,7 @@ def _slice_hybrid_result(
     """Slice hybrid result."""
     corpus_by_id = {rec.doc_id: rec for rec in corpus}
     ids = result["ids"][0]
-    indices = [
-        i
-        for i, doc_id in enumerate(ids)
-        if doc_id in corpus_by_id and predicate(corpus_by_id[doc_id])
-    ]
+    indices = [i for i, doc_id in enumerate(ids) if doc_id in corpus_by_id and predicate(corpus_by_id[doc_id])]
     sliced: dict[str, Any] = {"ids": [[ids[i] for i in indices]]}
     for key in ("distances", "documents", "metadatas"):
         rows = result.get(key)
@@ -790,12 +747,10 @@ def assert_hybrid_triple_branch_result(
 ) -> None:
     """Assert hybrid triple branch result."""
     assert result is not None
-    assert "ids" in result and result["ids"]
+    assert result.get("ids")
     ids = result["ids"][0]
     assert len(ids) <= case.n_results
-    assert len(ids) >= case.min_hits, (
-        f"case {case.name!r}: expected at least {case.min_hits} hits, got {len(ids)}"
-    )
+    assert len(ids) >= case.min_hits, f"case {case.name!r}: expected at least {case.min_hits} hits, got {len(ids)}"
 
     corpus_by_id = {rec.doc_id: rec for rec in corpus}
     for doc_id in ids:
@@ -806,9 +761,9 @@ def assert_hybrid_triple_branch_result(
         assert_not_contains_no_token_leak(corpus, result, TOKEN_ZPX)
         if case.where is not None:
             for doc_id in ids:
-                assert doc_matches_where_metadata(
-                    corpus_by_id[doc_id].metadata, case.where
-                ), f"id={doc_id!r} violates query.where={case.where!r}"
+                assert doc_matches_where_metadata(corpus_by_id[doc_id].metadata, case.where), (
+                    f"id={doc_id!r} violates query.where={case.where!r}"
+                )
         if case.knn and case.knn.get("where"):
             for doc_id in ids:
                 assert corpus_matches_where(corpus_by_id[doc_id], case.knn["where"]), (
@@ -823,15 +778,11 @@ def assert_hybrid_triple_branch_result(
             """Fts row."""
             if not doc_matches_where_document(rec.document, case.where_document):
                 return False
-            if case.where is not None and not doc_matches_where_metadata(rec.metadata, case.where):
-                return False
-            return True
+            return not (case.where is not None and not doc_matches_where_metadata(rec.metadata, case.where))
 
         fts_result = _slice_hybrid_result(result, corpus, _fts_row)
         fts_ids = fts_result["ids"][0]
-        assert len(fts_ids) >= 1, (
-            f"case {case.name!r}: expected at least one FTS-matching row in hybrid result"
-        )
+        assert len(fts_ids) >= 1, f"case {case.name!r}: expected at least one FTS-matching row in hybrid result"
         assert_hybrid_fulltext_result(
             corpus,
             fts_result,
@@ -854,17 +805,13 @@ def assert_hybrid_triple_branch_result(
             """Si row."""
             if not corpus_matches_where(rec, case.where):
                 return False
-            if case.where_document is not None and not doc_matches_where_document(
-                rec.document, case.where_document
-            ):
-                return False
-            return True
+            return not (
+                case.where_document is not None and not doc_matches_where_document(rec.document, case.where_document)
+            )
 
         si_result = _slice_hybrid_result(result, corpus, _si_row)
         si_ids = si_result["ids"][0]
-        assert len(si_ids) >= case.min_hits, (
-            f"case {case.name!r}: expected at least {case.min_hits} search-index rows"
-        )
+        assert len(si_ids) >= case.min_hits, f"case {case.name!r}: expected at least {case.min_hits} search-index rows"
         assert_hybrid_search_index_result(
             corpus,
             si_result,
@@ -890,17 +837,13 @@ def assert_hybrid_triple_branch_result(
                 return False
             if case.where is not None and not doc_matches_where_metadata(rec.metadata, case.where):
                 return False
-            if case.where_document is not None and not doc_matches_where_document(
-                rec.document, case.where_document
-            ):
-                return False
-            return True
+            return not (
+                case.where_document is not None and not doc_matches_where_document(rec.document, case.where_document)
+            )
 
         knn_result = _slice_hybrid_result(result, corpus, _knn_row)
         knn_ids = knn_result["ids"][0]
-        assert len(knn_ids) >= 1, (
-            f"case {case.name!r}: expected at least one KNN-eligible row in hybrid result"
-        )
+        assert len(knn_ids) >= 1, f"case {case.name!r}: expected at least one KNN-eligible row in hybrid result"
         assert_hybrid_knn_result(
             corpus,
             knn_result,
@@ -917,55 +860,37 @@ def assert_hybrid_triple_branch_result(
         total = count_triple_intersection_matches(corpus, case)
         if case.exact_match_count is not None:
             assert total == case.exact_match_count, (
-                f"case {case.name!r}: expected {case.exact_match_count} intersection "
-                f"matches, corpus has {total}"
+                f"case {case.name!r}: expected {case.exact_match_count} intersection matches, corpus has {total}"
             )
         for doc_id in ids:
             assert corpus_matches_triple_intersection(corpus_by_id[doc_id], case), (
                 f"id={doc_id!r} outside triple-branch intersection for case {case.name!r}"
             )
         if case.exact_match_count is not None and case.exact_match_count <= case.n_results:
-            expected_ids = {
-                rec.doc_id
-                for rec in corpus
-                if corpus_matches_triple_intersection(rec, case)
-            }
+            expected_ids = {rec.doc_id for rec in corpus if corpus_matches_triple_intersection(rec, case)}
             assert set(ids) == expected_ids
         return
 
     if case.verify == "rrf_fusion":
         if case.where is not None:
             for doc_id in ids:
-                assert doc_matches_where_metadata(
-                    corpus_by_id[doc_id].metadata, case.where
-                ), f"id={doc_id!r} violates query.where={case.where!r}"
+                assert doc_matches_where_metadata(corpus_by_id[doc_id].metadata, case.where), (
+                    f"id={doc_id!r} violates query.where={case.where!r}"
+                )
         if case.knn and case.knn.get("where"):
             for doc_id in ids:
                 assert corpus_matches_where(corpus_by_id[doc_id], case.knn["where"]), (
                     f"id={doc_id!r} violates knn.where={case.knn['where']!r}"
                 )
-        intersection_ids = {
-            rec.doc_id
-            for rec in corpus
-            if corpus_matches_triple_intersection(rec, case)
-        }
-        assert intersection_ids, (
-            f"case {case.name!r}: intersection must be non-empty for RRF fusion checks"
-        )
+        intersection_ids = {rec.doc_id for rec in corpus if corpus_matches_triple_intersection(rec, case)}
+        assert intersection_ids, f"case {case.name!r}: intersection must be non-empty for RRF fusion checks"
         returned = set(ids)
         assert returned & intersection_ids, (
-            f"case {case.name!r}: RRF result must include at least one intersection hit, "
-            f"got {ids[:5]!r}"
+            f"case {case.name!r}: RRF result must include at least one intersection hit, got {ids[:5]!r}"
         )
         if case.where_document is not None:
-            fts_hits = {
-                rec.doc_id
-                for rec in corpus
-                if doc_matches_where_document(rec.document, case.where_document)
-            }
-            assert returned & fts_hits, (
-                f"case {case.name!r}: RRF result must include at least one FTS hit"
-            )
+            fts_hits = {rec.doc_id for rec in corpus if doc_matches_where_document(rec.document, case.where_document)}
+            assert returned & fts_hits, f"case {case.name!r}: RRF result must include at least one FTS hit"
         return
 
     raise ValueError(f"unsupported verify mode: {case.verify!r}")
@@ -1043,8 +968,7 @@ def execute_hybrid_triple_branch_search(
     if hasattr(target, "namespace_id"):
         return execute_hybrid_triple_branch_on_namespace(target, case)
     raise TypeError(
-        f"unsupported hybrid_search target {target!r}: expected flat Collection "
-        f"(use_namespace=False) or Namespace"
+        f"unsupported hybrid_search target {target!r}: expected flat Collection (use_namespace=False) or Namespace"
     )
 
 
@@ -1059,16 +983,12 @@ def setup_large_fts_flat_collection(
         raise ValueError(f"corpus must exceed 1000 rows, got {len(corpus)}")
 
     name = f"test_hs_tb_baseline_{distance}_{int(time.time() * 1000)}"
-    collection = db_client.create_collection(
-        name=name, schema=flat_hybrid_search_schema(distance), use_namespace=False
-    )
+    collection = db_client.create_collection(name=name, schema=flat_hybrid_search_schema(distance), use_namespace=False)
     assert collection.use_namespace is False
     insert_corpus_into_collection(collection, corpus)
     expected = len(corpus)
     actual = collection.count()
-    assert actual == expected, (
-        f"baseline collection {collection.name!r} expected {expected} rows, got {actual}"
-    )
+    assert actual == expected, f"baseline collection {collection.name!r} expected {expected} rows, got {actual}"
     time.sleep(INDEX_SETTLE_SECONDS)
     return corpus, collection
 
@@ -1082,9 +1002,7 @@ def _try_assert_hybrid_triple_branch_result(
 ) -> BaseException | None:
     """Try assert hybrid triple branch result."""
     try:
-        assert_hybrid_triple_branch_result(
-            corpus, result, case, distance_metric=distance_metric
-        )
+        assert_hybrid_triple_branch_result(corpus, result, case, distance_metric=distance_metric)
         return None
     except BaseException as exc:
         return exc
@@ -1112,12 +1030,8 @@ def assert_hybrid_triple_branch_vs_collection_baseline(
       - ``[observer/namespace]`` — collection passes ground truth but namespace fails
       - ``[test-case/baseline]`` — namespace passes but collection baseline fails
     """
-    coll_err = _try_assert_hybrid_triple_branch_result(
-        corpus, collection_result, case, distance_metric=distance_metric
-    )
-    ns_err = _try_assert_hybrid_triple_branch_result(
-        corpus, namespace_result, case, distance_metric=distance_metric
-    )
+    coll_err = _try_assert_hybrid_triple_branch_result(corpus, collection_result, case, distance_metric=distance_metric)
+    ns_err = _try_assert_hybrid_triple_branch_result(corpus, namespace_result, case, distance_metric=distance_metric)
     coll_ids = collection_result["ids"][0]
     ns_ids = namespace_result["ids"][0]
 
@@ -1173,9 +1087,7 @@ def run_hybrid_triple_branch_case(
     if collection_baseline is not None:
         assert_flat_collection_baseline(collection_baseline)
         try:
-            collection_result = execute_hybrid_triple_branch_on_collection(
-                collection_baseline, case
-            )
+            collection_result = execute_hybrid_triple_branch_on_collection(collection_baseline, case)
         except BaseException as coll_exec_err:
             raise AssertionError(
                 f"[test-case/baseline] case {case.name!r}: collection.hybrid_search "
@@ -1190,15 +1102,16 @@ def run_hybrid_triple_branch_case(
                 f"{ns_exec_err!r}"
             ) from ns_exec_err
         assert_hybrid_triple_branch_vs_collection_baseline(
-            corpus, case, namespace_result, collection_result,
+            corpus,
+            case,
+            namespace_result,
+            collection_result,
             distance_metric=distance_metric,
         )
         return namespace_result
 
     result = execute_hybrid_triple_branch_on_namespace(namespace, case)
-    assert_hybrid_triple_branch_result(
-        corpus, result, case, distance_metric=distance_metric
-    )
+    assert_hybrid_triple_branch_result(corpus, result, case, distance_metric=distance_metric)
     return result
 
 
@@ -1628,9 +1541,7 @@ def run_knn_case_on_quadrants(
     knn_case = case if isinstance(case, VectorKnnCase) else get_vector_knn_case(case)
     for key in quadrant_keys:
         corpus, namespace = ctx[key]
-        run_hybrid_knn_case(
-            namespace, corpus, knn_case, distance_metric=distance_metric
-        )
+        run_hybrid_knn_case(namespace, corpus, knn_case, distance_metric=distance_metric)
 
 
 def assert_hybrid_search_index_no_hits(
@@ -1646,9 +1557,7 @@ def assert_hybrid_search_index_no_hits(
         include=["metadatas"],
     )
     ids = result.get("ids", [[]])[0] if result.get("ids") else []
-    assert len(ids) == 0, (
-        f"expected no search-index hits in namespace {namespace.name!r}, got {ids[:5]!r}"
-    )
+    assert len(ids) == 0, f"expected no search-index hits in namespace {namespace.name!r}, got {ids[:5]!r}"
 
 
 def assert_hybrid_triple_branch_no_hits(
@@ -1671,9 +1580,7 @@ def assert_hybrid_triple_branch_no_hits(
         include=["documents"],
     )
     ids = result.get("ids", [[]])[0] if result.get("ids") else []
-    assert len(ids) == 0, (
-        f"expected no triple-branch hits in namespace {namespace.name!r}, got {ids[:5]!r}"
-    )
+    assert len(ids) == 0, f"expected no triple-branch hits in namespace {namespace.name!r}, got {ids[:5]!r}"
 
 
 __all__ = [
@@ -1691,15 +1598,13 @@ __all__ = [
     "TRIPLE_BRANCH_CASES",
     "VECTOR_DISTANCE_METRICS",
     "VECTOR_KNN_CASES",
-    "VectorDistanceMetric",
-    "ensure_shared_hybrid_search_collection",
-    "knn_compare_distance",
     "WHERE_BROAD_METADATA",
     "WHERE_DOCUMENT_UNIVERSAL",
     "WHERE_FILLER_SEQ",
     "HybridCombinedCase",
     "HybridTripleBranchCase",
     "SearchIndexQueryCase",
+    "VectorDistanceMetric",
     "VectorKnnCase",
     "assert_flat_collection_baseline",
     "assert_hybrid_search_index_no_hits",
@@ -1708,6 +1613,7 @@ __all__ = [
     "assert_hybrid_triple_branch_vs_collection_baseline",
     "assert_not_contains_no_token_leak",
     "build_large_fts_corpus",
+    "ensure_shared_hybrid_search_collection",
     "execute_hybrid_triple_branch_on_collection",
     "execute_hybrid_triple_branch_on_namespace",
     "execute_hybrid_triple_branch_search",
@@ -1716,10 +1622,11 @@ __all__ = [
     "get_search_index_case",
     "get_triple_branch_case",
     "get_vector_knn_case",
+    "knn_compare_distance",
     "run_hybrid_combined_case",
     "run_hybrid_knn_case",
-    "run_hybrid_search_index_case",
     "run_hybrid_search_fts_case",
+    "run_hybrid_search_index_case",
     "run_hybrid_triple_branch_case",
     "run_knn_case_on_quadrants",
     "run_search_index_case_on_quadrants",

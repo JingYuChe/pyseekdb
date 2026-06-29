@@ -14,9 +14,9 @@ import os
 import time
 from typing import Any
 
-import pyseekdb
-
 from namespace_dml_helpers import cleanup, create_ns_collection
+
+import pyseekdb
 
 
 def _new_oceanbase_client() -> Any:
@@ -35,8 +35,8 @@ def _new_oceanbase_client() -> Any:
 
 
 class TestNamespaceReconnectAndMultiClient:
-
     """TestNamespaceReconnectAndMultiClient class."""
+
     def test_same_client_reconnect_reads_namespace_data(self, oceanbase_client):
         """After _cleanup(), the next SDK call should reconnect and read prior rows."""
         client = oceanbase_client

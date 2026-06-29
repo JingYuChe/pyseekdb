@@ -4,7 +4,6 @@ Verifies cross-quadrant isolation via get.
 """
 
 import pytest
-
 from namespace_dml_helpers import (
     assert_get_absent,
     assert_get_present,
@@ -14,8 +13,8 @@ from namespace_dml_helpers import (
 
 
 class TestNamespaceDMLMultiCollMultiNs:
-
     """TestNamespaceDMLMultiCollMultiNs class."""
+
     def _setup_quadrants(self, db_client):
         """Setup quadrants."""
         coll_1 = create_ns_collection(db_client, suffix="_mcmn_c1")
