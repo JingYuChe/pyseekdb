@@ -16,9 +16,11 @@ DEFAULT_VECTOR_DIMENSION = 384  # Matches DefaultEmbeddingFunction dimension
 DEFAULT_DISTANCE_METRIC = "cosine"
 MAX_HNSW_VECTOR_DIMENSION = 4096
 # Namespace IVF uses logic_data_table with LOB_INROW_THRESHOLD sized for float32 vectors
-# (dimension * 4 bytes). Below the default ~8KB threshold, IVF indexing rejects out-row LOB.
+# plus ObLobCommon header (see OB ob_vector_index_util.cpp IVF in-row check).
 MAX_IVF_VECTOR_DIMENSION = MAX_HNSW_VECTOR_DIMENSION
-LOGIC_DATA_TABLE_LOB_INROW_THRESHOLD = MAX_IVF_VECTOR_DIMENSION * 4
+# Align with OB IVF in-row validation: dim * sizeof(float) + sizeof(ObLobCommon).
+_OB_LOB_COMMON_HEADER_BYTES = 4
+LOGIC_DATA_TABLE_LOB_INROW_THRESHOLD = MAX_IVF_VECTOR_DIMENSION * 4 + _OB_LOB_COMMON_HEADER_BYTES
 PrimitiveValue = str | int | float | bool
 
 
