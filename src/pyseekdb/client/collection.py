@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from .validators import (
     _MAX_N_RESULTS,
-    _validate_include,
     _validate_namespace_name,
     _validate_n_results,
 )
@@ -508,7 +507,6 @@ class Collection:
         """
         self._guard_collection_data_api()
         _validate_n_results(n_results)
-        _validate_include(include)
         return self._client._collection_query(
             collection_id=self._id,
             collection_name=self._name,
@@ -591,7 +589,6 @@ class Collection:
             )
         """
         self._guard_collection_data_api()
-        _validate_include(include)
         return self._client._collection_get(
             collection_id=self._id,
             collection_name=self._name,
@@ -681,7 +678,6 @@ class Collection:
         """
         self._guard_collection_data_api()
         _validate_n_results(n_results)
-        _validate_include(include)
         # When no query/knn provided, return only ids/distances by default
         if include is None and not query and not knn:
             include = []
