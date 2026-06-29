@@ -565,13 +565,21 @@ class TestNamespaceSQLGeneration:
             namespace_name="test_ns",
         )
 
+    def _ivf_kwargs(self):
+        """Common kwargs for 3-dim IVF namespace SQL generation tests."""
+        return {
+            **self._common_kwargs(),
+            "has_vector_index": True,
+            "collection_dimension": 3,
+        }
+
     # ---- ADD ----
 
     def test_add_single_sql(self):
         """Test add single sql."""
         c = self._client()
         c._namespace_add(
-            **self._common_kwargs(),
+            **self._ivf_kwargs(),
             ids="d1",
             embeddings=[1.0, 2.0, 3.0],
             documents="hello",
@@ -593,13 +601,11 @@ class TestNamespaceSQLGeneration:
         caplog.set_level(logging.WARNING)
         c = self._client()
         c._namespace_add(
-            **self._common_kwargs(),
+            **self._ivf_kwargs(),
             ids="d1",
             embeddings=[1.0, 2.0, 3.0],
             documents="hello",
             embedding_function=MagicMock(),
-            has_vector_index=True,
-            collection_dimension=3,
         )
         assert any(
             "explicit embeddings" in r.message and "embedding_function" in r.message
@@ -648,7 +654,7 @@ class TestNamespaceSQLGeneration:
         """Test add batch sql."""
         c = self._client()
         c._namespace_add(
-            **self._common_kwargs(),
+            **self._ivf_kwargs(),
             ids=["d1", "d2", "d3"],
             embeddings=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             documents=["A", "B", "C"],
@@ -664,7 +670,7 @@ class TestNamespaceSQLGeneration:
         """Test add without metadata sql."""
         c = self._client()
         c._namespace_add(
-            **self._common_kwargs(),
+            **self._ivf_kwargs(),
             ids="d1",
             embeddings=[1.0, 2.0, 3.0],
         )
@@ -696,7 +702,7 @@ class TestNamespaceSQLGeneration:
         """Test update embedding and document sql."""
         c = self._client()
         c._namespace_update(
-            **self._common_kwargs(),
+            **self._ivf_kwargs(),
             ids="d1",
             embeddings=[9.0, 8.0, 7.0],
             documents="Updated",
@@ -758,7 +764,7 @@ class TestNamespaceSQLGeneration:
         c = self._client()
         c.query_return_value = []
         c._namespace_query(
-            **self._common_kwargs(),
+            **self._ivf_kwargs(),
             query_embeddings=[1.0, 0.0, 0.0],
             n_results=3,
             distance="l2",
@@ -776,7 +782,7 @@ class TestNamespaceSQLGeneration:
         c = self._client()
         c.query_return_value = []
         c._namespace_query(
-            **self._common_kwargs(),
+            **self._ivf_kwargs(),
             query_embeddings=[1.0, 0.0, 0.0],
             n_results=5,
             where={"category": "AI"},
@@ -1135,6 +1141,8 @@ class TestNamespaceBatchLimit:
             collection_name="test_coll",
             namespace_id="7",
             namespace_name="test_ns",
+            has_vector_index=True,
+            collection_dimension=3,
         )
 
     def test_add_single_record_ok(self):
