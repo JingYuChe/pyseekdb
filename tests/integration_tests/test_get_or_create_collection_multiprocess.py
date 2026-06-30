@@ -40,6 +40,8 @@ NUM_PROCESSES = 2
 THREADS_PER_PROCESS = 3
 ITEMS_PER_THREAD = 5
 WORKER_TIMEOUT_SECONDS = 60
+# OB CE mini in CI defaults to 10s; bulk HNSW insert/refresh can exceed that under load.
+OB_QUERY_TIMEOUT_MICROSECONDS = 60_000_000
 MIN_PYLIBSEEKDB_VERSION = Version("1.3.0.post1")
 _MP_CONTEXT = mp.get_context("spawn")
 
@@ -82,6 +84,11 @@ def _import_pyseekdb():
     return importlib.import_module("pyseekdb")
 
 
+def _relax_oceanbase_query_timeout(client) -> None:
+    """Raise OB session query timeout for slow CI mini clusters."""
+    client._server._execute(f"SET ob_query_timeout = {OB_QUERY_TIMEOUT_MICROSECONDS}")
+
+
 def _make_client(client_config: dict[str, Any]):
     """Make client."""
     pyseekdb = _import_pyseekdb()
@@ -89,7 +96,7 @@ def _make_client(client_config: dict[str, Any]):
     if mode == "embedded":
         return pyseekdb.Client(path=client_config["path"], database=client_config["database"])
     if mode in ("server", "oceanbase"):
-        return pyseekdb.Client(
+        client = pyseekdb.Client(
             host=client_config["host"],
             port=client_config["port"],
             tenant=client_config["tenant"],
@@ -97,6 +104,9 @@ def _make_client(client_config: dict[str, Any]):
             user=client_config["user"],
             password=client_config["password"],
         )
+        if mode == "oceanbase":
+            _relax_oceanbase_query_timeout(client)
+        return client
     raise ValueError(f"unsupported client mode: {mode}")
 
 
@@ -107,13 +117,16 @@ def _make_admin_client(client_config: dict[str, Any]):
     if mode == "embedded":
         return pyseekdb.AdminClient(path=client_config["path"])
     if mode in ("server", "oceanbase"):
-        return pyseekdb.AdminClient(
+        admin = pyseekdb.AdminClient(
             host=client_config["host"],
             port=client_config["port"],
             tenant=client_config["tenant"],
             user=client_config["user"],
             password=client_config["password"],
         )
+        if mode == "oceanbase":
+            _relax_oceanbase_query_timeout(admin)
+        return admin
     raise ValueError(f"unsupported client mode: {mode}")
 
 
