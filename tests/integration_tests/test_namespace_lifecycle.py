@@ -307,7 +307,7 @@ class TestNamespaceLifecycle:
                 embedding_function=None,
             ),
         )
-        with pytest.raises(ValueError, match="HNSW is not allowed"):
+        with pytest.raises(ValueError, match="does not support HNSW"):
             db_client.create_collection(name=name, schema=schema, use_namespace=True)
 
     def test_ss_mode_creates_hot_table(self, oceanbase_client):

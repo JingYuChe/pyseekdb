@@ -1396,7 +1396,23 @@ class TestUseNamespaceValidation:
 
         hnsw = HNSWConfiguration(dimension=128)
         schema = Schema(vector_index=VectorIndexConfig(hnsw=hnsw, embedding_function=None))
-        with pytest.raises(ValueError, match="HNSW is not allowed"):
+        with pytest.raises(ValueError, match="does not support HNSW"):
+            c._create_namespace_collection("test", schema)
+
+    def test_sparse_vector_raises(self):
+        """Test sparse vector index raises."""
+        c = FakeClient()
+        from pyseekdb.client.configuration import SparseVectorIndexConfig, VectorIndexConfig
+        from pyseekdb.client.schema import Schema
+
+        schema = Schema(
+            vector_index=VectorIndexConfig(
+                ivf=IVFConfiguration(dimension=3, centroids_fresh_mode="spfresh"),
+                embedding_function=None,
+            ),
+            sparse_vector_index=SparseVectorIndexConfig(embedding_function=MagicMock()),
+        )
+        with pytest.raises(ValueError, match="does not support SparseVectorIndexConfig"):
             c._create_namespace_collection("test", schema)
 
     def test_ob_type_validation(self):

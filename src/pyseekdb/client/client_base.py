@@ -1014,6 +1014,15 @@ class BaseClient(BaseConnection, AdminAPI):
                     "schema and configuration/embedding_function are both provided, schema will be used",
                     stacklevel=2,
                 )
+        elif use_namespace:
+            raise ValueError(
+                "use_namespace=True requires an explicit Schema with an IVF vector index. "
+                "When schema is omitted, create_collection builds the default non-namespace "
+                "schema (HNSW), which namespace collections do not support. "
+                "Pass schema=Schema(vector_index=VectorIndexConfig("
+                "ivf=IVFConfiguration(dimension=..., distance=...)), ...). "
+                "Or set use_namespace=False for a standard HNSW collection."
+            )
         else:
             # Legacy path: convert configuration + embedding_function into a Schema
             schema = self._prepare_schema_parameters(configuration, embedding_function)
@@ -1104,8 +1113,17 @@ class BaseClient(BaseConnection, AdminAPI):
         ivf_config = schema.vector_index.ivf
         hnsw_config = schema.vector_index.hnsw
 
+        if schema.sparse_vector_index is not None:
+            raise ValueError(
+                "use_namespace=True does not support SparseVectorIndexConfig yet. "
+                "Remove sparse_vector_index from the schema or set use_namespace=False."
+            )
         if hnsw_config is not None:
-            raise ValueError("use_namespace=True only supports IVF index type, HNSW is not allowed")
+            raise ValueError(
+                "use_namespace=True does not support HNSW. Namespace collections require an IVF "
+                "schema: Schema(vector_index=VectorIndexConfig(ivf=IVFConfiguration(dimension=..., "
+                "distance=...)), ...)."
+            )
         if ivf_config is not None and ivf_config.type != IVFIndexType.IVF_FLAT.value:
             raise ValueError(
                 f"use_namespace=True currently only supports IVF index type '{IVFIndexType.IVF_FLAT.value}', "
@@ -2625,6 +2643,7 @@ class BaseClient(BaseConnection, AdminAPI):
                     use_namespace=use_namespace,
                     **kwargs,
                 )
+            self._assert_get_or_create_namespace_mode_matches(name, use_namespace)
             return self.get_collection(name, embedding_function=embedding_function)
 
         try:
@@ -2671,7 +2690,20 @@ class BaseClient(BaseConnection, AdminAPI):
                     use_namespace=use_namespace,
                     **kwargs,
                 )
+        self._assert_get_or_create_namespace_mode_matches(name, use_namespace)
         return self.get_collection(name, embedding_function=embedding_function)
+
+    def _assert_get_or_create_namespace_mode_matches(self, name: str, use_namespace: bool) -> None:
+        """Reject get_or_create when an existing collection's namespace mode differs."""
+        existing_use_namespace = self._get_ns_collection_meta(name) is not None
+        if existing_use_namespace == use_namespace:
+            return
+        kind = "namespace-enabled" if existing_use_namespace else "standard"
+        raise ValueError(
+            f"Collection '{name}' already exists as a {kind} collection "
+            f"(use_namespace={existing_use_namespace}), but get_or_create_collection was called with "
+            f"use_namespace={use_namespace}. Delete the collection or use a different name."
+        )
 
     def _get_collection_table_name(self, collection_id: str | None, collection_name: str) -> str:
         """
