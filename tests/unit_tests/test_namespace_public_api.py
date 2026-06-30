@@ -14,6 +14,7 @@ project_root = Path(__file__).parent.parent.parent
 src_root = project_root / "src"
 sys.path.insert(0, str(src_root))
 
+from pyseekdb import IVFConfiguration  # noqa: E402
 from pyseekdb.client.client_base import BaseClient  # noqa: E402
 from pyseekdb.client.configuration import (  # noqa: E402
     HNSWConfiguration,
@@ -22,7 +23,6 @@ from pyseekdb.client.configuration import (  # noqa: E402
 )
 from pyseekdb.client.schema import Schema  # noqa: E402
 from pyseekdb.client.types import _NOT_PROVIDED  # noqa: E402
-from pyseekdb import IVFConfiguration  # noqa: E402
 from tests.unit_tests.test_namespace import FakeClient  # noqa: E402
 
 

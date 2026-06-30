@@ -5,13 +5,13 @@ Integration tests for namespace public API compatibility (create / get_or_create
 from __future__ import annotations
 
 import time
-
-import pyseekdb
-import pytest
-from pyseekdb.client.configuration import HNSWConfiguration, SparseVectorIndexConfig, VectorIndexConfig
-from pyseekdb.client.schema import Schema
 from unittest.mock import MagicMock
 
+import pytest
+
+import pyseekdb
+from pyseekdb.client.configuration import HNSWConfiguration, SparseVectorIndexConfig, VectorIndexConfig
+from pyseekdb.client.schema import Schema
 from tests.integration_tests.namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT, ns_schema
 
 

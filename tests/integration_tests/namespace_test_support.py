@@ -66,9 +66,13 @@ def probe_oceanbase_connection() -> tuple[bool, str]:
             password=env["password"],
         )
         rows = client._server._execute("SELECT 1 AS ok")
-        if not rows:
-            raise RuntimeError("empty result from SELECT 1")
-        _OB_CONNECTION_AVAILABLE = (True, "")
+        if rows:
+            _OB_CONNECTION_AVAILABLE = (True, "")
+        else:
+            _OB_CONNECTION_AVAILABLE = (
+                False,
+                f"OceanBase unavailable for namespace validation tests ({env['host']}:{env['port']}): empty result from SELECT 1",
+            )
     except Exception as exc:
         _OB_CONNECTION_AVAILABLE = (
             False,
