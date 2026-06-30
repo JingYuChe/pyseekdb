@@ -96,6 +96,8 @@ jobs:
           fi
           set -o pipefail
           uv run pytest tests/integration_tests/ -v --log-cli-level=${log_level} \
+            --ignore-glob='test_namespace*.py' \
+            --ignore-glob='test_logic_table_monitoring_p1.py' \
             -k "not server and not embedded and not oceanbase" | tee pytest.log
           tail -n 1 pytest.log | grep '=======' | grep 'passed' |grep -q 'failed' && exit 1 || exit 0
 

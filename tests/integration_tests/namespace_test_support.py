@@ -11,12 +11,15 @@ import pytest
 from pyseekdb.client.client_base import NAMESPACE_MIN_LAKEBASE_VERSION
 
 _OB_NAMESPACE_SUPPORT: tuple[bool, str] | None = None
+_OB_CONNECTION_AVAILABLE: tuple[bool, str] | None = None
 
-# Tests that must not be short-circuited by the OB version gate.
-_VERSION_SKIP_EXEMPT_TEST_NAMES = frozenset({
+# Pure SDK checks; no database connection required.
+_VERSION_CONSTANT_ONLY_TESTS = frozenset({"test_min_version_constant"})
+
+# Version/LakeBase validation tests that mock kernel behavior but still need a live OB connection.
+_OB_CONNECTION_EXEMPT_TESTS = frozenset({
     "test_old_lakebase_version_rejected",
     "test_standard_oceanbase_rejected",
-    "test_min_version_constant",
 })
 
 
@@ -28,7 +31,54 @@ def is_namespace_integration_test(nodeid: str, fspath: str | Path) -> bool:
 
 def should_exempt_from_namespace_version_skip(item) -> bool:
     """Return whether the test validates version handling itself."""
-    return item.name in _VERSION_SKIP_EXEMPT_TEST_NAMES
+    return item.name in _VERSION_CONSTANT_ONLY_TESTS or item.name in _OB_CONNECTION_EXEMPT_TESTS
+
+
+def _ob_connection_env() -> dict[str, str | int]:
+    """Read OceanBase connection settings from the environment."""
+    return {
+        "host": os.environ.get("OB_HOST", "localhost"),
+        "port": int(os.environ.get("OB_PORT", "11202")),
+        "tenant": os.environ.get("OB_TENANT", "mysql"),
+        "database": os.environ.get("OB_DATABASE", "test"),
+        "user": os.environ.get("OB_USER", "root"),
+        "password": os.environ.get("OB_PASSWORD", ""),
+    }
+
+
+def probe_oceanbase_connection() -> tuple[bool, str]:
+    """Return whether an OceanBase instance is reachable (regardless of LakeBase/version)."""
+    global _OB_CONNECTION_AVAILABLE
+    if _OB_CONNECTION_AVAILABLE is not None:
+        return _OB_CONNECTION_AVAILABLE
+
+    import pyseekdb
+
+    env = _ob_connection_env()
+    client = None
+    try:
+        client = pyseekdb.Client(
+            host=env["host"],
+            port=env["port"],
+            tenant=env["tenant"],
+            database=env["database"],
+            user=env["user"],
+            password=env["password"],
+        )
+        rows = client._server._execute("SELECT 1 AS ok")
+        if not rows:
+            raise RuntimeError("empty result from SELECT 1")
+        _OB_CONNECTION_AVAILABLE = (True, "")
+    except Exception as exc:
+        _OB_CONNECTION_AVAILABLE = (
+            False,
+            f"OceanBase unavailable for namespace validation tests ({env['host']}:{env['port']}): {exc}",
+        )
+    finally:
+        if client is not None:
+            with contextlib.suppress(Exception):
+                client.close()
+    return _OB_CONNECTION_AVAILABLE
 
 
 def infer_integration_test_mode(item) -> str | None:
@@ -61,27 +111,24 @@ def probe_oceanbase_namespace_support() -> tuple[bool, str]:
 
     import pyseekdb
 
-    host = os.environ.get("OB_HOST", "localhost")
-    port = int(os.environ.get("OB_PORT", "11202"))
-    tenant = os.environ.get("OB_TENANT", "mysql")
-    database = os.environ.get("OB_DATABASE", "test")
-    user = os.environ.get("OB_USER", "root")
-    password = os.environ.get("OB_PASSWORD", "")
-
+    env = _ob_connection_env()
     client = None
     try:
         client = pyseekdb.Client(
-            host=host,
-            port=port,
-            tenant=tenant,
-            database=database,
-            user=user,
-            password=password,
+            host=env["host"],
+            port=env["port"],
+            tenant=env["tenant"],
+            database=env["database"],
+            user=env["user"],
+            password=env["password"],
         )
         db_type, version = client._server.detect_db_type_and_version()
         is_lakebase = client._server._is_lakebase_cluster()
     except Exception as exc:
-        _OB_NAMESPACE_SUPPORT = (False, f"OceanBase unavailable for namespace tests ({host}:{port}): {exc}")
+        _OB_NAMESPACE_SUPPORT = (
+            False,
+            f"OceanBase unavailable for namespace tests ({env['host']}:{env['port']}): {exc}",
+        )
         return _OB_NAMESPACE_SUPPORT
     finally:
         if client is not None:
@@ -117,7 +164,13 @@ def maybe_skip_namespace_integration_test(item) -> None:
     if mode in ("embedded", "server"):
         pytest.skip("namespace collections require OceanBase (skip embedded/server integration modes)")
 
-    if should_exempt_from_namespace_version_skip(item):
+    if item.name in _VERSION_CONSTANT_ONLY_TESTS:
+        return
+
+    if item.name in _OB_CONNECTION_EXEMPT_TESTS:
+        available, reason = probe_oceanbase_connection()
+        if not available:
+            pytest.skip(reason)
         return
 
     supported, reason = probe_oceanbase_namespace_support()
