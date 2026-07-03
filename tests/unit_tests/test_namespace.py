@@ -1248,6 +1248,8 @@ class TestNamespaceCatalogs:
 
     def test_ensure_namespace_catalogs_creates_all_catalog_tables(self):
         """Test ensure namespace catalogs creates all catalog tables."""
+        from pyseekdb.client.meta_info import NamespaceStatsDefaults
+
         c = FakeClient()
         c._ensure_namespace_catalogs()
 
@@ -1266,6 +1268,8 @@ class TestNamespaceCatalogs:
         assert "ltable_id BIGINT UNSIGNED NOT NULL" in sql
         assert "included_index BOOL" in sql
         assert "PRIMARY KEY (namespace_id, ltable_id, included_index)" in sql
+        assert f"DEFAULT {NamespaceStatsDefaults.ROW_LIMIT}" in sql
+        assert f"DEFAULT {NamespaceStatsDefaults.SIZE_LIMIT}" in sql
         assert "PARTITION BY KEY(namespace_id) PARTITIONS 8" in sql
 
     def test_ensure_namespace_catalogs_creates_catalog_tables_in_order(self):

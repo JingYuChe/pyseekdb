@@ -117,6 +117,13 @@ class NamespaceCollectionNames:
         return table_name.endswith(NamespaceCollectionNames._LOGIC_DATA_SUFFIX)
 
 
+class NamespaceStatsDefaults:
+    """Default row/size limits for sdk_namespaces_stats (kernel LOGICAL_TABLE_* parity)."""
+
+    ROW_LIMIT = 1_000_000
+    SIZE_LIMIT = 20 * 1024 * 1024 * 1024  # 20GB
+
+
 class NamespaceFieldNames:
     """Standard field names used in namespace record payloads."""
 

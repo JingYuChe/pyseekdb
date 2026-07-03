@@ -51,7 +51,13 @@ from .embedding_function import (
 )
 from .filters import FilterBuilder
 from .kernel_errors import maybe_reraise_friendly_kernel_error, namespace_kernel_error_guard
-from .meta_info import CollectionFieldNames, CollectionNames, NamespaceCollectionNames, NamespaceFieldNames
+from .meta_info import (
+    CollectionFieldNames,
+    CollectionNames,
+    NamespaceCollectionNames,
+    NamespaceFieldNames,
+    NamespaceStatsDefaults,
+)
 from .query_types import QueryHint
 from .schema import Schema, SparseVectorIndexConfig
 from .sparse_embedding_function import (
@@ -1267,9 +1273,9 @@ class BaseClient(BaseConnection, AdminAPI):
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 UNIQUE KEY uk_sdk_coll_name (collection_name)
             ) COMMENT='Settings of collections created by SDK' ORGANIZATION INDEX {scp};"""
-            self._execute(create_table_sql)
+            self._execute_catalog(create_table_sql)
             try:
-                self._execute(f"CREATE UNIQUE INDEX uk_sdk_coll_name ON {sdk_coll} (collection_name)")
+                self._execute_catalog(f"CREATE UNIQUE INDEX uk_sdk_coll_name ON {sdk_coll} (collection_name)")
             except Exception as exc:
                 _reraise_unless_unique_index_exists(exc)
         except Exception as e:
@@ -1318,7 +1324,7 @@ class BaseClient(BaseConnection, AdminAPI):
                     f"(COLLECTION_NAME, SETTINGS) VALUES ('{collection_name_in_table}', '{settings_str}')"
                 )
                 try:
-                    self._execute(insert_sql)
+                    self._execute_catalog(insert_sql)
                 except Exception as exc:
                     if not _is_sdk_collection_catalog_conflict_error(exc):
                         raise
@@ -1397,25 +1403,25 @@ class BaseClient(BaseConnection, AdminAPI):
             ltable_id BIGINT UNSIGNED NOT NULL COMMENT 'logic table internal id, 0 means namespace summary',
             estimated_rows BIGINT NOT NULL DEFAULT 0 COMMENT 'estimated row count',
             average_row_size BIGINT NOT NULL DEFAULT 0 COMMENT 'average row size in bytes',
-            row_limit BIGINT NOT NULL DEFAULT -1 COMMENT 'row count limit, -1 means unlimited',
-            size_limit BIGINT NOT NULL DEFAULT -1 COMMENT 'storage size limit in bytes, -1 means unlimited',
+            row_limit BIGINT NOT NULL DEFAULT {NamespaceStatsDefaults.ROW_LIMIT} COMMENT 'row count limit, -1 means unlimited',
+            size_limit BIGINT NOT NULL DEFAULT {NamespaceStatsDefaults.SIZE_LIMIT} COMMENT 'storage size limit in bytes, -1 means unlimited',
             last_estimate_time TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT 'last estimate time',
             included_index BOOL NOT NULL DEFAULT FALSE COMMENT 'whether stats include index data',
             PRIMARY KEY (namespace_id, ltable_id, included_index),
             KEY idx_sdk_ns_stat_by_collection (collection_id)
         ) COMMENT='Logic table row count and storage size statistics' DEFAULT CHARSET=utf8mb4 ORGANIZATION INDEX
         PARTITION BY KEY(namespace_id) PARTITIONS 8;"""
-        self._execute(ns_namespaces_sql)
-        self._execute(ns_ltables_sql)
-        self._execute(namespaces_stats_sql)
+        self._execute_catalog(ns_namespaces_sql)
+        self._execute_catalog(ns_ltables_sql)
+        self._execute_catalog(namespaces_stats_sql)
         try:
-            self._execute(
+            self._execute_catalog(
                 f"CREATE UNIQUE INDEX uk_sdk_ns_coll_name ON {ns_namespaces_q} (collection_id, namespace_name)"
             )
         except Exception as exc:
             _reraise_unless_unique_index_exists(exc)
         try:
-            self._execute(
+            self._execute_catalog(
                 f"CREATE UNIQUE INDEX uk_sdk_lt_coll_ns_name ON {ns_ltables_q} "
                 f"(collection_id, namespace_id, ltable_name)"
             )
@@ -1439,7 +1445,7 @@ class BaseClient(BaseConnection, AdminAPI):
             f"INSERT INTO {sdk_coll} (collection_name, settings) VALUES ('{collection_name_escaped}', '{settings_str}')"
         )
         try:
-            self._execute(insert_sql)
+            self._execute_catalog(insert_sql)
         except Exception as exc:
             if not _is_sdk_collection_catalog_conflict_error(exc):
                 raise
@@ -1447,18 +1453,17 @@ class BaseClient(BaseConnection, AdminAPI):
             if conn_getter is not None:
                 with contextlib.suppress(Exception):
                     conn_getter().rollback()
-        rows = self._execute(
+        rows = self._execute_catalog(
             f"SELECT collection_id FROM {sdk_coll} WHERE collection_name = '{collection_name_escaped}'"
         )
         collection_id = str(rows[0][0] if isinstance(rows[0], (list, tuple)) else rows[0]["collection_id"])
-        self._set_session_ns_context(collection_id=collection_id)
         return {"collection_id": collection_id, "collection_name": collection_name}
 
     def _get_ns_collection_meta(self, collection_name: str) -> dict | None:
         """Fetch namespace collection metadata from the catalog."""
         collection_name_escaped = escape_string(collection_name)
         try:
-            rows = self._execute(
+            rows = self._execute_catalog(
                 f"SELECT collection_id, collection_name, settings "
                 f"FROM {self._qtable(CollectionNames.sdk_collections_table_name())} "
                 f"WHERE collection_name = '{collection_name_escaped}'"
@@ -1500,7 +1505,7 @@ class BaseClient(BaseConnection, AdminAPI):
         underlying collection was deleted (the in-memory handle keeps its old id).
         """
         collection_id_escaped = escape_string(str(collection_id))
-        rows = self._execute(
+        rows = self._execute_catalog(
             f"SELECT collection_id FROM {self._qtable(CollectionNames.sdk_collections_table_name())} "
             f"WHERE collection_id = '{collection_id_escaped}'"
         )
@@ -1513,22 +1518,22 @@ class BaseClient(BaseConnection, AdminAPI):
             raise ValueError(f"Namespace collection '{collection_name}' not found")
         collection_id = meta["collection_id"]
         collection_id_escaped = escape_string(collection_id)
-        self._execute(
+        self._execute_catalog(
             f"DELETE FROM `{CollectionNames.sdk_collections_table_name()}` "
             f"WHERE collection_id = '{collection_id_escaped}'"
         )
         with contextlib.suppress(Exception):
-            self._execute(
+            self._execute_catalog(
                 f"DELETE FROM `{NamespaceCollectionNames.sdk_ltables_table()}` "
                 f"WHERE collection_id = '{collection_id_escaped}'"
             )
         with contextlib.suppress(Exception):
-            self._execute(
+            self._execute_catalog(
                 f"DELETE FROM `{NamespaceCollectionNames.sdk_namespaces_table()}` "
                 f"WHERE collection_id = '{collection_id_escaped}'"
             )
         with contextlib.suppress(Exception):
-            self._execute(
+            self._execute_catalog(
                 f"DELETE FROM `{NamespaceCollectionNames.sdk_namespaces_stats_table()}` "
                 f"WHERE collection_id = '{collection_id_escaped}'"
             )
@@ -1719,7 +1724,7 @@ class BaseClient(BaseConnection, AdminAPI):
         if cached is not None:
             return cached
         coll_id_escaped = escape_string(str(collection_id))
-        rows = self._execute(
+        rows = self._execute_catalog(
             f"SELECT ltable_id FROM {self._qtable(NamespaceCollectionNames.sdk_ltables_table())} "
             f"WHERE collection_id = '{coll_id_escaped}' AND namespace_id = {int(namespace_id)} "
             f"AND ltable_name = 'default' LIMIT 1"
@@ -1756,12 +1761,28 @@ class BaseClient(BaseConnection, AdminAPI):
         if ltable_id is not None:
             self._execute(f"SET @ltable_id = {int(ltable_id)}")
 
+    def _clear_session_ns_context(self) -> None:
+        """Clear namespace session vars so catalog SQL is not gated by per-ns RU/row limits.
+
+        After ns.add/delete the connection keeps @collection_id/@namespace_id/@ltable_id;
+        a subsequent SELECT on sdk_* would otherwise inherit the limiter and get 4039.
+        """
+        with contextlib.suppress(Exception):
+            self._execute("SET @collection_id = NULL")
+            self._execute("SET @namespace_id = NULL")
+            self._execute("SET @ltable_id = NULL")
+
+    def _execute_catalog(self, sql: str) -> Any:
+        """Run catalog SQL without namespace admission context."""
+        self._clear_session_ns_context()
+        return self._execute(sql)
+
     def _fetch_ns_namespace_id(self, collection_id: str, namespace_name: str) -> int:
         """Fetch the namespace id for a collection/namespace pair from the catalog."""
         namespace_name_escaped = escape_string(namespace_name)
         collection_id_escaped = escape_string(collection_id)
         ns_table = self._qtable(NamespaceCollectionNames.sdk_namespaces_table())
-        rows = self._execute(
+        rows = self._execute_catalog(
             f"SELECT namespace_id FROM {ns_table} "
             f"WHERE collection_id = '{collection_id_escaped}' AND namespace_name = '{namespace_name_escaped}'"
         )
@@ -1781,7 +1802,7 @@ class BaseClient(BaseConnection, AdminAPI):
         collection_id_escaped = escape_string(collection_id)
         ltable_name_escaped = escape_string(ltable_name)
         lt_table = self._qtable(NamespaceCollectionNames.sdk_ltables_table())
-        lt_rows = self._execute(
+        lt_rows = self._execute_catalog(
             f"SELECT ltable_id FROM {lt_table} "
             f"WHERE collection_id = '{collection_id_escaped}' AND namespace_id = {int(namespace_id)} "
             f"AND ltable_name = '{ltable_name_escaped}'"
@@ -1805,7 +1826,7 @@ class BaseClient(BaseConnection, AdminAPI):
         collection_id_escaped = escape_string(collection_id)
         ns_table = self._qtable(NamespaceCollectionNames.sdk_namespaces_table())
         try:
-            self._execute(
+            self._execute_catalog(
                 f"INSERT INTO {ns_table} "
                 f"(collection_id, namespace_name) VALUES ('{collection_id_escaped}', '{namespace_name_escaped}')"
             )
@@ -1829,7 +1850,7 @@ class BaseClient(BaseConnection, AdminAPI):
         ltable_name_escaped = escape_string(ltable_name)
         lt_table = self._qtable(NamespaceCollectionNames.sdk_ltables_table())
         try:
-            self._execute(
+            self._execute_catalog(
                 f"INSERT INTO {lt_table} "
                 f"(collection_id, namespace_id, ltable_name) "
                 f"VALUES ('{collection_id_escaped}', {int(namespace_id)}, '{ltable_name_escaped}')"
@@ -1844,7 +1865,7 @@ class BaseClient(BaseConnection, AdminAPI):
     def _resolve_ns_ltable_index_layout(self, collection_id: str) -> tuple[bool, bool]:
         """Infer which optional indexes exist for a namespace collection."""
         collection_id_escaped = escape_string(collection_id)
-        rows = self._execute(
+        rows = self._execute_catalog(
             f"SELECT settings FROM {self._qtable(CollectionNames.sdk_collections_table_name())} "
             f"WHERE collection_id = '{collection_id_escaped}'"
         )
@@ -1917,7 +1938,7 @@ class BaseClient(BaseConnection, AdminAPI):
         collection_id_escaped = escape_string(collection_id)
         ns_table = self._qtable(NamespaceCollectionNames.sdk_namespaces_table())
         lt_table = self._qtable(NamespaceCollectionNames.sdk_ltables_table())
-        rows = self._execute(
+        rows = self._execute_catalog(
             f"SELECT n.namespace_id AS namespace_id, n.namespace_name AS namespace_name, "
             f"l.ltable_id AS ltable_id "
             f"FROM {ns_table} n "
@@ -1942,7 +1963,6 @@ class BaseClient(BaseConnection, AdminAPI):
         lt_id = int(lt_raw) if lt_raw is not None else None
         if lt_id is not None:
             self._cache_namespace_ltable_id(collection_id, int(ns_id), lt_id)
-        self._set_session_ns_context(namespace_id=int(ns_id), ltable_id=lt_id)
         meta: dict = {"namespace_id": ns_id, "namespace_name": ns_name}
         if lt_id is not None:
             meta["ltable_id"] = str(lt_id)
@@ -1963,7 +1983,7 @@ class BaseClient(BaseConnection, AdminAPI):
         the catalog, not the data table.
         """
         collection_id_escaped = escape_string(str(collection_id))
-        rows = self._execute(
+        rows = self._execute_catalog(
             f"SELECT namespace_id FROM {self._qtable(NamespaceCollectionNames.sdk_namespaces_table())} "
             f"WHERE collection_id = '{collection_id_escaped}' AND namespace_id = {int(namespace_id)} "
             f"AND LEFT(namespace_name, 13) <> '__recyclebin_'"
@@ -1987,7 +2007,7 @@ class BaseClient(BaseConnection, AdminAPI):
     def _list_ns_namespaces(self, collection_id: str) -> list[dict]:
         """List namespaces registered for a collection."""
         collection_id_escaped = escape_string(collection_id)
-        rows = self._execute(
+        rows = self._execute_catalog(
             f"SELECT namespace_id, namespace_name FROM {self._qtable(NamespaceCollectionNames.sdk_namespaces_table())} "
             f"WHERE collection_id = '{collection_id_escaped}' "
             f"AND LEFT(namespace_name, 13) <> '__recyclebin_' "
@@ -2060,13 +2080,13 @@ class BaseClient(BaseConnection, AdminAPI):
         """
         try:
             query_sql = f"SELECT COLLECTION_ID, COLLECTION_NAME, SETTINGS FROM `{CollectionNames.sdk_collections_table_name()}` WHERE COLLECTION_NAME = '{collection_name}'"
-            rows = self._execute(query_sql)
+            rows = self._execute_catalog(query_sql)
             if rows:
                 return _CollectionMeta.from_row(rows[0])
 
             # not a v2 collection
             show_tables_sql = f"SHOW TABLES LIKE '{CollectionNames.table_name(collection_name)}'"
-            result = self._execute(show_tables_sql)
+            result = self._execute_catalog(show_tables_sql)
             if result:
                 return _CollectionMeta(collection_id=None, collection_name=collection_name, settings=None)
         except Exception as e:
@@ -2333,7 +2353,7 @@ class BaseClient(BaseConnection, AdminAPI):
         drop_table_sql = f"DROP TABLE `{CollectionNames.table_name_v2(collection.id)}`"
         query_sql = f"DELETE FROM `{CollectionNames.sdk_collections_table_name()}` WHERE COLLECTION_NAME = '{name}'"
         self._execute(drop_table_sql)
-        self._execute(query_sql)
+        self._execute_catalog(query_sql)
         logger.debug(f"✅ Successfully deleted collection '{name}' from sdk_collections table")
 
     def _delete_collection_v1(self, name: str) -> None:
@@ -2418,7 +2438,7 @@ class BaseClient(BaseConnection, AdminAPI):
             has_sdk_collections = False
             try:
                 check_table_sql = f"SHOW TABLES LIKE '{sdk_collections_table}'"
-                check_result = self._execute(check_table_sql)
+                check_result = self._execute_catalog(check_table_sql)
                 if check_result:
                     # Table exists (SHOW TABLES LIKE returns at least one row if exists)
                     has_sdk_collections = True
@@ -2427,7 +2447,7 @@ class BaseClient(BaseConnection, AdminAPI):
 
             if has_sdk_collections:
                 query_sql = f"SELECT COLLECTION_NAME, SETTINGS FROM {sdk_collections_table}"
-                rows = self._execute(query_sql)
+                rows = self._execute_catalog(query_sql)
                 for row in rows:
                     try:
                         if isinstance(row, dict):
@@ -2561,7 +2581,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 f"WHERE collection_name = '{name_escaped}' "
                 f"ORDER BY created_at, collection_id LIMIT 1"
             )
-            rows = self._execute(query_sql)
+            rows = self._execute_catalog(query_sql)
             if not rows or len(rows) == 0:
                 return False
 
@@ -2754,7 +2774,7 @@ class BaseClient(BaseConnection, AdminAPI):
             f"WHERE collection_name = '{collection_name_escaped}' "
             f"ORDER BY created_at, collection_id LIMIT 1"
         )
-        collection_id_query_result = self._execute(collection_id_query_sql)
+        collection_id_query_result = self._execute_catalog(collection_id_query_sql)
         if not collection_id_query_result or len(collection_id_query_result) == 0:
             raise ValueError(f"Collection not found: '{collection_name}'")
         collection_id = _extract_collection_id_from_sdk_row(collection_id_query_result[0])
