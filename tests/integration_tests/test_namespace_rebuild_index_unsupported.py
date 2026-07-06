@@ -67,10 +67,7 @@ class TestNamespaceRebuildIndexUnsupported:
         collection = _create_collection(oceanbase_client)
         try:
             data_table = NamespaceCollectionNames.data_table_name(collection.id)
-            call_sql = (
-                "CALL DBMS_VECTOR.rebuild_index("
-                f"'idx_vec', '{data_table}', 'embedding', 0, '', '')"
-            )
+            call_sql = f"CALL DBMS_VECTOR.rebuild_index('idx_vec', '{data_table}', 'embedding', 0, '', '')"
 
             with pytest.raises(pymysql.err.Error) as exc_info:
                 oceanbase_client._server._execute(call_sql)

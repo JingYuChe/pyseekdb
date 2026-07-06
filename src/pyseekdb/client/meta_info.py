@@ -82,9 +82,22 @@ class NamespaceCollectionNames:
         return "sdk_ltables"
 
     @staticmethod
-    def sdk_namespaces_stats_table() -> str:
-        """Return the SDK catalog table that stores namespace statistics."""
-        return "sdk_namespaces_stats"
+    def sdk_namespace_stat_table() -> str:
+        """Return the namespace-level stats table used by ObLogicalTableMonitor.
+
+        Table ``sdk_namespace_stat`` stores per-namespace **measurements** only:
+        ``row_count``, ``total_size``, ``total_size_included_index``,
+        ``last_gather_time``. Row/size **limits** live in
+        ``sdk_namespaces.info.ops_limit``; RU settings in ``$.ru_limit``.
+
+        See ``doc/agent_db监控运维/sdk_namespace_stat表说明.md``.
+        """
+        return "sdk_namespace_stat"
+
+    @staticmethod
+    def logic_table_namespaces_stats_view() -> str:
+        """Return the SDK view joining collection/namespace names with namespace stats."""
+        return "logic_table_namespaces_stats"
 
     @staticmethod
     def data_table_name(collection_id: str) -> str:
@@ -118,10 +131,58 @@ class NamespaceCollectionNames:
 
 
 class NamespaceStatsDefaults:
-    """Default row/size limits for sdk_namespaces_stats (kernel LOGICAL_TABLE_* parity)."""
+    """Default row/size limits stored in sdk_namespaces.info.ops_limit."""
 
     ROW_LIMIT = 1_000_000
     SIZE_LIMIT = 20 * 1024 * 1024 * 1024  # 20GB
+
+    @staticmethod
+    def default_ops_limit_json() -> str:
+        """JSON fragment for default ops_limit values."""
+        return (
+            f'{{"ops_limit": {{"row_limit": {NamespaceStatsDefaults.ROW_LIMIT}, '
+            f'"size_limit": {NamespaceStatsDefaults.SIZE_LIMIT}}}}}'
+        )
+
+
+class NamespaceOpsConfigKeys:
+    """Keys accepted by DBMS_LOGIC_TABLE.SET_NAMESPACE_OPS_CONFIG / SDK ops config APIs."""
+
+    ROW_LIMIT = "row_limit"
+    SIZE_LIMIT = "size_limit"
+    RU_ENABLED = "ru_enabled"
+    QPS_BURST = "qps_burst"
+    QPS_REFILL = "qps_refill"
+    TPS_BURST = "tps_burst"
+    TPS_REFILL = "tps_refill"
+    DATA_BURST = "data_burst"
+    DATA_REFILL = "data_refill"
+
+    @classmethod
+    def all_keys(cls) -> frozenset[str]:
+        return frozenset({
+            cls.ROW_LIMIT,
+            cls.SIZE_LIMIT,
+            cls.RU_ENABLED,
+            cls.QPS_BURST,
+            cls.QPS_REFILL,
+            cls.TPS_BURST,
+            cls.TPS_REFILL,
+            cls.DATA_BURST,
+            cls.DATA_REFILL,
+        })
+
+
+class NamespaceRuLimitDefaults:
+    """Kernel default RU token-bucket settings when ru_limit is absent in info."""
+
+    RU_ENABLED = 1
+    QPS_BURST = 200
+    QPS_REFILL = 100
+    TPS_BURST = 100
+    TPS_REFILL = 50
+    DATA_BURST = 50 * 1024 * 1024  # 50MB
+    DATA_REFILL = 10 * 1024 * 1024  # 10MB/s
 
 
 class NamespaceFieldNames:

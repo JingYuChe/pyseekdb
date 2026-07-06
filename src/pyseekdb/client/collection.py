@@ -10,9 +10,12 @@ Design Pattern:
 
 from typing import TYPE_CHECKING, Any, Optional
 
+from .meta_info import NamespaceOpsConfigKeys
 from .validators import (
     _validate_n_results,
     _validate_namespace_name,
+    _validate_namespace_ops_config_key,
+    _validate_namespace_ops_config_value,
 )
 
 if TYPE_CHECKING:
@@ -193,6 +196,56 @@ class Collection:
         self._guard_namespace_enabled()
         _validate_namespace_name(name)
         self._client._delete_ns_namespace_meta(self._id, name)
+
+    def set_namespace_ops_config(self, namespace_name: str, config_key: str, config_value: int) -> None:
+        """Configure namespace row/size limits or RU token-bucket settings.
+
+        ``config_key`` must be one of: ``row_limit``, ``size_limit``, ``ru_enabled``,
+        ``qps_burst``, ``qps_refill``, ``tps_burst``, ``tps_refill``, ``data_burst``,
+        ``data_refill``. Use ``-1`` for burst/refill keys to keep the current value.
+        ``ru_enabled`` must be ``0`` (disable throttling) or ``1`` (enable).
+        """
+        self._guard_namespace_enabled()
+        _validate_namespace_name(namespace_name)
+        _validate_namespace_ops_config_key(config_key)
+        _validate_namespace_ops_config_value(config_key, config_value)
+        self._client._set_namespace_ops_config(self.name, namespace_name, config_key, config_value)
+
+    def set_namespace_row_limit(self, namespace_name: str, row_limit: int) -> None:
+        """Set per-namespace row count limit (``ops_limit.row_limit``). ``-1`` means unlimited."""
+        self.set_namespace_ops_config(namespace_name, NamespaceOpsConfigKeys.ROW_LIMIT, row_limit)
+
+    def set_namespace_size_limit(self, namespace_name: str, size_limit: int) -> None:
+        """Set per-namespace storage size limit in bytes (``ops_limit.size_limit``). ``-1`` means unlimited."""
+        self.set_namespace_ops_config(namespace_name, NamespaceOpsConfigKeys.SIZE_LIMIT, size_limit)
+
+    def set_namespace_ru_enabled(self, namespace_name: str, ru_enabled: int) -> None:
+        """Enable (``1``) or disable (``0``) per-namespace RU throttling."""
+        self.set_namespace_ops_config(namespace_name, NamespaceOpsConfigKeys.RU_ENABLED, ru_enabled)
+
+    def set_namespace_qps_burst(self, namespace_name: str, qps_burst: int) -> None:
+        """Set read QPS token-bucket capacity. ``-1`` keeps the current value."""
+        self.set_namespace_ops_config(namespace_name, NamespaceOpsConfigKeys.QPS_BURST, qps_burst)
+
+    def set_namespace_qps_refill(self, namespace_name: str, qps_refill: int) -> None:
+        """Set read QPS token-bucket refill per second. ``-1`` keeps the current value."""
+        self.set_namespace_ops_config(namespace_name, NamespaceOpsConfigKeys.QPS_REFILL, qps_refill)
+
+    def set_namespace_tps_burst(self, namespace_name: str, tps_burst: int) -> None:
+        """Set write TPS token-bucket capacity. ``-1`` keeps the current value."""
+        self.set_namespace_ops_config(namespace_name, NamespaceOpsConfigKeys.TPS_BURST, tps_burst)
+
+    def set_namespace_tps_refill(self, namespace_name: str, tps_refill: int) -> None:
+        """Set write TPS token-bucket refill per second. ``-1`` keeps the current value."""
+        self.set_namespace_ops_config(namespace_name, NamespaceOpsConfigKeys.TPS_REFILL, tps_refill)
+
+    def set_namespace_data_burst(self, namespace_name: str, data_burst: int) -> None:
+        """Set data-volume token-bucket capacity in bytes. ``-1`` keeps the current value."""
+        self.set_namespace_ops_config(namespace_name, NamespaceOpsConfigKeys.DATA_BURST, data_burst)
+
+    def set_namespace_data_refill(self, namespace_name: str, data_refill: int) -> None:
+        """Set data-volume token-bucket refill bytes per second. ``-1`` keeps the current value."""
+        self.set_namespace_ops_config(namespace_name, NamespaceOpsConfigKeys.DATA_REFILL, data_refill)
 
     def list_namespaces(self) -> list["Namespace"]:
         """List all active namespaces in this collection."""

@@ -56,6 +56,7 @@ from .meta_info import (
     CollectionNames,
     NamespaceCollectionNames,
     NamespaceFieldNames,
+    NamespaceOpsConfigKeys,
     NamespaceStatsDefaults,
 )
 from .query_types import QueryHint
@@ -74,6 +75,9 @@ from .validators import (
     _quote_sql_identifier,
     _validate_database_name,
     _validate_namespace_explicit_embedding_dimensions,
+    _validate_namespace_name,
+    _validate_namespace_ops_config_key,
+    _validate_namespace_ops_config_value,
     _validate_record_ids,
 )
 from .version import Version
@@ -1397,23 +1401,33 @@ class BaseClient(BaseConnection, AdminAPI):
             UNIQUE KEY uk_sdk_lt_coll_ns_name (collection_id, namespace_id, ltable_name),
             KEY idx_sdk_lt_by_ns (collection_id, namespace_id)
         ) COMMENT='LTable catalog' ORGANIZATION INDEX {scp};"""
-        namespaces_stats_sql = f"""CREATE TABLE IF NOT EXISTS {self._qtable(NamespaceCollectionNames.sdk_namespaces_stats_table())} (
+        ns_stat_q = self._qtable(NamespaceCollectionNames.sdk_namespace_stat_table())
+        namespace_stat_sql = f"""CREATE TABLE IF NOT EXISTS {ns_stat_q} (
             collection_id CHAR(32) NOT NULL COMMENT 'collection id',
             namespace_id BIGINT UNSIGNED NOT NULL COMMENT 'namespace internal id',
-            ltable_id BIGINT UNSIGNED NOT NULL COMMENT 'logic table internal id, 0 means namespace summary',
-            estimated_rows BIGINT NOT NULL DEFAULT 0 COMMENT 'estimated row count',
-            average_row_size BIGINT NOT NULL DEFAULT 0 COMMENT 'average row size in bytes',
-            row_limit BIGINT NOT NULL DEFAULT {NamespaceStatsDefaults.ROW_LIMIT} COMMENT 'row count limit, -1 means unlimited',
-            size_limit BIGINT NOT NULL DEFAULT {NamespaceStatsDefaults.SIZE_LIMIT} COMMENT 'storage size limit in bytes, -1 means unlimited',
-            last_estimate_time TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT 'last estimate time',
-            included_index BOOL NOT NULL DEFAULT FALSE COMMENT 'whether stats include index data',
-            PRIMARY KEY (namespace_id, ltable_id, included_index),
+            row_count BIGINT NOT NULL DEFAULT 0 COMMENT 'non-exact estimated row count from background sampling',
+            total_size BIGINT NOT NULL DEFAULT 0 COMMENT 'storage size in bytes excluding index data',
+            total_size_included_index BIGINT NOT NULL DEFAULT 0 COMMENT 'storage size in bytes including index data',
+            last_gather_time TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT 'last stats gather time',
+            PRIMARY KEY (namespace_id),
             KEY idx_sdk_ns_stat_by_collection (collection_id)
-        ) COMMENT='Logic table row count and storage size statistics' DEFAULT CHARSET=utf8mb4 ORGANIZATION INDEX
+        ) COMMENT='Namespace-level logic table statistics' DEFAULT CHARSET=utf8mb4 ORGANIZATION INDEX
         PARTITION BY KEY(namespace_id) PARTITIONS 8;"""
+        stats_view_q = self._qtable(NamespaceCollectionNames.logic_table_namespaces_stats_view())
+        stats_view_sql = f"""CREATE OR REPLACE VIEW {stats_view_q} AS
+            SELECT c.collection_name,
+                   n.namespace_name,
+                   s.row_count,
+                   s.total_size,
+                   s.total_size_included_index,
+                   s.last_gather_time
+            FROM {ns_stat_q} s
+            JOIN {ns_namespaces_q} n ON s.namespace_id = n.namespace_id
+            JOIN {self._qtable(CollectionNames.sdk_collections_table_name())} c ON n.collection_id = c.collection_id"""
         self._execute_catalog(ns_namespaces_sql)
         self._execute_catalog(ns_ltables_sql)
-        self._execute_catalog(namespaces_stats_sql)
+        self._execute_catalog(namespace_stat_sql)
+        self._execute_catalog(stats_view_sql)
         try:
             self._execute_catalog(
                 f"CREATE UNIQUE INDEX uk_sdk_ns_coll_name ON {ns_namespaces_q} (collection_id, namespace_name)"
@@ -1534,7 +1548,7 @@ class BaseClient(BaseConnection, AdminAPI):
             )
         with contextlib.suppress(Exception):
             self._execute_catalog(
-                f"DELETE FROM `{NamespaceCollectionNames.sdk_namespaces_stats_table()}` "
+                f"DELETE FROM `{NamespaceCollectionNames.sdk_namespace_stat_table()}` "
                 f"WHERE collection_id = '{collection_id_escaped}'"
             )
         self._cleanup_namespace_physical_tables(collection_id)
@@ -1753,28 +1767,48 @@ class BaseClient(BaseConnection, AdminAPI):
         namespace_id: int | None = None,
         ltable_id: int | None = None,
     ) -> None:
-        """Set session variables identifying the active namespace context."""
+        """Set session variables for namespace (logic-table) DML/DQL admission.
+
+        Only namespace-enabled collections use @collection_id/@namespace_id/@ltable_id.
+        Standard v2 collections must not touch these session vars.
+        """
         if collection_id is not None:
             self._execute(f"SET @collection_id = '{escape_string(str(collection_id))}'")
         if namespace_id is not None:
             self._execute(f"SET @namespace_id = {int(namespace_id)}")
         if ltable_id is not None:
             self._execute(f"SET @ltable_id = {int(ltable_id)}")
+        if collection_id is not None or namespace_id is not None or ltable_id is not None:
+            self._ns_session_context_active = True
 
     def _clear_session_ns_context(self) -> None:
         """Clear namespace session vars so catalog SQL is not gated by per-ns RU/row limits.
 
         After ns.add/delete the connection keeps @collection_id/@namespace_id/@ltable_id;
         a subsequent SELECT on sdk_* would otherwise inherit the limiter and get 4039.
+
+        No-op for connections that never entered namespace context (e.g. standard
+        get_or_create_collection). On LakeBase, clearing via SET NULL/'' can break
+        catalog queries (4016/1210); :meth:`_execute_catalog_isolated` uses a
+        separate connection instead when available.
         """
+        if not getattr(self, "_ns_session_context_active", False):
+            return
         with contextlib.suppress(Exception):
-            self._execute("SET @collection_id = NULL")
+            self._execute("SET @collection_id = ''")
             self._execute("SET @namespace_id = NULL")
             self._execute("SET @ltable_id = NULL")
+        self._ns_session_context_active = False
+
+    def _execute_catalog_isolated(self, sql: str) -> Any:
+        """Run catalog SQL while the main connection holds namespace session vars."""
+        self._clear_session_ns_context()
+        return self._execute(sql)
 
     def _execute_catalog(self, sql: str) -> Any:
         """Run catalog SQL without namespace admission context."""
-        self._clear_session_ns_context()
+        if getattr(self, "_ns_session_context_active", False):
+            return self._execute_catalog_isolated(sql)
         return self._execute(sql)
 
     def _fetch_ns_namespace_id(self, collection_id: str, namespace_name: str) -> int:
@@ -1825,10 +1859,13 @@ class BaseClient(BaseConnection, AdminAPI):
         namespace_name_escaped = escape_string(namespace_name)
         collection_id_escaped = escape_string(collection_id)
         ns_table = self._qtable(NamespaceCollectionNames.sdk_namespaces_table())
+        default_info = escape_string(NamespaceStatsDefaults.default_ops_limit_json())
         try:
             self._execute_catalog(
                 f"INSERT INTO {ns_table} "
-                f"(collection_id, namespace_name) VALUES ('{collection_id_escaped}', '{namespace_name_escaped}')"
+                f"(collection_id, namespace_name, info) "
+                f"VALUES ('{collection_id_escaped}', '{namespace_name_escaped}', "
+                f"CAST('{default_info}' AS JSON))"
             )
         except Exception as exc:
             if idempotent and _is_namespace_catalog_conflict_error(exc):
@@ -2003,6 +2040,39 @@ class BaseClient(BaseConnection, AdminAPI):
         self._use_catalog_database()
         self._set_session_ns_context(collection_id=collection_id, namespace_id=int(ns_id), ltable_id=lt_id)
         self._execute(f"CALL DBMS_LOGIC_TABLE.DROP_NAMESPACE('{collection_id_escaped}', {ns_id})")
+
+    def _set_namespace_ops_config(
+        self,
+        collection_name: str,
+        namespace_name: str,
+        config_key: str,
+        config_value: int,
+    ) -> None:
+        """Update namespace ops/RU limits in sdk_namespaces.info (same semantics as PL)."""
+        _validate_namespace_ops_config_key(config_key)
+        _validate_namespace_ops_config_value(config_key, config_value)
+        _validate_namespace_name(namespace_name)
+        self._use_catalog_database()
+        if config_key in (NamespaceOpsConfigKeys.ROW_LIMIT, NamespaceOpsConfigKeys.SIZE_LIMIT):
+            group_name = "ops_limit"
+            patch_body: dict[str, int] = {config_key: int(config_value)}
+        else:
+            group_name = "ru_limit"
+            patch_body = {config_key: int(config_value)}
+        patch_json = json.dumps({group_name: patch_body}, separators=(",", ":"))
+        patch_escaped = escape_string(patch_json)
+        collection_name_escaped = escape_string(collection_name)
+        namespace_name_escaped = escape_string(namespace_name)
+        ns_table = self._qtable(NamespaceCollectionNames.sdk_namespaces_table())
+        coll_table = self._qtable(CollectionNames.sdk_collections_table_name())
+        self._execute_catalog(
+            f"UPDATE {ns_table} n "
+            f"JOIN {coll_table} c ON n.collection_id = c.collection_id "
+            f"SET n.info = JSON_MERGE_PATCH(COALESCE(n.info, CAST('{{}}' AS JSON)), "
+            f"CAST('{patch_escaped}' AS JSON)) "
+            f"WHERE c.collection_name = '{collection_name_escaped}' "
+            f"AND n.namespace_name = '{namespace_name_escaped}'"
+        )
 
     def _list_ns_namespaces(self, collection_id: str) -> list[dict]:
         """List namespaces registered for a collection."""

@@ -2,6 +2,8 @@
 
 import re
 
+from .meta_info import NamespaceOpsConfigKeys
+
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
 _MAX_NAME_LENGTH = 512
 _MAX_NAMESPACE_NAME_LENGTH = 256
@@ -17,6 +19,10 @@ _VALID_INCLUDE_FIELDS = frozenset({
     "distances",
     "distance",
 })
+
+# Keys accepted by DBMS_LOGIC_TABLE.SET_NAMESPACE_OPS_CONFIG (kernel whitelist).
+
+_VALID_NAMESPACE_OPS_CONFIG_KEYS = NamespaceOpsConfigKeys.all_keys()
 
 
 def _validate_include(include: list[str] | None) -> None:
@@ -98,6 +104,23 @@ def _validate_record_ids(ids: list[str]) -> None:
                 f"Invalid record id: '{rid}'. Record id contains invalid characters. "
                 "Only letters, digits, and underscore are allowed: [a-zA-Z0-9_]"
             )
+
+
+def _validate_namespace_ops_config_key(config_key: str) -> None:
+    """Validate config_key for DBMS_LOGIC_TABLE.SET_NAMESPACE_OPS_CONFIG."""
+    if not isinstance(config_key, str):
+        raise TypeError(f"config_key must be a string, got {type(config_key).__name__}")
+    if config_key not in _VALID_NAMESPACE_OPS_CONFIG_KEYS:
+        allowed = ", ".join(sorted(_VALID_NAMESPACE_OPS_CONFIG_KEYS))
+        raise ValueError(f"Invalid config_key: '{config_key}'. Allowed values: {allowed}")
+
+
+def _validate_namespace_ops_config_value(config_key: str, config_value: int) -> None:
+    """Validate config_value shape for a namespace ops config key."""
+    if isinstance(config_value, bool) or not isinstance(config_value, int):
+        raise TypeError(f"config_value must be an integer, got {type(config_value).__name__}")
+    if config_key == NamespaceOpsConfigKeys.RU_ENABLED and config_value not in (0, 1):
+        raise ValueError("config_value for 'ru_enabled' must be 0 or 1")
 
 
 def _validate_namespace_explicit_embedding_dimensions(
