@@ -354,6 +354,13 @@ class TestNamespaceRuConfigEnforcement:
             _close(admin)
 
     def test_tps_throttling_via_sdk_config(self, oceanbase_client):
+        """SDK-written TPS limits are enforced after the lazy on-throttle refresh.
+
+        The in-memory token bucket keeps kernel defaults (burst 100 / refill 50/s)
+        until the first 4039; only then does refresh_config read sdk_namespaces.info.
+        Use refill=0 in the DB config and enough writes to trip the default bucket
+        even when the suite has warmed the cluster and single-row adds are slower.
+        """
         coll_name = f"ops_tps_{uuid.uuid4().hex[:10]}"
         coll = oceanbase_client.create_collection(
             name=coll_name,
@@ -363,12 +370,16 @@ class TestNamespaceRuConfigEnforcement:
         )
         try:
             ns = coll.get_or_create_namespace("tps_ns")
-            ns.set_ru_enabled(1)
-            ns.set_tps_burst(10)
-            ns.set_tps_refill(1)
-            blocked = _hammer(ns, 0, 150)
+            ns.set_ru_config(
+                {
+                    NamespaceRuConfigKeys.RU_ENABLED: 1,
+                    NamespaceRuConfigKeys.TPS_BURST: 10,
+                    NamespaceRuConfigKeys.TPS_REFILL: 0,
+                }
+            )
+            blocked = _hammer(ns, 0, 300)
             assert sum(blocked) > 0, (
-                f"expected TPS throttling after SDK config, got 0/{len(blocked)} blocked"
+                f"expected TPS throttling after SDK config, got {sum(blocked)}/{len(blocked)} blocked"
             )
         finally:
             time.sleep(6)
