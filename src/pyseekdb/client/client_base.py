@@ -2404,11 +2404,16 @@ class BaseClient(BaseConnection, AdminAPI):
         Args:
             name: Collection name
         """
-        collection = self._get_collection_v2(name)
-        if not collection:
+        collection_meta = self._resolve_collection_metadata_from_sdk_collections(name)
+        if not collection_meta or not collection_meta.collection_id:
             raise ValueError(f"Collection '{name}' does not exist")
-        drop_table_sql = f"DROP TABLE `{CollectionNames.table_name_v2(collection.id)}`"
-        query_sql = f"DELETE FROM `{CollectionNames.sdk_collections_table_name()}` WHERE COLLECTION_NAME = '{name}'"
+        collection_id = collection_meta.collection_id
+        drop_table_sql = f"DROP TABLE `{CollectionNames.table_name_v2(collection_id)}`"
+        name_escaped = escape_string(name)
+        query_sql = (
+            f"DELETE FROM `{CollectionNames.sdk_collections_table_name()}` "
+            f"WHERE collection_name = '{name_escaped}'"
+        )
         self._execute(drop_table_sql)
         self._execute_catalog(query_sql)
         logger.debug(f"✅ Successfully deleted collection '{name}' from sdk_collections table")
@@ -5489,6 +5494,9 @@ class BaseClient(BaseConnection, AdminAPI):
         metadatas: list[dict] | None,
         embeddings: list[list[float]] | None,
         embedding_function: EmbeddingFunction[EmbeddingDocuments] | None,
+        *,
+        has_vector_index: bool = True,
+        collection_dimension: int | None = None,
         **kwargs: Any,
     ) -> None:
         """Collapse concurrent upsert races to a single row per business id."""
@@ -5515,6 +5523,8 @@ class BaseClient(BaseConnection, AdminAPI):
                         metadatas=[meta_val] if meta_val is not None else None,
                         documents=[doc_val] if doc_val is not None else None,
                         embedding_function=embedding_function,
+                        has_vector_index=has_vector_index,
+                        collection_dimension=collection_dimension,
                         **kwargs,
                     )
                 if attempt < 119:
@@ -5925,6 +5935,8 @@ class BaseClient(BaseConnection, AdminAPI):
             metadatas=metadatas,
             embeddings=embeddings,
             embedding_function=embedding_function,
+            has_vector_index=has_vector_index,
+            collection_dimension=collection_dimension,
             **kwargs,
         )
 

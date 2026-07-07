@@ -59,6 +59,8 @@ class TestNamespaceUpsertReconcile:
             metadatas=[{"client": 2}],
             embeddings=[[1.0, 2.0, 3.0]],
             embedding_function=None,
+            has_vector_index=True,
+            collection_dimension=3,
         )
 
         client._delete_namespace_records_by_id.assert_called_once_with("logic_data_table", 7, 9, "same_new_id")
@@ -68,6 +70,8 @@ class TestNamespaceUpsertReconcile:
         assert add_kwargs["documents"] == ["winner"]
         assert add_kwargs["metadatas"] == [{"client": 2}]
         assert add_kwargs["embeddings"] == [[1.0, 2.0, 3.0]]
+        assert add_kwargs["has_vector_index"] is True
+        assert add_kwargs["collection_dimension"] == 3
 
     def test_reconcile_raises_when_retries_exhausted(self):
         """Test reconcile raises when retries exhausted."""
