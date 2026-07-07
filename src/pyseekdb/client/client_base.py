@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import struct
+import threading
 import time
 import warnings
 from abc import ABC, abstractmethod
@@ -99,6 +100,9 @@ NAMESPACE_MIN_OB_VERSION = NAMESPACE_MIN_LAKEBASE_VERSION
 _LAKEBASE_VERSION_MARKER = "database ai"
 
 logger = logging.getLogger(__name__)
+
+_NS_COLLECTION_PURGE_LOCKS: dict[tuple[str, ...], threading.RLock] = {}
+_NS_COLLECTION_PURGE_LOCKS_GUARD = threading.Lock()
 
 from .types import _NOT_PROVIDED, _NotProvided  # noqa: E402, F401
 
@@ -1528,31 +1532,35 @@ class BaseClient(BaseConnection, AdminAPI):
 
     def _delete_ns_collection_meta(self, collection_name: str) -> None:
         """Delete namespace collection metadata from the catalog."""
-        meta = self._get_ns_collection_meta(collection_name)
-        if meta is None:
-            raise ValueError(f"Namespace collection '{collection_name}' not found")
-        collection_id = meta["collection_id"]
-        collection_id_escaped = escape_string(collection_id)
-        self._execute_catalog(
-            f"DELETE FROM `{CollectionNames.sdk_collections_table_name()}` "
-            f"WHERE collection_id = '{collection_id_escaped}'"
-        )
-        with contextlib.suppress(Exception):
+        with self._ns_collection_purge_lock(collection_name):
+            meta = self._get_ns_collection_meta(collection_name)
+            if meta is None:
+                raise ValueError(f"Namespace collection '{collection_name}' not found")
+            collection_id = meta["collection_id"]
+            collection_id_escaped = escape_string(collection_id)
+            # Remove catalog rows first: if anything fails mid-flight, the user must
+            # not see a collection that has already lost its physical tables.
+            # Orphan physical tables after a successful catalog delete are an ops concern.
             self._execute_catalog(
-                f"DELETE FROM `{NamespaceCollectionNames.sdk_ltables_table()}` "
+                f"DELETE FROM `{CollectionNames.sdk_collections_table_name()}` "
                 f"WHERE collection_id = '{collection_id_escaped}'"
             )
-        with contextlib.suppress(Exception):
-            self._execute_catalog(
-                f"DELETE FROM `{NamespaceCollectionNames.sdk_namespaces_table()}` "
-                f"WHERE collection_id = '{collection_id_escaped}'"
-            )
-        with contextlib.suppress(Exception):
-            self._execute_catalog(
-                f"DELETE FROM `{NamespaceCollectionNames.sdk_namespace_stat_table()}` "
-                f"WHERE collection_id = '{collection_id_escaped}'"
-            )
-        self._cleanup_namespace_physical_tables(collection_id)
+            with contextlib.suppress(Exception):
+                self._execute_catalog(
+                    f"DELETE FROM `{NamespaceCollectionNames.sdk_ltables_table()}` "
+                    f"WHERE collection_id = '{collection_id_escaped}'"
+                )
+            with contextlib.suppress(Exception):
+                self._execute_catalog(
+                    f"DELETE FROM `{NamespaceCollectionNames.sdk_namespaces_table()}` "
+                    f"WHERE collection_id = '{collection_id_escaped}'"
+                )
+            with contextlib.suppress(Exception):
+                self._execute_catalog(
+                    f"DELETE FROM `{NamespaceCollectionNames.sdk_namespace_stat_table()}` "
+                    f"WHERE collection_id = '{collection_id_escaped}'"
+                )
+            self._cleanup_namespace_physical_tables_with_retry(collection_id)
 
     def _create_namespace_physical_tables(
         self,
@@ -1648,6 +1656,15 @@ class BaseClient(BaseConnection, AdminAPI):
         with contextlib.suppress(Exception):
             self._execute(f"DROP TABLEGROUP IF EXISTS `{NamespaceCollectionNames.tablegroup_name(collection_id)}`")
 
+    def _cleanup_namespace_physical_tables_with_retry(
+        self, collection_id: str, *, attempts: int = 3, delay_s: float = 0.1
+    ) -> None:
+        """Best-effort physical teardown after catalog rows are gone."""
+        for attempt in range(attempts):
+            self._cleanup_namespace_physical_tables(collection_id)
+            if attempt + 1 < attempts:
+                time.sleep(delay_s)
+
     def _table_exists(self, table_name: str) -> bool:
         """Whether `table_name` exists in the current (catalog) database."""
         name_escaped = escape_string(table_name)
@@ -1659,6 +1676,81 @@ class BaseClient(BaseConnection, AdminAPI):
             return bool(rows)
         except Exception:
             return False
+
+    def _table_exists_with_retry(
+        self, table_name: str, *, attempts: int = 5, delay_s: float = 0.1
+    ) -> bool | None:
+        """Best-effort existence check resilient to brief information_schema lag.
+
+        Returns True when the table is present, False when a query succeeded and
+        found no row, and None when every attempt failed (e.g. SQL throttle).
+        """
+        name_escaped = escape_string(table_name)
+        sql = (
+            "SELECT 1 FROM information_schema.TABLES "
+            f"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{name_escaped}'"
+        )
+        saw_successful_query = False
+        for attempt in range(attempts):
+            try:
+                rows = self._execute(sql)
+                saw_successful_query = True
+                if rows:
+                    return True
+            except Exception:
+                pass
+            if attempt + 1 < attempts:
+                time.sleep(delay_s)
+        if not saw_successful_query:
+            return None
+        return False
+
+    def _table_exists_via_show(self, table_name: str) -> bool | None:
+        """Check table existence via SHOW TABLES (complements information_schema)."""
+        name_escaped = escape_string(table_name)
+        try:
+            rows = self._execute(f"SHOW TABLES LIKE '{name_escaped}'")
+            return bool(rows)
+        except Exception:
+            return None
+
+    def _logic_data_table_confirmed_absent(self, collection_id: str) -> bool:
+        """Return True only when the primary logic data table is definitely gone."""
+        data_table = NamespaceCollectionNames.data_table_name(collection_id)
+        exists = self._table_exists_with_retry(data_table)
+        if exists is not False:
+            return False
+        show_exists = self._table_exists_via_show(data_table)
+        if show_exists is True:
+            return False
+        if show_exists is None:
+            return False
+        try:
+            self._execute(f"SELECT 1 FROM `{data_table}` LIMIT 0")
+            return False
+        except Exception as exc:
+            args = getattr(exc, "args", ())
+            if args and args[0] == 1146:
+                return True
+            return False
+
+    def _ns_purge_lock_scope_key(self) -> tuple[str, int, str, str]:
+        """Connection scope for cross-client namespace purge/delete serialization."""
+        host = str(getattr(self, "host", None) or getattr(self, "path", "embedded"))
+        port = int(getattr(self, "port", 0) or 0)
+        user = str(getattr(self, "full_user", None) or getattr(self, "user", ""))
+        db = str(self._catalog_database())
+        return (host, port, user, db)
+
+    def _ns_collection_purge_lock(self, collection_name: str) -> threading.RLock:
+        """Per-collection lock shared across client instances on the same catalog DB."""
+        scope = (*self._ns_purge_lock_scope_key(), collection_name)
+        with _NS_COLLECTION_PURGE_LOCKS_GUARD:
+            lock = _NS_COLLECTION_PURGE_LOCKS.get(scope)
+            if lock is None:
+                lock = threading.RLock()
+                _NS_COLLECTION_PURGE_LOCKS[scope] = lock
+            return lock
 
     def _tablegroup_exists(self, tablegroup_name: str) -> bool:
         """Whether `tablegroup_name` exists in the current OceanBase tenant."""
@@ -1699,28 +1791,49 @@ class BaseClient(BaseConnection, AdminAPI):
         return len(self._ns_missing_physical_resources(meta["collection_id"], is_ss)) > 0
 
     def _purge_broken_ns_collection_if_incomplete(self, collection_name: str, meta: dict | None = None) -> bool:
-        """Purge a namespace collection whose catalog row exists but physical resources are incomplete.
+        """Purge a namespace collection whose primary logic data table is gone.
 
         Returns True when the collection was purged and should be treated as non-existent.
+
+        Auxiliary tables (kv/schema/hot) may be missing while logic_data still exists
+        after a partial create or transient visibility lag; those collections are
+        resumed via create_collection, not purged from get_collection.
         """
         if meta is None:
             meta = self._get_ns_collection_meta(collection_name)
         if meta is None:
             return False
-        self._use_catalog_database()
-        is_ss = meta.get("settings", {}).get("storage_mode") == "ss"
-        missing = self._ns_missing_physical_resources(meta["collection_id"], is_ss)
-        if not missing:
+
+        collection_id = meta["collection_id"]
+        if not self._logic_data_table_confirmed_absent(collection_id):
             return False
-        logger.warning(
-            "Namespace collection '%s' (collection_id=%s) is missing physical resources %s; "
-            "purging catalog metadata and cleaning up leftovers.",
-            collection_name,
-            meta["collection_id"],
-            missing,
-        )
-        self._delete_ns_collection_meta(collection_name)
-        return True
+
+        with self._ns_collection_purge_lock(collection_name):
+            meta = self._get_ns_collection_meta(collection_name)
+            if meta is None:
+                return False
+            collection_id = meta["collection_id"]
+            if not self._logic_data_table_confirmed_absent(collection_id):
+                return False
+
+            self._use_catalog_database()
+            is_ss = meta.get("settings", {}).get("storage_mode") == "ss"
+            missing = self._ns_missing_physical_resources(collection_id, is_ss)
+            if not missing:
+                return False
+            data_table = NamespaceCollectionNames.data_table_name(collection_id)
+            if data_table not in missing and not self._logic_data_table_confirmed_absent(collection_id):
+                return False
+
+            logger.warning(
+                "Namespace collection '%s' (collection_id=%s) is missing physical resources %s; "
+                "purging catalog metadata and cleaning up leftovers.",
+                collection_name,
+                collection_id,
+                missing,
+            )
+            self._delete_ns_collection_meta(collection_name)
+            return True
 
     def _resolve_namespace_ltable_id(self, collection_id: str, namespace_id: int) -> int:
         """Resolve the default ltable_id for (collection_id, namespace_id) from
@@ -2096,7 +2209,9 @@ class BaseClient(BaseConnection, AdminAPI):
             if self._purge_broken_ns_collection_if_incomplete(collection_name=name, meta=ns_meta):
                 ns_meta = None
             else:
-                return self._build_ns_collection_from_meta(ns_meta, embedding_function)
+                ns_meta = self._get_ns_collection_meta(name)
+                if ns_meta is not None:
+                    return self._build_ns_collection_from_meta(ns_meta, embedding_function)
         try:
             collection = self._get_collection_v1(name, embedding_function)
         except ValueError as e:

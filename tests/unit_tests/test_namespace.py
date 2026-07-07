@@ -1291,10 +1291,12 @@ class TestNamespaceCatalogs:
         """Test delete ns collection meta cleans namespaces stats table."""
         c = FakeClient()
         c._get_ns_collection_meta = MagicMock(return_value={"collection_id": "abc123"})
-        c._cleanup_namespace_physical_tables = MagicMock()
+        c._cleanup_namespace_physical_tables_with_retry = MagicMock()
         c._execute = MagicMock()
 
         c._delete_ns_collection_meta("coll")
+
+        c._cleanup_namespace_physical_tables_with_retry.assert_called_once_with("abc123")
 
         calls = [str(call) for call in c._execute.call_args_list]
         assert any("DELETE FROM `sdk_namespace_stat`" in s for s in calls)
@@ -1312,18 +1314,52 @@ class TestBrokenNsCollectionPurge:
             "collection_name": "coll",
             "settings": {"use_namespace": True, "storage_mode": "sn"},
         }
+        c._get_ns_collection_meta = MagicMock(return_value=meta)
         c._use_catalog_database = MagicMock()
+        c._logic_data_table_confirmed_absent = MagicMock(return_value=True)
         c._ns_missing_physical_resources = MagicMock(return_value=["cid1_logic_data_table"])
         c._delete_ns_collection_meta = MagicMock()
 
         assert c._purge_broken_ns_collection_if_incomplete("coll", meta=meta) is True
         c._delete_ns_collection_meta.assert_called_once_with("coll")
 
+    def test_purge_skips_when_logic_data_table_exists(self):
+        """Test purge skips when only auxiliary tables are missing."""
+        c = FakeClient()
+        meta = {
+            "collection_id": "c" * 32,
+            "collection_name": "coll",
+            "settings": {"use_namespace": True, "storage_mode": "ss"},
+        }
+        c._get_ns_collection_meta = MagicMock(return_value=meta)
+        c._logic_data_table_confirmed_absent = MagicMock(return_value=False)
+        c._delete_ns_collection_meta = MagicMock()
+
+        assert c._purge_broken_ns_collection_if_incomplete("coll", meta=meta) is False
+        c._delete_ns_collection_meta.assert_not_called()
+
+    def test_purge_skips_when_table_existence_inconclusive(self):
+        """Test purge skips when logic data table absence cannot be confirmed."""
+        c = FakeClient()
+        meta = {
+            "collection_id": "cid1",
+            "collection_name": "coll",
+            "settings": {"use_namespace": True, "storage_mode": "sn"},
+        }
+        c._get_ns_collection_meta = MagicMock(return_value=meta)
+        c._logic_data_table_confirmed_absent = MagicMock(return_value=False)
+        c._delete_ns_collection_meta = MagicMock()
+
+        assert c._purge_broken_ns_collection_if_incomplete("coll", meta=meta) is False
+        c._delete_ns_collection_meta.assert_not_called()
+
     def test_purge_skips_complete_collection(self):
         """Test purge skips complete collection."""
         c = FakeClient()
         meta = {"collection_id": "cid1", "collection_name": "coll", "settings": {"storage_mode": "sn"}}
+        c._get_ns_collection_meta = MagicMock(return_value=meta)
         c._use_catalog_database = MagicMock()
+        c._logic_data_table_confirmed_absent = MagicMock(return_value=False)
         c._ns_missing_physical_resources = MagicMock(return_value=[])
         c._delete_ns_collection_meta = MagicMock()
 

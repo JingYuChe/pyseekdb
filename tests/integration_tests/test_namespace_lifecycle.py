@@ -222,8 +222,10 @@ class TestNamespaceLifecycle:
             client.delete_collection(name=name)
 
     def test_get_collection_purges_broken_ns_collection(self, oceanbase_client):
-        """get_collection on a namespace collection with missing physical tables
-        should treat it as non-existent and purge catalog leftovers."""
+        """get_collection only purges when the primary logic data table is missing.
+
+        Missing auxiliary tables alone are recoverable via create_collection resume.
+        """
         from pyseekdb.client.meta_info import NamespaceCollectionNames
 
         client = oceanbase_client
@@ -242,6 +244,15 @@ class TestNamespaceLifecycle:
             srv._execute(f"DROP TABLE IF EXISTS `{NamespaceCollectionNames.kv_data_table_name(cid)}`")
             assert srv._is_incomplete_ns_collection(name) is True
 
+            reopened = client.get_collection(name)
+            assert reopened.id == cid
+            assert client.has_collection(name) is True
+
+            resumed = client.create_collection(name=name, schema=schema, use_namespace=True, partition_count=4)
+            assert resumed.id == cid
+            assert srv._is_incomplete_ns_collection(name) is False
+
+            srv._execute(f"DROP TABLE IF EXISTS `{NamespaceCollectionNames.data_table_name(cid)}`")
             with pytest.raises(ValueError, match="does not exist"):
                 client.get_collection(name)
 
