@@ -9,12 +9,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .meta_info import NamespaceOpsConfigKeys
+from .meta_info import NamespaceRuConfigKeys
 from .validators import (
     _validate_include,
     _validate_n_results,
-    _validate_namespace_ops_config_key,
-    _validate_namespace_ops_config_value,
+    _validate_namespace_ru_config,
 )
 
 if TYPE_CHECKING:
@@ -300,48 +299,60 @@ class Namespace:
             namespace_name=self._name,
         )
 
-    def set_ops_config(self, config_key: str, config_value: int) -> None:
+    def set_ru_config(self, config: dict) -> None:
         """Configure row/size limits or RU token-bucket settings for this namespace.
 
-        See :meth:`Collection.set_namespace_ops_config` for valid ``config_key`` values.
+        ``config`` is a flat JSON object, e.g. ``{"row_limit": 1000, "tps_burst": 50}``.
+        See :meth:`Collection.set_namespace_ru_config` for valid keys.
         """
         self._guard_exists()
-        _validate_namespace_ops_config_key(config_key)
-        _validate_namespace_ops_config_value(config_key, config_value)
-        self._client._set_namespace_ops_config(self._collection.name, self._name, config_key, config_value)
+        _validate_namespace_ru_config(config)
+        self._client._set_namespace_ru_config(self._collection.name, self._name, config)
 
     def set_row_limit(self, row_limit: int) -> None:
-        """Set row count limit for this namespace. ``-1`` means unlimited."""
-        self.set_ops_config(NamespaceOpsConfigKeys.ROW_LIMIT, row_limit)
+        """Set row count limit for this namespace. ``-1`` means unlimited; ``0`` blocks writes."""
+        self.set_ru_config({NamespaceRuConfigKeys.ROW_LIMIT: row_limit})
 
     def set_size_limit(self, size_limit: int) -> None:
-        """Set storage size limit in bytes for this namespace. ``-1`` means unlimited."""
-        self.set_ops_config(NamespaceOpsConfigKeys.SIZE_LIMIT, size_limit)
+        """Set storage size limit in bytes for this namespace. ``-1`` means unlimited; ``0`` blocks writes."""
+        self.set_ru_config({NamespaceRuConfigKeys.SIZE_LIMIT: size_limit})
 
     def set_ru_enabled(self, ru_enabled: int) -> None:
         """Enable (``1``) or disable (``0``) RU throttling for this namespace."""
-        self.set_ops_config(NamespaceOpsConfigKeys.RU_ENABLED, ru_enabled)
+        self.set_ru_config({NamespaceRuConfigKeys.RU_ENABLED: ru_enabled})
 
     def set_qps_burst(self, qps_burst: int) -> None:
-        """Set read QPS token-bucket capacity. ``-1`` keeps the current value."""
-        self.set_ops_config(NamespaceOpsConfigKeys.QPS_BURST, qps_burst)
+        """Set read QPS token-bucket capacity."""
+        if qps_burst < 0:
+            return
+        self.set_ru_config({NamespaceRuConfigKeys.QPS_BURST: qps_burst})
 
     def set_qps_refill(self, qps_refill: int) -> None:
-        """Set read QPS token-bucket refill per second. ``-1`` keeps the current value."""
-        self.set_ops_config(NamespaceOpsConfigKeys.QPS_REFILL, qps_refill)
+        """Set read QPS token-bucket refill per second."""
+        if qps_refill < 0:
+            return
+        self.set_ru_config({NamespaceRuConfigKeys.QPS_REFILL: qps_refill})
 
     def set_tps_burst(self, tps_burst: int) -> None:
-        """Set write TPS token-bucket capacity. ``-1`` keeps the current value."""
-        self.set_ops_config(NamespaceOpsConfigKeys.TPS_BURST, tps_burst)
+        """Set write TPS token-bucket capacity."""
+        if tps_burst < 0:
+            return
+        self.set_ru_config({NamespaceRuConfigKeys.TPS_BURST: tps_burst})
 
     def set_tps_refill(self, tps_refill: int) -> None:
-        """Set write TPS token-bucket refill per second. ``-1`` keeps the current value."""
-        self.set_ops_config(NamespaceOpsConfigKeys.TPS_REFILL, tps_refill)
+        """Set write TPS token-bucket refill per second."""
+        if tps_refill < 0:
+            return
+        self.set_ru_config({NamespaceRuConfigKeys.TPS_REFILL: tps_refill})
 
     def set_data_burst(self, data_burst: int) -> None:
-        """Set data-volume token-bucket capacity in bytes. ``-1`` keeps the current value."""
-        self.set_ops_config(NamespaceOpsConfigKeys.DATA_BURST, data_burst)
+        """Set data-volume token-bucket capacity in bytes."""
+        if data_burst < 0:
+            return
+        self.set_ru_config({NamespaceRuConfigKeys.DATA_BURST: data_burst})
 
     def set_data_refill(self, data_refill: int) -> None:
-        """Set data-volume token-bucket refill bytes per second. ``-1`` keeps the current value."""
-        self.set_ops_config(NamespaceOpsConfigKeys.DATA_REFILL, data_refill)
+        """Set data-volume token-bucket refill bytes per second."""
+        if data_refill < 0:
+            return
+        self.set_ru_config({NamespaceRuConfigKeys.DATA_REFILL: data_refill})

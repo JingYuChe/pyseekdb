@@ -86,18 +86,22 @@ class NamespaceCollectionNames:
         """Return the namespace-level stats table used by ObLogicalTableMonitor.
 
         Table ``sdk_namespace_stat`` stores per-namespace **measurements** only:
-        ``row_count``, ``total_size``, ``total_size_included_index``,
+        ``row_count``, ``total_size``, ``total_size_with_index``,
         ``last_gather_time``. Row/size **limits** live in
-        ``sdk_namespaces.info.ops_limit``; RU settings in ``$.ru_limit``.
+        ``sdk_namespaces.info`` (flat JSON: ``row_limit``, ``size_limit``, RU fields).
 
         See ``doc/agent_db监控运维/sdk_namespace_stat表说明.md``.
         """
         return "sdk_namespace_stat"
 
     @staticmethod
-    def logic_table_namespaces_stats_view() -> str:
-        """Return the SDK view joining collection/namespace names with namespace stats."""
-        return "logic_table_namespaces_stats"
+    def logic_table_namespace_stats_view() -> str:
+        """Return the SDK view joining collection/namespace names with namespace stats.
+
+        Read-only ops view over sdk_namespace_stat + sdk_namespaces + sdk_collections.
+        Created by ``_ensure_namespace_catalogs()`` (CREATE OR REPLACE VIEW).
+        """
+        return "logic_table_namespace_stats"
 
     @staticmethod
     def data_table_name(collection_id: str) -> str:
@@ -131,22 +135,22 @@ class NamespaceCollectionNames:
 
 
 class NamespaceStatsDefaults:
-    """Default row/size limits stored in sdk_namespaces.info.ops_limit."""
+    """Default row/size limits stored in sdk_namespaces.info (flat JSON)."""
 
     ROW_LIMIT = 1_000_000
     SIZE_LIMIT = 20 * 1024 * 1024 * 1024  # 20GB
 
     @staticmethod
     def default_ops_limit_json() -> str:
-        """JSON fragment for default ops_limit values."""
+        """JSON fragment for default row_limit / size_limit values."""
         return (
-            f'{{"ops_limit": {{"row_limit": {NamespaceStatsDefaults.ROW_LIMIT}, '
-            f'"size_limit": {NamespaceStatsDefaults.SIZE_LIMIT}}}}}'
+            f'{{"row_limit": {NamespaceStatsDefaults.ROW_LIMIT}, '
+            f'"size_limit": {NamespaceStatsDefaults.SIZE_LIMIT}}}'
         )
 
 
-class NamespaceOpsConfigKeys:
-    """Keys accepted by DBMS_LOGIC_TABLE.SET_NAMESPACE_OPS_CONFIG / SDK ops config APIs."""
+class NamespaceRuConfigKeys:
+    """Keys accepted by SET NAMESPACE RU CONFIG / SDK RU config APIs."""
 
     ROW_LIMIT = "row_limit"
     SIZE_LIMIT = "size_limit"
@@ -174,7 +178,7 @@ class NamespaceOpsConfigKeys:
 
 
 class NamespaceRuLimitDefaults:
-    """Kernel default RU token-bucket settings when ru_limit is absent in info."""
+    """Kernel default RU token-bucket settings when RU fields are absent in info."""
 
     RU_ENABLED = 1
     QPS_BURST = 200

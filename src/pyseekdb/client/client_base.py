@@ -56,7 +56,7 @@ from .meta_info import (
     CollectionNames,
     NamespaceCollectionNames,
     NamespaceFieldNames,
-    NamespaceOpsConfigKeys,
+    NamespaceRuConfigKeys,
     NamespaceStatsDefaults,
 )
 from .query_types import QueryHint
@@ -76,8 +76,9 @@ from .validators import (
     _validate_database_name,
     _validate_namespace_explicit_embedding_dimensions,
     _validate_namespace_name,
-    _validate_namespace_ops_config_key,
-    _validate_namespace_ops_config_value,
+    _validate_namespace_ru_config,
+    _validate_namespace_ru_config_key,
+    _validate_namespace_ru_config_value,
     _validate_record_ids,
 )
 from .version import Version
@@ -1407,19 +1408,19 @@ class BaseClient(BaseConnection, AdminAPI):
             namespace_id BIGINT UNSIGNED NOT NULL COMMENT 'namespace internal id',
             row_count BIGINT NOT NULL DEFAULT 0 COMMENT 'non-exact estimated row count from background sampling',
             total_size BIGINT NOT NULL DEFAULT 0 COMMENT 'storage size in bytes excluding index data',
-            total_size_included_index BIGINT NOT NULL DEFAULT 0 COMMENT 'storage size in bytes including index data',
+            total_size_with_index BIGINT NOT NULL DEFAULT 0 COMMENT 'storage size in bytes including index data',
             last_gather_time TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT 'last stats gather time',
             PRIMARY KEY (namespace_id),
             KEY idx_sdk_ns_stat_by_collection (collection_id)
         ) COMMENT='Namespace-level logic table statistics' DEFAULT CHARSET=utf8mb4 ORGANIZATION INDEX
         PARTITION BY KEY(namespace_id) PARTITIONS 8;"""
-        stats_view_q = self._qtable(NamespaceCollectionNames.logic_table_namespaces_stats_view())
+        stats_view_q = self._qtable(NamespaceCollectionNames.logic_table_namespace_stats_view())
         stats_view_sql = f"""CREATE OR REPLACE VIEW {stats_view_q} AS
             SELECT c.collection_name,
                    n.namespace_name,
                    s.row_count,
                    s.total_size,
-                   s.total_size_included_index,
+                   s.total_size_with_index,
                    s.last_gather_time
             FROM {ns_stat_q} s
             JOIN {ns_namespaces_q} n ON s.namespace_id = n.namespace_id
@@ -2041,37 +2042,23 @@ class BaseClient(BaseConnection, AdminAPI):
         self._set_session_ns_context(collection_id=collection_id, namespace_id=int(ns_id), ltable_id=lt_id)
         self._execute(f"CALL DBMS_LOGIC_TABLE.DROP_NAMESPACE('{collection_id_escaped}', {ns_id})")
 
-    def _set_namespace_ops_config(
+    def _set_namespace_ru_config(
         self,
         collection_name: str,
         namespace_name: str,
-        config_key: str,
-        config_value: int,
+        config: dict,
     ) -> None:
-        """Update namespace ops/RU limits in sdk_namespaces.info (same semantics as PL)."""
-        _validate_namespace_ops_config_key(config_key)
-        _validate_namespace_ops_config_value(config_key, config_value)
+        """Update namespace RU limits via SET NAMESPACE RU CONFIG."""
+        _validate_namespace_ru_config(config)
         _validate_namespace_name(namespace_name)
         self._use_catalog_database()
-        if config_key in (NamespaceOpsConfigKeys.ROW_LIMIT, NamespaceOpsConfigKeys.SIZE_LIMIT):
-            group_name = "ops_limit"
-            patch_body: dict[str, int] = {config_key: int(config_value)}
-        else:
-            group_name = "ru_limit"
-            patch_body = {config_key: int(config_value)}
-        patch_json = json.dumps({group_name: patch_body}, separators=(",", ":"))
-        patch_escaped = escape_string(patch_json)
+        config_json = json.dumps(config, separators=(",", ":"))
+        config_escaped = escape_string(config_json)
         collection_name_escaped = escape_string(collection_name)
         namespace_name_escaped = escape_string(namespace_name)
-        ns_table = self._qtable(NamespaceCollectionNames.sdk_namespaces_table())
-        coll_table = self._qtable(CollectionNames.sdk_collections_table_name())
-        self._execute_catalog(
-            f"UPDATE {ns_table} n "
-            f"JOIN {coll_table} c ON n.collection_id = c.collection_id "
-            f"SET n.info = JSON_MERGE_PATCH(COALESCE(n.info, CAST('{{}}' AS JSON)), "
-            f"CAST('{patch_escaped}' AS JSON)) "
-            f"WHERE c.collection_name = '{collection_name_escaped}' "
-            f"AND n.namespace_name = '{namespace_name_escaped}'"
+        self._execute(
+            "CALL DBMS_LOGIC_TABLE.SET_NAMESPACE_RU_CONFIG("
+            f"'{collection_name_escaped}', '{namespace_name_escaped}', '{config_escaped}')"
         )
 
     def _list_ns_namespaces(self, collection_id: str) -> list[dict]:

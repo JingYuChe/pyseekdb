@@ -45,9 +45,11 @@ class TestCollectionCatalogInsertRecovery:
     def test_insert_conflict_reuses_existing_collection_id(self):
         """Test insert conflict reuses existing collection id."""
         client = MagicMock(spec=BaseClient)
+        client._ns_session_context_active = False
         client._get_collection_id.side_effect = [ValueError("not found"), "existing_id"]
         conn = MagicMock()
         client._ensure_connection.return_value = conn
+        client._create_sdk_collections_if_not_exists = MagicMock()
 
         class IntegrityError(Exception):
             """IntegrityError class."""
@@ -60,7 +62,7 @@ class TestCollectionCatalogInsertRecovery:
                 raise IntegrityError("(1062, \"Duplicate entry 'items' for key 'uk_sdk_coll_name'\")")
             return []
 
-        client._execute.side_effect = execute_side_effect
+        client._execute_catalog.side_effect = execute_side_effect
 
         result = BaseClient._create_collection_meta_v2(client, "items", None)
 
@@ -71,12 +73,16 @@ class TestCollectionCatalogInsertRecovery:
     def test_existing_catalog_row_is_reused_without_insert(self):
         """Test existing catalog row is reused without insert."""
         client = MagicMock(spec=BaseClient)
+        client._ns_session_context_active = False
         client._get_collection_id.return_value = "existing_id"
+        client._create_sdk_collections_if_not_exists = MagicMock()
 
         result = BaseClient._create_collection_meta_v2(client, "items", None)
 
         assert result["collection_id"] == "existing_id"
-        insert_calls = [call for call in client._execute.call_args_list if "INSERT INTO" in str(call)]
+        insert_calls = [
+            call for call in client._execute_catalog.call_args_list if "INSERT INTO" in str(call)
+        ]
         assert not insert_calls
 
 
@@ -221,15 +227,16 @@ class TestListNsNamespacesRecyclebinFilter:
     def test_sql_excludes_recyclebin_rows(self):
         """Test sql excludes recyclebin rows."""
         client = MagicMock(spec=BaseClient)
+        client._ns_session_context_active = False
         client._qtable.return_value = "`sdk_namespaces`"
-        client._execute.return_value = [
+        client._execute_catalog.return_value = [
             ("1", "active_ns"),
         ]
 
         result = BaseClient._list_ns_namespaces(client, "coll_1")
 
         assert result == [{"namespace_id": "1", "namespace_name": "active_ns"}]
-        sql = client._execute.call_args[0][0]
+        sql = client._execute_catalog.call_args[0][0]
         assert "__recyclebin_" in sql
         assert "LEFT(namespace_name, 13) <> '__recyclebin_'" in sql
 

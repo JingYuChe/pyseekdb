@@ -6,8 +6,8 @@ ObLogicalTableMonitor::check_logical_table_row_limit
 
 New catalog model (monitor ops refactor):
 - Estimates: ``sdk_namespace_stat`` (row_count / total_size per namespace)
-- Limits: ``sdk_namespaces.info.ops_limit`` (row_limit / size_limit)
-- Readable join: ``logic_table_namespaces_stats`` view
+- Limits: flat ``sdk_namespaces.info`` (``row_limit`` / ``size_limit``)
+- Readable join: ``logic_table_namespace_stats`` view
 
 Admin/catalog SQL uses a context-free client; data-path DML uses namespace session
 vars (@collection_id / @namespace_id / @ltable_id) like RU tests.
@@ -71,7 +71,7 @@ def _assert_blocked(fn) -> None:
 
 
 class TestNamespaceStatsDefaults:
-    """SDK seeds default ops_limit into sdk_namespaces.info on namespace create."""
+    """SDK seeds default row_limit / size_limit into sdk_namespaces.info on namespace create."""
 
     def test_namespace_create_seeds_default_ops_limit(self, oceanbase_client):
         admin = _raw_client()
@@ -197,7 +197,7 @@ class TestNamespaceRowLimit:
                 namespace_id=ns_id,
                 row_count=5,
                 total_size=50,
-                total_size_included_index=80,
+                total_size_with_index=80,
             )
             monitor_style_upsert_stat(
                 admin,
@@ -205,7 +205,7 @@ class TestNamespaceRowLimit:
                 namespace_id=ns_id,
                 row_count=7,
                 total_size=70,
-                total_size_included_index=100,
+                total_size_with_index=100,
             )
 
             assert read_namespace_stat(admin, coll.id, ns_id, "row_count") == 7

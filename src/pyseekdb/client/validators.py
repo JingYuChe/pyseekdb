@@ -2,7 +2,7 @@
 
 import re
 
-from .meta_info import NamespaceOpsConfigKeys
+from .meta_info import NamespaceRuConfigKeys
 
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
 _MAX_NAME_LENGTH = 512
@@ -20,10 +20,7 @@ _VALID_INCLUDE_FIELDS = frozenset({
     "distance",
 })
 
-# Keys accepted by DBMS_LOGIC_TABLE.SET_NAMESPACE_OPS_CONFIG (kernel whitelist).
-
-_VALID_NAMESPACE_OPS_CONFIG_KEYS = NamespaceOpsConfigKeys.all_keys()
-
+_VALID_NAMESPACE_RU_CONFIG_KEYS = NamespaceRuConfigKeys.all_keys()
 
 def _validate_include(include: list[str] | None) -> None:
     """Validate ``include`` is a list of supported result field names."""
@@ -106,21 +103,41 @@ def _validate_record_ids(ids: list[str]) -> None:
             )
 
 
-def _validate_namespace_ops_config_key(config_key: str) -> None:
-    """Validate config_key for DBMS_LOGIC_TABLE.SET_NAMESPACE_OPS_CONFIG."""
+def _validate_namespace_ru_config_key(config_key: str) -> None:
+    """Validate config_key for SET NAMESPACE RU CONFIG."""
     if not isinstance(config_key, str):
         raise TypeError(f"config_key must be a string, got {type(config_key).__name__}")
-    if config_key not in _VALID_NAMESPACE_OPS_CONFIG_KEYS:
-        allowed = ", ".join(sorted(_VALID_NAMESPACE_OPS_CONFIG_KEYS))
+    if config_key not in _VALID_NAMESPACE_RU_CONFIG_KEYS:
+        allowed = ", ".join(sorted(_VALID_NAMESPACE_RU_CONFIG_KEYS))
         raise ValueError(f"Invalid config_key: '{config_key}'. Allowed values: {allowed}")
 
 
-def _validate_namespace_ops_config_value(config_key: str, config_value: int) -> None:
+def _validate_namespace_ru_config_value(config_key: str, config_value: int) -> None:
     """Validate config_value shape for a namespace ops config key."""
     if isinstance(config_value, bool) or not isinstance(config_value, int):
         raise TypeError(f"config_value must be an integer, got {type(config_value).__name__}")
-    if config_key == NamespaceOpsConfigKeys.RU_ENABLED and config_value not in (0, 1):
-        raise ValueError("config_value for 'ru_enabled' must be 0 or 1")
+    if config_key in (NamespaceRuConfigKeys.ROW_LIMIT, NamespaceRuConfigKeys.SIZE_LIMIT):
+        if config_value < -1:
+            raise ValueError(f"config_value for '{config_key}' must be -1, 0, or positive")
+    elif config_key == NamespaceRuConfigKeys.RU_ENABLED:
+        if config_value not in (0, 1):
+            raise ValueError("config_value for 'ru_enabled' must be 0 or 1")
+    elif config_value < 0:
+        raise ValueError(f"config_value for '{config_key}' must be non-negative")
+
+
+def _validate_namespace_ru_config(config: dict) -> None:
+    """Validate a flat JSON patch for SET NAMESPACE RU CONFIG."""
+    if not isinstance(config, dict):
+        raise TypeError(f"namespace ops config must be a dict, got {type(config).__name__}")
+    if not config:
+        raise ValueError("namespace ops config must contain at least one field")
+    unknown = set(config.keys()) - _VALID_NAMESPACE_RU_CONFIG_KEYS
+    if unknown:
+        allowed = ", ".join(sorted(_VALID_NAMESPACE_RU_CONFIG_KEYS))
+        raise ValueError(f"Invalid config_key: '{next(iter(unknown))}'. Allowed values: {allowed}")
+    for key, value in config.items():
+        _validate_namespace_ru_config_value(key, value)
 
 
 def _validate_namespace_explicit_embedding_dimensions(

@@ -1,5 +1,5 @@
 """
-Integration tests for logic_table_namespaces_stats view.
+Integration tests for logic_table_namespace_stats view.
 
 The view joins sdk_collections, sdk_namespaces and sdk_namespace_stat so ops
 can query human-readable collection/namespace names with monitor estimates.
@@ -33,8 +33,8 @@ def _raw_client():
     )
 
 
-class TestLogicTableNamespacesStatsView:
-    """Query logic_table_namespaces_stats after seeding sdk_namespace_stat."""
+class TestLogicTableNamespaceStatsView:
+    """Query logic_table_namespace_stats after seeding sdk_namespace_stat."""
 
     def test_view_returns_collection_and_namespace_names(self, oceanbase_client):
         admin = _raw_client()
@@ -55,7 +55,7 @@ class TestLogicTableNamespacesStatsView:
                 namespace_id=ns_id,
                 row_count=42,
                 total_size=420,
-                total_size_included_index=840,
+                total_size_with_index=840,
             )
 
             rows = query_stats_view(admin, collection_name=coll_name, namespace_name=ns_name)
@@ -65,7 +65,7 @@ class TestLogicTableNamespacesStatsView:
             nname = row["namespace_name"] if isinstance(row, dict) else row[1]
             rc = row["row_count"] if isinstance(row, dict) else row[2]
             ts = row["total_size"] if isinstance(row, dict) else row[3]
-            tsi = row["total_size_included_index"] if isinstance(row, dict) else row[4]
+            tsi = row["total_size_with_index"] if isinstance(row, dict) else row[4]
             assert cname == coll_name
             assert nname == ns_name
             assert int(rc) == 42
@@ -95,7 +95,7 @@ class TestLogicTableNamespacesStatsView:
                 namespace_id=ns_id,
                 row_count=11,
                 total_size=110,
-                total_size_included_index=220,
+                total_size_with_index=220,
             )
 
             assert read_namespace_stat(admin, coll.id, ns_id, "row_count") == 11
