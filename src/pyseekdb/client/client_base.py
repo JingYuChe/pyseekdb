@@ -57,7 +57,7 @@ from .meta_info import (
     CollectionNames,
     NamespaceCollectionNames,
     NamespaceFieldNames,
-    NamespaceRuConfigKeys,
+    NamespaceResourceLimitKeys,
     NamespaceStatsDefaults,
 )
 from .query_types import QueryHint
@@ -77,9 +77,9 @@ from .validators import (
     _validate_database_name,
     _validate_namespace_explicit_embedding_dimensions,
     _validate_namespace_name,
-    _validate_namespace_ru_config,
-    _validate_namespace_ru_config_key,
-    _validate_namespace_ru_config_value,
+    _validate_namespace_resource_limit,
+    _validate_namespace_resource_limit_key,
+    _validate_namespace_resource_limit_value,
     _validate_record_ids,
 )
 from .version import Version
@@ -2155,14 +2155,14 @@ class BaseClient(BaseConnection, AdminAPI):
         self._set_session_ns_context(collection_id=collection_id, namespace_id=int(ns_id), ltable_id=lt_id)
         self._execute(f"CALL DBMS_LOGIC_TABLE.DROP_NAMESPACE('{collection_id_escaped}', {ns_id})")
 
-    def _set_namespace_ru_config(
+    def _set_namespace_resource_limit(
         self,
         collection_name: str,
         namespace_name: str,
         config: dict,
     ) -> None:
         """Update namespace RU limits via SET NAMESPACE RU CONFIG."""
-        _validate_namespace_ru_config(config)
+        _validate_namespace_resource_limit(config)
         _validate_namespace_name(namespace_name)
         self._use_catalog_database()
         config_json = json.dumps(config, separators=(",", ":"))
@@ -2170,7 +2170,7 @@ class BaseClient(BaseConnection, AdminAPI):
         collection_name_escaped = escape_string(collection_name)
         namespace_name_escaped = escape_string(namespace_name)
         self._execute(
-            "CALL DBMS_LOGIC_TABLE.SET_NAMESPACE_RU_CONFIG("
+            "CALL DBMS_LOGIC_TABLE.SET_NAMESPACE_RESOURCE_LIMIT("
             f"'{collection_name_escaped}', '{namespace_name_escaped}', '{config_escaped}')"
         )
 

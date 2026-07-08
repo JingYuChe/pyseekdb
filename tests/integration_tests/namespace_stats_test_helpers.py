@@ -75,7 +75,7 @@ def set_ops_limit(
     )
 
 
-def set_ru_config_via_pl(
+def set_resource_limit_via_pl(
     admin,
     *,
     collection_name: str,
@@ -83,13 +83,13 @@ def set_ru_config_via_pl(
     config: dict,
 ) -> None:
     """Configure limits/RU via .SET NAMESPACE PS CONFIG (batch JSON)."""
-    from pyseekdb.client.validators import _validate_namespace_ru_config
+    from pyseekdb.client.validators import _validate_namespace_resource_limit
 
-    _validate_namespace_ru_config(config)
+    _validate_namespace_resource_limit(config)
     config_json = json.dumps(config, separators=(",", ":"))
     config_escaped = config_json.replace("'", "''")
     admin._server._execute(
-        "CALL DBMS_LOGIC_TABLE.SET_NAMESPACE_RU_CONFIG("
+        "CALL DBMS_LOGIC_TABLE.SET_NAMESPACE_RESOURCE_LIMIT("
         f"'{collection_name}', '{namespace_name}', '{config_escaped}')"
     )
 
@@ -159,7 +159,7 @@ def read_ops_limit(admin, collection_id: str, namespace_id: int, key: str) -> in
     return _read_info_field(admin, collection_id, namespace_id, key)
 
 
-def read_ru_limit(admin, collection_id: str, namespace_id: int, key: str) -> int | None:
+def read_resource_limit(admin, collection_id: str, namespace_id: int, key: str) -> int | None:
     return _read_info_field(admin, collection_id, namespace_id, key)
 
 
@@ -283,7 +283,7 @@ def restore_namespace_stats_job(admin) -> None:
     set_scheduler_attribute(admin, "repeat_interval", _DEFAULT_STATS_JOB_REPEAT)
 
 
-def call_ops_config_pl_raw(
+def call_resource_limit_pl_raw(
     admin,
     *,
     collection_name: str,
@@ -293,6 +293,6 @@ def call_ops_config_pl_raw(
     """Invoke SET NAMESPACE RU CONFIG without SDK-side validation (kernel tests)."""
     config_escaped = config_json.replace("'", "''")
     admin._server._execute(
-        "CALL DBMS_LOGIC_TABLE.SET_NAMESPACE_RU_CONFIG("
+        "CALL DBMS_LOGIC_TABLE.SET_NAMESPACE_RESOURCE_LIMIT("
         f"'{collection_name}', '{namespace_name}', '{config_escaped}')"
     )

@@ -149,12 +149,12 @@ class NamespaceStatsDefaults:
         )
 
 
-class NamespaceRuConfigKeys:
-    """Keys accepted by SET NAMESPACE RU CONFIG / SDK RU config APIs."""
+class NamespaceResourceLimitKeys:
+    """Keys accepted by SET_NAMESPACE_RESOURCE_LIMIT / SDK resource limit APIs."""
 
     ROW_LIMIT = "row_limit"
     SIZE_LIMIT = "size_limit"
-    RU_ENABLED = "ru_enabled"
+    RATE_LIMIT_ENABLE = "rate_limit_enable"
     QPS_BURST = "qps_burst"
     QPS_REFILL = "qps_refill"
     TPS_BURST = "tps_burst"
@@ -167,7 +167,7 @@ class NamespaceRuConfigKeys:
         return frozenset({
             cls.ROW_LIMIT,
             cls.SIZE_LIMIT,
-            cls.RU_ENABLED,
+            cls.RATE_LIMIT_ENABLE,
             cls.QPS_BURST,
             cls.QPS_REFILL,
             cls.TPS_BURST,
@@ -177,10 +177,10 @@ class NamespaceRuConfigKeys:
         })
 
 
-class NamespaceRuLimitDefaults:
+class NamespaceRateLimitDefaults:
     """Kernel default RU token-bucket settings when RU fields are absent in info."""
 
-    RU_ENABLED = 1
+    RATE_LIMIT_ENABLE = 1
     QPS_BURST = 200
     QPS_REFILL = 100
     TPS_BURST = 100

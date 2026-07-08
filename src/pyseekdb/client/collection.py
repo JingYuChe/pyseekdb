@@ -10,11 +10,11 @@ Design Pattern:
 
 from typing import TYPE_CHECKING, Any, Optional
 
-from .meta_info import NamespaceRuConfigKeys
+from .meta_info import NamespaceResourceLimitKeys
 from .validators import (
     _validate_n_results,
     _validate_namespace_name,
-    _validate_namespace_ru_config,
+    _validate_namespace_resource_limit,
 )
 
 if TYPE_CHECKING:
@@ -196,66 +196,66 @@ class Collection:
         _validate_namespace_name(name)
         self._client._delete_ns_namespace_meta(self._id, name)
 
-    def set_namespace_ru_config(self, namespace_name: str, config: dict) -> None:
+    def set_namespace_resource_limit(self, namespace_name: str, config: dict) -> None:
         """Configure namespace row/size limits or RU token-bucket settings.
 
-        ``config`` is a flat JSON object. Keys: ``row_limit``, ``size_limit``, ``ru_enabled``,
+        ``config`` is a flat JSON object. Keys: ``row_limit``, ``size_limit``, ``rate_limit_enable``,
         ``qps_burst``, ``qps_refill``, ``tps_burst``, ``tps_refill``, ``data_burst``,
         ``data_refill``. ``row_limit`` / ``size_limit``: ``-1`` unlimited, ``0`` block writes.
-        ``ru_enabled`` must be ``0`` (disable throttling) or ``1`` (enable).
+        ``rate_limit_enable`` must be ``0`` (disable throttling) or ``1`` (enable).
         """
         self._guard_namespace_enabled()
         _validate_namespace_name(namespace_name)
-        _validate_namespace_ru_config(config)
-        self._client._set_namespace_ru_config(self.name, namespace_name, config)
+        _validate_namespace_resource_limit(config)
+        self._client._set_namespace_resource_limit(self.name, namespace_name, config)
 
     def set_namespace_row_limit(self, namespace_name: str, row_limit: int) -> None:
         """Set per-namespace row count limit. ``-1`` means unlimited; ``0`` blocks writes."""
-        self.set_namespace_ru_config(namespace_name, {NamespaceRuConfigKeys.ROW_LIMIT: row_limit})
+        self.set_namespace_resource_limit(namespace_name, {NamespaceResourceLimitKeys.ROW_LIMIT: row_limit})
 
     def set_namespace_size_limit(self, namespace_name: str, size_limit: int) -> None:
         """Set per-namespace storage size limit in bytes. ``-1`` means unlimited; ``0`` blocks writes."""
-        self.set_namespace_ru_config(namespace_name, {NamespaceRuConfigKeys.SIZE_LIMIT: size_limit})
+        self.set_namespace_resource_limit(namespace_name, {NamespaceResourceLimitKeys.SIZE_LIMIT: size_limit})
 
-    def set_namespace_ru_enabled(self, namespace_name: str, ru_enabled: int) -> None:
+    def set_namespace_rate_limit_enable(self, namespace_name: str, rate_limit_enable: int) -> None:
         """Enable (``1``) or disable (``0``) per-namespace RU throttling."""
-        self.set_namespace_ru_config(namespace_name, {NamespaceRuConfigKeys.RU_ENABLED: ru_enabled})
+        self.set_namespace_resource_limit(namespace_name, {NamespaceResourceLimitKeys.RATE_LIMIT_ENABLE: rate_limit_enable})
 
     def set_namespace_qps_burst(self, namespace_name: str, qps_burst: int) -> None:
         """Set read QPS token-bucket capacity."""
         if qps_burst < 0:
             return
-        self.set_namespace_ru_config(namespace_name, {NamespaceRuConfigKeys.QPS_BURST: qps_burst})
+        self.set_namespace_resource_limit(namespace_name, {NamespaceResourceLimitKeys.QPS_BURST: qps_burst})
 
     def set_namespace_qps_refill(self, namespace_name: str, qps_refill: int) -> None:
         """Set read QPS token-bucket refill per second."""
         if qps_refill < 0:
             return
-        self.set_namespace_ru_config(namespace_name, {NamespaceRuConfigKeys.QPS_REFILL: qps_refill})
+        self.set_namespace_resource_limit(namespace_name, {NamespaceResourceLimitKeys.QPS_REFILL: qps_refill})
 
     def set_namespace_tps_burst(self, namespace_name: str, tps_burst: int) -> None:
         """Set write TPS token-bucket capacity."""
         if tps_burst < 0:
             return
-        self.set_namespace_ru_config(namespace_name, {NamespaceRuConfigKeys.TPS_BURST: tps_burst})
+        self.set_namespace_resource_limit(namespace_name, {NamespaceResourceLimitKeys.TPS_BURST: tps_burst})
 
     def set_namespace_tps_refill(self, namespace_name: str, tps_refill: int) -> None:
         """Set write TPS token-bucket refill per second."""
         if tps_refill < 0:
             return
-        self.set_namespace_ru_config(namespace_name, {NamespaceRuConfigKeys.TPS_REFILL: tps_refill})
+        self.set_namespace_resource_limit(namespace_name, {NamespaceResourceLimitKeys.TPS_REFILL: tps_refill})
 
     def set_namespace_data_burst(self, namespace_name: str, data_burst: int) -> None:
         """Set data-volume token-bucket capacity in bytes."""
         if data_burst < 0:
             return
-        self.set_namespace_ru_config(namespace_name, {NamespaceRuConfigKeys.DATA_BURST: data_burst})
+        self.set_namespace_resource_limit(namespace_name, {NamespaceResourceLimitKeys.DATA_BURST: data_burst})
 
     def set_namespace_data_refill(self, namespace_name: str, data_refill: int) -> None:
         """Set data-volume token-bucket refill bytes per second."""
         if data_refill < 0:
             return
-        self.set_namespace_ru_config(namespace_name, {NamespaceRuConfigKeys.DATA_REFILL: data_refill})
+        self.set_namespace_resource_limit(namespace_name, {NamespaceResourceLimitKeys.DATA_REFILL: data_refill})
 
     def list_namespaces(self) -> list["Namespace"]:
         """List all active namespaces in this collection."""

@@ -7,14 +7,14 @@ ObPxAdmission::check_namespace_rate_limit → ObNamespaceRUManager::acquire:
 - TPS throttling: a burst of write statements on one namespace eventually gets
   OB_KILLED_BY_THROTTLING (errno 4039) once the per-namespace TPS bucket
   (default burst 100 / refill 50/s) is exhausted.
-- refresh_config: writing ``{"ru_enabled": 0}`` into sdk_namespaces.info
+- refresh_config: writing ``{"rate_limit_enable": 0}`` into sdk_namespaces.info
   and then tripping a throttle makes the controller reload config from the
   internal table (lazy, on-throttle) and lift the limit — proving
   controller->refresh_config reads sdk_namespaces.info and applies it.
 
 RU limiting is rate/time dependent, so throttling counts are not asserted
 exactly; the tests assert the qualitative behaviour (throttle happens; after
-ru_enabled=0 + a throttle, the tail of a burst stops failing).
+rate_limit_enable=0 + a throttle, the tail of a burst stops failing).
 """
 
 from __future__ import annotations
@@ -77,7 +77,7 @@ def _set_info(admin, collection_id: str, namespace_id: int, info_json: str) -> N
 
 
 def _set_info_ru_disabled(admin, collection_id: str, namespace_id: int) -> None:
-    _set_info(admin, collection_id, namespace_id, '{"ru_enabled": 0}')
+    _set_info(admin, collection_id, namespace_id, '{"rate_limit_enable": 0}')
 
 
 class TestNamespaceRuLimit:
@@ -108,10 +108,10 @@ class TestNamespaceRuLimit:
             owner.delete_collection(name=name)
 
     def test_refresh_config_from_info_disables_limit(self, oceanbase_client):
-        """ru_enabled=0 in sdk_namespaces.info, loaded lazily on the first throttle, lifts the limit.
+        """rate_limit_enable=0 in sdk_namespaces.info, loaded lazily on the first throttle, lifts the limit.
 
         Note the limiter's 2-minute refresh cooldown: only the FIRST throttle on a fresh
-        controller refreshes (last_refresh_time==0). So ru_enabled=0 must already be in the
+        controller refreshes (last_refresh_time==0). So rate_limit_enable=0 must already be in the
         internal table before the burst — then the first throttle loads it and the tail clears.
         """
         owner = oceanbase_client
@@ -131,12 +131,12 @@ class TestNamespaceRuLimit:
             _set_info_ru_disabled(admin, coll.id, ns_id)
 
             # Burst: first ~100 pass the default burst, ~101 trips a throttle which triggers
-            # refresh_config -> reads ru_enabled=0 -> buckets unlimited -> the rest all pass.
+            # refresh_config -> reads rate_limit_enable=0 -> buckets unlimited -> the rest all pass.
             blocked = _hammer(ns, 0, 300)
             assert sum(blocked) >= 1, "expected the default limit to trip at least once (which triggers refresh)"
             tail = blocked[-100:]
             assert sum(tail) == 0, (
-                f"after refresh loaded ru_enabled=0 the tail must stop throttling; "
+                f"after refresh loaded rate_limit_enable=0 the tail must stop throttling; "
                 f"tail_blocked={sum(tail)}/{len(tail)}, total_blocked={sum(blocked)}"
             )
         finally:
@@ -145,7 +145,7 @@ class TestNamespaceRuLimit:
             _close(admin)
 
     def test_refresh_config_numeric_override_lifts_limit(self, oceanbase_client):
-        """Large qps/tps burst+refill in info (not ru_enabled=0) also lifts the limit."""
+        """Large qps/tps burst+refill in info (not rate_limit_enable=0) also lifts the limit."""
         owner = oceanbase_client
         admin = _raw_client()
         name = f"ru_num_{uuid.uuid4().hex[:12]}"
@@ -162,7 +162,7 @@ class TestNamespaceRuLimit:
                 admin,
                 coll.id,
                 ns_id,
-                '{"ru_enabled": 1, "qps_burst": 1000000, "qps_refill": 1000000, '
+                '{"rate_limit_enable": 1, "qps_burst": 1000000, "qps_refill": 1000000, '
                 '"tps_burst": 1000000, "tps_refill": 1000000}',
             )
             blocked = _hammer(ns, 0, 300)
@@ -175,7 +175,7 @@ class TestNamespaceRuLimit:
             _close(admin)
 
     def test_refresh_config_malformed_info_is_safe(self, oceanbase_client):
-        """Malformed ru_enabled field must not crash refresh and must not disable the default limit."""
+        """Malformed rate_limit_enable field must not crash refresh and must not disable the default limit."""
         owner = oceanbase_client
         admin = _raw_client()
         name = f"ru_bad_{uuid.uuid4().hex[:12]}"
@@ -188,9 +188,9 @@ class TestNamespaceRuLimit:
         try:
             ns = coll.get_or_create_namespace("ns_bad")
             ns_id = int(ns.namespace_id)
-            # ru_enabled is a string, not a number -> JSON_EXTRACT('$.ru_enabled') is invalid
+            # rate_limit_enable is a string, not a number -> JSON_EXTRACT('$.rate_limit_enable') is invalid
             # -> IFNULL defaults keep the safe built-in limits; must not raise a non-throttle error.
-            _set_info(admin, coll.id, ns_id, '{"ru_enabled": "garbage"}')
+            _set_info(admin, coll.id, ns_id, '{"rate_limit_enable": "garbage"}')
             # _hammer re-raises any NON-throttle exception, so reaching the assert means no crash.
             blocked = _hammer(ns, 0, 300)
             assert sum(blocked) > 0, (

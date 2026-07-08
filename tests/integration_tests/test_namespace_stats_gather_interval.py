@@ -2,7 +2,7 @@
 Integration tests for logic_table_namespace_stats_job (DBMS_Scheduler internal job).
 
 Namespace stats gathering interval is configured via DBMS_SCHEDULER.SET_ATTRIBUTE on
-``logic_table_namespace_stats_job`` (see SET_NAMESPACE_RU_CONFIG interface doc §二).
+``logic_table_namespace_stats_job`` (see SET_NAMESPACE_RESOURCE_LIMIT interface doc §二).
 """
 
 from __future__ import annotations

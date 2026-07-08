@@ -2,7 +2,7 @@
 Integration tests for namespace RU config via SDK public API.
 
 Exercises Collection/Namespace convenience config methods and
-DBMS_LOGIC_TABLE.SET_NAMESPACE_RU_CONFIG under the hood.
+DBMS_LOGIC_TABLE.SET_NAMESPACE_RESOURCE_LIMIT under the hood.
 """
 
 from __future__ import annotations
@@ -14,15 +14,15 @@ import pytest
 
 from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT, ns_schema
 from namespace_stats_test_helpers import (
-    call_ops_config_pl_raw,
+    call_resource_limit_pl_raw,
     read_ops_limit,
-    read_ru_limit,
-    set_ru_config_via_pl,
+    read_resource_limit,
+    set_resource_limit_via_pl,
     upsert_namespace_stat,
 )
 
 import pyseekdb
-from pyseekdb.client.meta_info import NamespaceRuConfigKeys
+from pyseekdb.client.meta_info import NamespaceResourceLimitKeys
 
 
 def _raw_client():
@@ -92,7 +92,7 @@ def _assert_entry_not_exist(exc: Exception) -> None:
     assert "5269" in str(exc) or "entry" in msg or "not exist" in msg or "not found" in msg
 
 
-class TestNamespaceRuConfigViaSdk:
+class TestNamespaceResourceLimitViaSdk:
     def test_namespace_set_row_limit(self, oceanbase_client):
         admin = _raw_client()
         coll_name = f"ops_sdk_{uuid.uuid4().hex[:10]}"
@@ -131,7 +131,7 @@ class TestNamespaceRuConfigViaSdk:
             oceanbase_client.delete_collection(name=coll_name)
             _close(admin)
 
-    def test_set_ru_enabled(self, oceanbase_client):
+    def test_set_rate_limit_enable(self, oceanbase_client):
         admin = _raw_client()
         coll_name = f"ops_ru_{uuid.uuid4().hex[:10]}"
         coll = oceanbase_client.create_collection(
@@ -143,10 +143,10 @@ class TestNamespaceRuConfigViaSdk:
         try:
             ns = coll.get_or_create_namespace("ops_ns_ru")
             ns_id = int(ns.namespace_id)
-            ns.set_ru_enabled(0)
-            assert read_ru_limit(admin, coll.id, ns_id, "ru_enabled") == 0
-            ns.set_ru_enabled(1)
-            assert read_ru_limit(admin, coll.id, ns_id, "ru_enabled") == 1
+            ns.set_rate_limit_enable(0)
+            assert read_resource_limit(admin, coll.id, ns_id, "rate_limit_enable") == 0
+            ns.set_rate_limit_enable(1)
+            assert read_resource_limit(admin, coll.id, ns_id, "rate_limit_enable") == 1
         finally:
             oceanbase_client.delete_collection(name=coll_name)
             _close(admin)
@@ -154,12 +154,12 @@ class TestNamespaceRuConfigViaSdk:
     @pytest.mark.parametrize(
         ("method_name", "config_key", "config_value"),
         [
-            ("set_qps_burst", NamespaceRuConfigKeys.QPS_BURST, 300),
-            ("set_qps_refill", NamespaceRuConfigKeys.QPS_REFILL, 150),
-            ("set_tps_burst", NamespaceRuConfigKeys.TPS_BURST, 200),
-            ("set_tps_refill", NamespaceRuConfigKeys.TPS_REFILL, 80),
-            ("set_data_burst", NamespaceRuConfigKeys.DATA_BURST, 60 * 1024 * 1024),
-            ("set_data_refill", NamespaceRuConfigKeys.DATA_REFILL, 15 * 1024 * 1024),
+            ("set_qps_burst", NamespaceResourceLimitKeys.QPS_BURST, 300),
+            ("set_qps_refill", NamespaceResourceLimitKeys.QPS_REFILL, 150),
+            ("set_tps_burst", NamespaceResourceLimitKeys.TPS_BURST, 200),
+            ("set_tps_refill", NamespaceResourceLimitKeys.TPS_REFILL, 80),
+            ("set_data_burst", NamespaceResourceLimitKeys.DATA_BURST, 60 * 1024 * 1024),
+            ("set_data_refill", NamespaceResourceLimitKeys.DATA_REFILL, 15 * 1024 * 1024),
         ],
     )
     def test_ru_token_bucket_setters(self, oceanbase_client, method_name, config_key, config_value):
@@ -175,7 +175,7 @@ class TestNamespaceRuConfigViaSdk:
             ns = coll.get_or_create_namespace("ru_bucket_ns")
             ns_id = int(ns.namespace_id)
             getattr(ns, method_name)(config_value)
-            assert read_ru_limit(admin, coll.id, ns_id, config_key) == config_value
+            assert read_resource_limit(admin, coll.id, ns_id, config_key) == config_value
         finally:
             oceanbase_client.delete_collection(name=coll_name)
             _close(admin)
@@ -191,15 +191,15 @@ class TestNamespaceRuConfigViaSdk:
         try:
             ns = coll.get_or_create_namespace("bad_ns")
             with pytest.raises(ValueError, match="Invalid config_key"):
-                ns.set_ru_config({"bogus_key": 1})
+                ns.set_resource_limit({"bogus_key": 1})
             with pytest.raises(ValueError, match="Invalid config_key"):
-                ns.set_ru_config({"enabled": 1})
+                ns.set_resource_limit({"enabled": 1})
             with pytest.raises(ValueError, match="Invalid config_key"):
-                coll.set_namespace_ru_config("bad_ns", {"row_limit_extra": 1})
+                coll.set_namespace_resource_limit("bad_ns", {"row_limit_extra": 1})
         finally:
             oceanbase_client.delete_collection(name=coll_name)
 
-    def test_invalid_ru_enabled_value_rejected_before_pl(self, oceanbase_client):
+    def test_invalid_rate_limit_enable_value_rejected_before_pl(self, oceanbase_client):
         coll_name = f"ops_en_{uuid.uuid4().hex[:10]}"
         coll = oceanbase_client.create_collection(
             name=coll_name,
@@ -209,14 +209,14 @@ class TestNamespaceRuConfigViaSdk:
         )
         try:
             ns = coll.get_or_create_namespace("en_ns")
-            with pytest.raises(ValueError, match="ru_enabled"):
-                ns.set_ru_enabled(2)
+            with pytest.raises(ValueError, match="rate_limit_enable"):
+                ns.set_rate_limit_enable(2)
         finally:
             oceanbase_client.delete_collection(name=coll_name)
 
 
-class TestNamespaceRuConfigPlInvalidValues:
-    """Kernel-side validation for DBMS_LOGIC_TABLE.SET_NAMESPACE_RU_CONFIG."""
+class TestNamespaceResourceLimitPlInvalidValues:
+    """Kernel-side validation for DBMS_LOGIC_TABLE.SET_NAMESPACE_RESOURCE_LIMIT."""
 
     @pytest.fixture
     def ops_ns(self, oceanbase_client):
@@ -247,7 +247,7 @@ class TestNamespaceRuConfigPlInvalidValues:
         [
             '{"row_limit": -2}',
             '{"size_limit": -3}',
-            '{"ru_enabled": 2}',
+            '{"rate_limit_enable": 2}',
             '{"tps_burst": -1}',
             '{"bogus_key": 1}',
             '{"ops_limit": {"row_limit": 1}}',
@@ -257,7 +257,7 @@ class TestNamespaceRuConfigPlInvalidValues:
         ids=[
             "row_limit_negative",
             "size_limit_negative",
-            "ru_enabled_out_of_range",
+            "rate_limit_enable_out_of_range",
             "negative_tps_burst",
             "unknown_top_level_key",
             "nested_ops_limit_object",
@@ -267,7 +267,7 @@ class TestNamespaceRuConfigPlInvalidValues:
     )
     def test_pl_rejects_invalid_config_json(self, ops_ns, config_json):
         admin = ops_ns["admin"]
-        set_ru_config_via_pl(
+        set_resource_limit_via_pl(
             admin,
             collection_name=ops_ns["coll_name"],
             namespace_name=ops_ns["ns_name"],
@@ -276,7 +276,7 @@ class TestNamespaceRuConfigPlInvalidValues:
         assert read_ops_limit(admin, ops_ns["coll_id"], ops_ns["ns_id"], "row_limit") == 100
 
         with pytest.raises(Exception) as excinfo:
-            call_ops_config_pl_raw(
+            call_resource_limit_pl_raw(
                 admin,
                 collection_name=ops_ns["coll_name"],
                 namespace_name=ops_ns["ns_name"],
@@ -288,7 +288,7 @@ class TestNamespaceRuConfigPlInvalidValues:
     def test_pl_rejects_nonexistent_namespace(self, ops_ns):
         admin = ops_ns["admin"]
         with pytest.raises(Exception) as excinfo:
-            call_ops_config_pl_raw(
+            call_resource_limit_pl_raw(
                 admin,
                 collection_name=ops_ns["coll_name"],
                 namespace_name="no_such_namespace",
@@ -299,7 +299,7 @@ class TestNamespaceRuConfigPlInvalidValues:
     def test_pl_rejects_nonexistent_collection(self, ops_ns):
         admin = ops_ns["admin"]
         with pytest.raises(Exception) as excinfo:
-            call_ops_config_pl_raw(
+            call_resource_limit_pl_raw(
                 admin,
                 collection_name="no_such_collection",
                 namespace_name=ops_ns["ns_name"],
@@ -309,18 +309,18 @@ class TestNamespaceRuConfigPlInvalidValues:
 
     def test_pl_accepts_valid_batch_json(self, ops_ns):
         admin = ops_ns["admin"]
-        set_ru_config_via_pl(
+        set_resource_limit_via_pl(
             admin,
             collection_name=ops_ns["coll_name"],
             namespace_name=ops_ns["ns_name"],
-            config={"row_limit": 2, "tps_burst": 200, "ru_enabled": 1},
+            config={"row_limit": 2, "tps_burst": 200, "rate_limit_enable": 1},
         )
         assert read_ops_limit(admin, ops_ns["coll_id"], ops_ns["ns_id"], "row_limit") == 2
-        assert read_ru_limit(admin, ops_ns["coll_id"], ops_ns["ns_id"], "tps_burst") == 200
-        assert read_ru_limit(admin, ops_ns["coll_id"], ops_ns["ns_id"], "ru_enabled") == 1
+        assert read_resource_limit(admin, ops_ns["coll_id"], ops_ns["ns_id"], "tps_burst") == 200
+        assert read_resource_limit(admin, ops_ns["coll_id"], ops_ns["ns_id"], "rate_limit_enable") == 1
 
 
-class TestNamespaceRuConfigEnforcement:
+class TestNamespaceResourceLimitEnforcement:
     def test_row_limit_via_sdk_blocks_insert(self, oceanbase_client):
         admin = _raw_client()
         coll_name = f"ops_rl_{uuid.uuid4().hex[:10]}"
@@ -370,11 +370,11 @@ class TestNamespaceRuConfigEnforcement:
         )
         try:
             ns = coll.get_or_create_namespace("tps_ns")
-            ns.set_ru_config(
+            ns.set_resource_limit(
                 {
-                    NamespaceRuConfigKeys.RU_ENABLED: 1,
-                    NamespaceRuConfigKeys.TPS_BURST: 10,
-                    NamespaceRuConfigKeys.TPS_REFILL: 0,
+                    NamespaceResourceLimitKeys.RATE_LIMIT_ENABLE: 1,
+                    NamespaceResourceLimitKeys.TPS_BURST: 10,
+                    NamespaceResourceLimitKeys.TPS_REFILL: 0,
                 }
             )
             blocked = _hammer(ns, 0, 300)
@@ -385,7 +385,7 @@ class TestNamespaceRuConfigEnforcement:
             time.sleep(6)
             oceanbase_client.delete_collection(name=coll_name)
 
-    def test_ru_enabled_zero_via_sdk_disables_throttling(self, oceanbase_client):
+    def test_rate_limit_enable_zero_via_sdk_disables_throttling(self, oceanbase_client):
         admin = _raw_client()
         coll_name = f"ops_ru0_{uuid.uuid4().hex[:10]}"
         coll = oceanbase_client.create_collection(
@@ -397,14 +397,14 @@ class TestNamespaceRuConfigEnforcement:
         try:
             ns = coll.get_or_create_namespace("ru0_ns")
             ns_id = int(ns.namespace_id)
-            ns.set_ru_enabled(0)
-            assert read_ru_limit(admin, coll.id, ns_id, "ru_enabled") == 0
+            ns.set_rate_limit_enable(0)
+            assert read_resource_limit(admin, coll.id, ns_id, "rate_limit_enable") == 0
 
             blocked = _hammer(ns, 0, 300)
             assert sum(blocked) >= 1, "expected the default limit to trip at least once (which triggers refresh)"
             tail = blocked[-100:]
             assert sum(tail) == 0, (
-                f"after refresh loaded ru_enabled=0 the tail must stop throttling; "
+                f"after refresh loaded rate_limit_enable=0 the tail must stop throttling; "
                 f"tail_blocked={sum(tail)}/{len(tail)}, total_blocked={sum(blocked)}"
             )
         finally:
