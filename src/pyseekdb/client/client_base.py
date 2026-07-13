@@ -5881,7 +5881,8 @@ class BaseClient(BaseConnection, AdminAPI):
 
         doc_case_parts = []
         meta_case_parts = []
-        params = []
+        doc_params: list = []
+        meta_params: list = []
         has_doc = False
         has_meta = False
         batch_ids = []
@@ -5890,7 +5891,7 @@ class BaseClient(BaseConnection, AdminAPI):
             if documents and i < len(documents) and documents[i] is not None:
                 has_doc = True
                 doc_case_parts.append(f"WHEN {id_expr} = %s THEN %s")
-                params.extend([record_id, documents[i]])
+                doc_params.extend([record_id, documents[i]])
                 if record_id not in list(batch_ids):
                     batch_ids.append(record_id)
             if metadatas and i < len(metadatas) and metadatas[i] is not None:
@@ -5899,7 +5900,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 meta_case_parts.append(
                     f"WHEN {id_expr} = %s THEN JSON_SET(data_content, '$.metadata', CAST(%s AS JSON))"
                 )
-                params.extend([record_id, meta_json])
+                meta_params.extend([record_id, meta_json])
                 if record_id not in batch_ids:
                     batch_ids.append(record_id)
 
@@ -5911,7 +5912,7 @@ class BaseClient(BaseConnection, AdminAPI):
                 set_clauses.append(f"data_content = CASE {' '.join(meta_case_parts)} ELSE data_content END")
 
             id_placeholders = ", ".join(["%s"] * len(batch_ids))
-            params.extend(batch_ids)
+            params = doc_params + meta_params + batch_ids
 
             sql = (
                 f"UPDATE `{table_name}` SET {', '.join(set_clauses)} "

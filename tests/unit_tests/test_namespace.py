@@ -713,6 +713,26 @@ class TestNamespaceSQLGeneration:
         assert "'Updated'" in doc_sql
         assert "namespace_id = 7" in doc_sql
 
+    def test_update_batch_document_and_metadata_param_order(self):
+        """Batch update binds document CASE params before metadata CASE params."""
+        c = self._client()
+        c._namespace_update(
+            **self._ivf_kwargs(),
+            ids=["d1", "d2"],
+            embeddings=[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+            documents=["doc one", "doc two"],
+            metadatas=[{"tag": "a"}, {"tag": "b"}],
+        )
+        sql = c.executed_sqls[-1]
+        assert "document = CASE" in sql
+        assert "data_content = CASE" in sql
+        assert "THEN 'doc one'" in sql
+        assert "THEN 'doc two'" in sql
+        assert '"tag": "a"' in sql or '\\"tag\\": \\"a\\"' in sql
+        assert '"tag": "b"' in sql or '\\"tag\\": \\"b\\"' in sql
+        assert "CAST('doc one' AS JSON)" not in sql
+        assert "CAST('doc two' AS JSON)" not in sql
+
     # ---- DELETE ----
 
     def test_delete_by_ids_sql(self):

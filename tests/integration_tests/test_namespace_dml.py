@@ -158,6 +158,30 @@ class TestNamespaceDML:
         finally:
             cleanup(db_client, collection)
 
+    def test_upsert_batch_existing_document_and_metadata(self, db_client):
+        """Batch upsert on existing ids must bind document/metadata CASE params in SQL order."""
+        collection = create_ns_collection(db_client, suffix="_upsbatch")
+        ns = _create_namespace(collection, "dml_ns")
+        try:
+            ns.add(
+                ids=["up_a", "up_b"],
+                embeddings=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                documents=["alpha", "beta"],
+                metadatas=[{"v": 1}, {"v": 2}],
+            )
+            ns.upsert(
+                ids=["up_a", "up_b"],
+                embeddings=[[0.5, 0.5, 0.0], [0.0, 0.5, 0.5]],
+                documents=["alpha-upd", "beta-upd"],
+                metadatas=[{"v": 10}, {"v": 20}],
+            )
+            result = ns.get(ids=["up_a", "up_b"], include=["documents", "metadatas"])
+            assert result["ids"] == ["up_a", "up_b"]
+            assert result["documents"] == ["alpha-upd", "beta-upd"]
+            assert result["metadatas"] == [{"v": 10}, {"v": 20}]
+        finally:
+            cleanup(db_client, collection)
+
     def test_upsert_new(self, db_client):
         """Test upsert new."""
         collection = create_ns_collection(db_client, suffix="_upsnew")
