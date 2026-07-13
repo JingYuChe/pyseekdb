@@ -296,3 +296,67 @@ def call_resource_limit_pl_raw(
         "CALL DBMS_LOGIC_TABLE.SET_NAMESPACE_RESOURCE_LIMIT("
         f"'{collection_name}', '{namespace_name}', '{config_escaped}')"
     )
+
+
+# UINT64_MAX / OB_INVALID_ID sentinel — must never appear in sdk_namespace_stat.
+_INVALID_NAMESPACE_ID = 18446744073709551615
+
+
+def _scalar_count(admin, sql: str) -> int:
+    rows = admin._server._execute(sql)
+    row = rows[0]
+    return int(row["cnt"] if isinstance(row, dict) else row[0])
+
+
+def trigger_gather_namespace_stats(admin) -> None:
+    """Run kernel monitor gather (same entry as logic_table_namespace_stats_job)."""
+    admin._server._execute("CALL DBMS_LOGIC_TABLE.GATHER_NAMESPACE_STATS_INNER()")
+
+
+def count_stat_uint64_max_rows(admin) -> int:
+    return _scalar_count(
+        admin,
+        f"SELECT COUNT(*) AS cnt FROM sdk_namespace_stat "
+        f"WHERE namespace_id = {_INVALID_NAMESPACE_ID} OR namespace_id = 0",
+    )
+
+
+def count_namespace_uint64_max_rows(admin) -> int:
+    return _scalar_count(
+        admin,
+        f"SELECT COUNT(*) AS cnt FROM sdk_namespaces "
+        f"WHERE namespace_id = {_INVALID_NAMESPACE_ID} OR namespace_id = 0",
+    )
+
+
+def count_orphan_namespace_stat_rows(admin) -> int:
+    """Stat rows whose namespace_id is absent from sdk_namespaces."""
+    return _scalar_count(
+        admin,
+        "SELECT COUNT(*) AS cnt FROM sdk_namespace_stat s "
+        "LEFT JOIN sdk_namespaces n "
+        "ON s.collection_id = n.collection_id AND s.namespace_id = n.namespace_id "
+        "WHERE n.namespace_id IS NULL",
+    )
+
+
+def list_suspicious_namespace_stat_rows(admin, limit: int = 20):
+    """Return stat rows with sentinel ids or missing namespace join."""
+    return admin._server._execute(
+        "SELECT s.collection_id, s.namespace_id, s.row_count, s.total_size, s.last_gather_time "
+        "FROM sdk_namespace_stat s "
+        "LEFT JOIN sdk_namespaces n "
+        "ON s.collection_id = n.collection_id AND s.namespace_id = n.namespace_id "
+        f"WHERE s.namespace_id = {_INVALID_NAMESPACE_ID} OR s.namespace_id = 0 "
+        "OR n.namespace_id IS NULL "
+        f"LIMIT {int(limit)}"
+    )
+
+
+def table_exists(admin, table_name: str) -> bool:
+    rows = admin._server._execute(
+        "SELECT COUNT(*) AS cnt FROM information_schema.tables "
+        f"WHERE table_schema = DATABASE() AND table_name = '{table_name}'"
+    )
+    row = rows[0]
+    return int(row["cnt"] if isinstance(row, dict) else row[0]) > 0
