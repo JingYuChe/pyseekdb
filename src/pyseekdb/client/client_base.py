@@ -1886,6 +1886,8 @@ class BaseClient(BaseConnection, AdminAPI):
         Only namespace-enabled collections use @collection_id/@namespace_id/@ltable_id.
         Standard v2 collections must not touch these session vars.
         """
+        if collection_id is not None and namespace_id is not None:
+            self._ensure_namespace_live(collection_id, int(namespace_id))
         if collection_id is not None:
             self._execute(f"SET @collection_id = '{escape_string(str(collection_id))}'")
         if namespace_id is not None:
@@ -2140,6 +2142,19 @@ class BaseClient(BaseConnection, AdminAPI):
             f"AND LEFT(namespace_name, 13) <> '__recyclebin_'"
         )
         return bool(rows)
+
+    def _ensure_namespace_live(self, collection_id: str, namespace_id: int) -> None:
+        """Re-check catalog immediately before namespace DML/DQL uses session context."""
+        if not self._ns_collection_exists_by_id(collection_id):
+            raise ValueError(
+                f"Collection no longer exists (it may have been deleted). "
+                "Namespace operations are not allowed on a deleted collection."
+            )
+        if not self._ns_namespace_exists_by_id(collection_id, str(namespace_id)):
+            raise ValueError(
+                f"Namespace with id {int(namespace_id)} no longer exists (it or its collection may have been deleted). "
+                "Operations are not allowed on a deleted namespace."
+            )
 
     def _delete_ns_namespace_meta(self, collection_id: str, namespace_name: str) -> None:
         """Delete namespace metadata from the catalog."""
