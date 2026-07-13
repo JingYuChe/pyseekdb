@@ -5762,6 +5762,60 @@ class BaseClient(BaseConnection, AdminAPI):
         sql = f"INSERT INTO `{table_name}` ({columns}) VALUES {','.join(values_list)}"
         self._execute(sql)
 
+    def _execute_namespace_update_sql(
+        self,
+        conn,
+        sql: str,
+        params: list,
+        *,
+        use_context_manager: bool,
+    ) -> None:
+        """Execute a parameterized namespace row UPDATE."""
+        if use_context_manager:
+            with conn.cursor() as cursor:
+                cursor.execute(sql, params)
+        else:
+            cursor = conn.cursor()
+            try:
+                cursor.execute(sql, params)
+            finally:
+                cursor.close()
+
+    def _namespace_update_one_row(
+        self,
+        conn,
+        *,
+        table_name: str,
+        ns_id: int,
+        ltable_id: int,
+        id_expr: str,
+        record_id: str,
+        embedding: list[float] | None = None,
+        document: str | None = None,
+        metadata: dict | None = None,
+        use_context_manager: bool,
+    ) -> None:
+        """Atomically update all provided columns on one namespace row."""
+        set_clauses: list[str] = []
+        params: list = []
+        if embedding is not None:
+            set_clauses.append(f"embedding = {_embedding_to_hexstring(embedding)}")
+        if document is not None:
+            set_clauses.append("document = %s")
+            params.append(document)
+        if metadata is not None:
+            set_clauses.append("data_content = JSON_SET(data_content, '$.metadata', CAST(%s AS JSON))")
+            params.append(json.dumps(metadata, ensure_ascii=False))
+        if not set_clauses:
+            return
+        params.append(record_id)
+        sql = (
+            f"UPDATE `{table_name}` SET {', '.join(set_clauses)} "
+            f"WHERE namespace_id = {ns_id} AND ltable_id = {ltable_id} "
+            f"AND {id_expr} = %s"
+        )
+        self._execute_namespace_update_sql(conn, sql, params, use_context_manager=use_context_manager)
+
     @namespace_kernel_error_guard
     def _namespace_update(
         self,
@@ -5854,57 +5908,69 @@ class BaseClient(BaseConnection, AdminAPI):
         conn = self._ensure_connection()
         use_context_manager = self._use_context_manager_for_cursor()
 
-        # VECTOR columns do not support CASE-WHEN in OceanBase, so embedding
-        # updates are executed per-row while document/metadata use batch CASE-WHEN.
-        emb_ids = []
-        for i, record_id in active_ids:
-            if embeddings and i < len(embeddings) and embeddings[i] is not None:
-                emb_ids.append((i, record_id))
-
-        if emb_ids:
-            for i, record_id in emb_ids:
-                vec_sql = _embedding_to_hexstring(embeddings[i])
-                sql = (
-                    f"UPDATE `{table_name}` SET embedding = {vec_sql} "
-                    f"WHERE namespace_id = {ns_id} AND ltable_id = {ltable_id} "
-                    f"AND {id_expr} = %s"
-                )
-                if use_context_manager:
-                    with conn.cursor() as cursor:
-                        cursor.execute(sql, [record_id])
-                else:
-                    cursor = conn.cursor()
-                    try:
-                        cursor.execute(sql, [record_id])
-                    finally:
-                        cursor.close()
-
-        doc_case_parts = []
-        meta_case_parts = []
-        doc_params: list = []
-        meta_params: list = []
-        has_doc = False
-        has_meta = False
-        batch_ids = []
+        emb_only_rows: list[tuple[int, str]] = []
+        batch_rows: list[tuple[int, str]] = []
 
         for i, record_id in active_ids:
-            if documents and i < len(documents) and documents[i] is not None:
-                has_doc = True
-                doc_case_parts.append(f"WHEN {id_expr} = %s THEN %s")
-                doc_params.extend([record_id, documents[i]])
-                if record_id not in list(batch_ids):
-                    batch_ids.append(record_id)
-            if metadatas and i < len(metadatas) and metadatas[i] is not None:
-                has_meta = True
-                meta_json = json.dumps(metadatas[i], ensure_ascii=False)
-                meta_case_parts.append(
-                    f"WHEN {id_expr} = %s THEN JSON_SET(data_content, '$.metadata', CAST(%s AS JSON))"
-                )
-                meta_params.extend([record_id, meta_json])
-                if record_id not in batch_ids:
-                    batch_ids.append(record_id)
+            has_emb = bool(embeddings and i < len(embeddings) and embeddings[i] is not None)
+            has_doc = bool(documents and i < len(documents) and documents[i] is not None)
+            has_meta = bool(metadatas and i < len(metadatas) and metadatas[i] is not None)
 
-        if has_doc or has_meta:
+            if has_emb and (has_doc or has_meta):
+                self._namespace_update_one_row(
+                    conn,
+                    table_name=table_name,
+                    ns_id=ns_id,
+                    ltable_id=ltable_id,
+                    id_expr=id_expr,
+                    record_id=record_id,
+                    embedding=embeddings[i],
+                    document=documents[i] if has_doc else None,
+                    metadata=metadatas[i] if has_meta else None,
+                    use_context_manager=use_context_manager,
+                )
+            else:
+                if has_emb:
+                    emb_only_rows.append((i, record_id))
+                if has_doc or has_meta:
+                    batch_rows.append((i, record_id))
+
+        for i, record_id in emb_only_rows:
+            sql = (
+                f"UPDATE `{table_name}` SET embedding = {_embedding_to_hexstring(embeddings[i])} "
+                f"WHERE namespace_id = {ns_id} AND ltable_id = {ltable_id} "
+                f"AND {id_expr} = %s"
+            )
+            self._execute_namespace_update_sql(
+                conn, sql, [record_id], use_context_manager=use_context_manager
+            )
+
+        if batch_rows:
+            doc_case_parts = []
+            meta_case_parts = []
+            doc_params: list = []
+            meta_params: list = []
+            has_doc = False
+            has_meta = False
+            batch_ids: list[str] = []
+
+            for i, record_id in batch_rows:
+                if documents and i < len(documents) and documents[i] is not None:
+                    has_doc = True
+                    doc_case_parts.append(f"WHEN {id_expr} = %s THEN %s")
+                    doc_params.extend([record_id, documents[i]])
+                    if record_id not in batch_ids:
+                        batch_ids.append(record_id)
+                if metadatas and i < len(metadatas) and metadatas[i] is not None:
+                    has_meta = True
+                    meta_json = json.dumps(metadatas[i], ensure_ascii=False)
+                    meta_case_parts.append(
+                        f"WHEN {id_expr} = %s THEN JSON_SET(data_content, '$.metadata', CAST(%s AS JSON))"
+                    )
+                    meta_params.extend([record_id, meta_json])
+                    if record_id not in batch_ids:
+                        batch_ids.append(record_id)
+
             set_clauses = []
             if has_doc:
                 set_clauses.append(f"document = CASE {' '.join(doc_case_parts)} ELSE document END")
@@ -5913,21 +5979,12 @@ class BaseClient(BaseConnection, AdminAPI):
 
             id_placeholders = ", ".join(["%s"] * len(batch_ids))
             params = doc_params + meta_params + batch_ids
-
             sql = (
                 f"UPDATE `{table_name}` SET {', '.join(set_clauses)} "
                 f"WHERE namespace_id = {ns_id} AND ltable_id = {ltable_id} "
                 f"AND {id_expr} IN ({id_placeholders})"
             )
-            if use_context_manager:
-                with conn.cursor() as cursor:
-                    cursor.execute(sql, params)
-            else:
-                cursor = conn.cursor()
-                try:
-                    cursor.execute(sql, params)
-                finally:
-                    cursor.close()
+            self._execute_namespace_update_sql(conn, sql, params, use_context_manager=use_context_manager)
 
     @namespace_kernel_error_guard
     def _namespace_upsert(

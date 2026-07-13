@@ -705,16 +705,29 @@ class TestNamespaceSQLGeneration:
             embeddings=[9.0, 8.0, 7.0],
             documents="Updated",
         )
-        emb_sql = c.executed_sqls[-2]
-        assert "embedding = X'" in emb_sql
-        assert "namespace_id = 7" in emb_sql
-        doc_sql = c.executed_sqls[-1]
-        assert "CASE" in doc_sql
-        assert "'Updated'" in doc_sql
-        assert "namespace_id = 7" in doc_sql
+        sql = c.executed_sqls[-1]
+        assert "embedding = X'" in sql
+        assert "document = 'Updated'" in sql
+        assert "CASE" not in sql
+        assert "namespace_id = 7" in sql
+
+    def test_update_embedding_and_metadata_single_sql(self):
+        """Embedding + metadata on one row must be a single atomic UPDATE."""
+        c = self._client()
+        c._namespace_update(
+            **self._ivf_kwargs(),
+            ids="d1",
+            embeddings=[1.0, 2.0, 3.0],
+            metadatas={"writer": 0},
+        )
+        sql = c.executed_sqls[-1]
+        assert "embedding = X'" in sql
+        assert "JSON_SET(data_content, '$.metadata'," in sql
+        assert '"writer": 0' in sql or '\\"writer\\": 0' in sql
+        assert "CASE" not in sql
 
     def test_update_batch_document_and_metadata_param_order(self):
-        """Batch update binds document CASE params before metadata CASE params."""
+        """Batch embedding+document+metadata uses one atomic UPDATE per row."""
         c = self._client()
         c._namespace_update(
             **self._ivf_kwargs(),
@@ -723,15 +736,18 @@ class TestNamespaceSQLGeneration:
             documents=["doc one", "doc two"],
             metadatas=[{"tag": "a"}, {"tag": "b"}],
         )
-        sql = c.executed_sqls[-1]
-        assert "document = CASE" in sql
-        assert "data_content = CASE" in sql
-        assert "THEN 'doc one'" in sql
-        assert "THEN 'doc two'" in sql
-        assert '"tag": "a"' in sql or '\\"tag\\": \\"a\\"' in sql
-        assert '"tag": "b"' in sql or '\\"tag\\": \\"b\\"' in sql
-        assert "CAST('doc one' AS JSON)" not in sql
-        assert "CAST('doc two' AS JSON)" not in sql
+        update_sqls = [s for s in c.executed_sqls if s.startswith("UPDATE")]
+        assert len(update_sqls) == 2
+        for sql in update_sqls:
+            assert "embedding = X'" in sql
+            assert "document = " in sql
+            assert "JSON_SET(data_content, '$.metadata'," in sql
+            assert "CASE" not in sql
+        combined = "\n".join(update_sqls)
+        assert "doc one" in combined
+        assert "doc two" in combined
+        assert '"tag": "a"' in combined or '\\"tag\\": \\"a\\"' in combined
+        assert '"tag": "b"' in combined or '\\"tag\\": \\"b\\"' in combined
 
     # ---- DELETE ----
 
