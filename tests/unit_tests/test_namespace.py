@@ -424,6 +424,7 @@ class FakeClient(BaseClient):
         self.executed_sqls = []
         self.query_sqls = []
         self.query_return_value = []
+        self.update_rowcount = 1
 
     def _ensure_connection(self):
         """Ensure connection."""
@@ -432,6 +433,8 @@ class FakeClient(BaseClient):
 
         class CaptureCursor:
             """CaptureCursor class."""
+
+            rowcount = 0
 
             def execute(self, sql, params=None):
                 """Execute."""
@@ -442,6 +445,13 @@ class FakeClient(BaseClient):
                 if os.environ.get("PYSEEKDB_PRINT_SQL", "").lower() in ("1", "true", "yes"):
                     print(f"[pyseekdb SQL] {resolved}", flush=True)
                 client.executed_sqls.append(resolved)
+                upper = resolved.strip().upper()
+                if upper.startswith("UPDATE"):
+                    self.rowcount = client.update_rowcount
+                elif upper.startswith("DELETE"):
+                    self.rowcount = 1
+                else:
+                    self.rowcount = 1
 
             def __enter__(self):
                 """Enter."""
@@ -486,6 +496,12 @@ class FakeClient(BaseClient):
         if os.environ.get("PYSEEKDB_PRINT_SQL", "").lower() in ("1", "true", "yes"):
             print(f"[pyseekdb SQL] {resolved}", flush=True)
         self.query_sqls.append(resolved)
+        if "GET_LOCK" in resolved:
+            return [{"got": 1}]
+        if "COUNT(*)" in resolved and self.query_return_value:
+            return self.query_return_value
+        if "COUNT(*)" in resolved:
+            return [{"cnt": 1}]
         return self.query_return_value
 
     def is_connected(self):
@@ -748,6 +764,44 @@ class TestNamespaceSQLGeneration:
         assert "doc two" in combined
         assert '"tag": "a"' in combined or '\\"tag\\": \\"a\\"' in combined
         assert '"tag": "b"' in combined or '\\"tag\\": \\"b\\"' in combined
+
+    def test_upsert_new_record_update_then_insert(self):
+        """Upsert on missing id tries UPDATE first, then INSERT."""
+        c = self._client()
+        c.update_rowcount = 0
+        c._namespace_upsert(
+            **self._ivf_kwargs(),
+            ids="up_new",
+            embeddings=[1.0, 2.0, 3.0],
+            metadatas={"fresh": True},
+        )
+        dml_sqls = [
+            s
+            for s in c.executed_sqls
+            if s.startswith("UPDATE") or s.startswith("INSERT")
+        ]
+        assert len(dml_sqls) >= 2
+        assert dml_sqls[0].startswith("UPDATE")
+        assert dml_sqls[1].startswith("INSERT")
+        assert "up_new" in dml_sqls[1]
+
+    def test_upsert_existing_record_update_only(self):
+        """Upsert on existing id uses UPDATE without INSERT."""
+        c = self._client()
+        c.update_rowcount = 1
+        c.query_return_value = [{"cnt": 1}]
+        c._namespace_upsert(
+            **self._ivf_kwargs(),
+            ids="up1",
+            embeddings=[4.0, 5.0, 6.0],
+            metadatas={"v": 2},
+        )
+        update_sqls = [s for s in c.executed_sqls if s.startswith("UPDATE")]
+        insert_sqls = [s for s in c.executed_sqls if s.startswith("INSERT INTO")]
+        assert update_sqls
+        assert not insert_sqls
+        assert "embedding = X'" in update_sqls[0]
+        assert "JSON_SET(data_content, '$.metadata'," in update_sqls[0]
 
     # ---- DELETE ----
 

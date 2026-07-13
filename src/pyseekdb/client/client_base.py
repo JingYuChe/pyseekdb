@@ -5570,82 +5570,211 @@ class BaseClient(BaseConnection, AdminAPI):
             return int(row[0])
         return int(row)
 
+    def _execute_namespace_dml_sql(
+        self,
+        conn,
+        sql: str,
+        params: list,
+        *,
+        use_context_manager: bool,
+    ) -> int:
+        """Execute a namespace DML statement and return the affected-row count."""
+        if use_context_manager:
+            with conn.cursor() as cursor:
+                cursor.execute(sql, params)
+                return int(getattr(cursor, "rowcount", 0) or 0)
+        cursor = conn.cursor()
+        try:
+            cursor.execute(sql, params)
+            return int(getattr(cursor, "rowcount", 0) or 0)
+        finally:
+            cursor.close()
+
     def _delete_namespace_records_by_id(
         self,
         table_name: str,
         namespace_id: int,
         ltable_id: int,
         record_id: str,
-    ) -> None:
-        """Delete namespace records matching the given id."""
+        *,
+        conn=None,
+        use_context_manager: bool | None = None,
+        limit: int | None = None,
+    ) -> int:
+        """Delete namespace records matching the given id, optionally capped by limit."""
         id_expr = _NS_DATA_CONTENT_ID_EXPR
+        limit_clause = f" LIMIT {int(limit)}" if limit is not None else ""
         sql = (
             f"DELETE FROM `{table_name}` "
             f"WHERE namespace_id = {int(namespace_id)} AND ltable_id = {int(ltable_id)} "
-            f"AND {id_expr} = %s"
+            f"AND {id_expr} = %s{limit_clause}"
         )
-        conn = self._ensure_connection()
-        use_ctx = self._use_context_manager_for_cursor()
-        if use_ctx:
-            with conn.cursor() as cursor:
-                cursor.execute(sql, [record_id])
-        else:
-            cursor = conn.cursor()
-            try:
-                cursor.execute(sql, [record_id])
-            finally:
-                cursor.close()
+        if conn is None:
+            conn = self._ensure_connection()
+        if use_context_manager is None:
+            use_context_manager = self._use_context_manager_for_cursor()
+        return self._execute_namespace_dml_sql(
+            conn, sql, [record_id], use_context_manager=use_context_manager
+        )
 
-    def _reconcile_namespace_duplicate_records(
+    def _namespace_upsert_lock_key(self, namespace_id: int, ltable_id: int, record_id: str) -> str:
+        """Build a server-wide lock key for one namespace business id."""
+        return f"pyseekdb:ns_upsert:{int(namespace_id)}:{int(ltable_id)}:{record_id}"
+
+    def _acquire_namespace_upsert_lock(
         self,
-        collection_id: str | None,
-        collection_name: str,
-        namespace_id: str,
-        namespace_name: str,
-        ltable_id: int,
-        table_name: str,
-        ids: list[str],
-        documents: list[str] | None,
-        metadatas: list[dict] | None,
-        embeddings: list[list[float]] | None,
-        embedding_function: EmbeddingFunction[EmbeddingDocuments] | None,
+        conn,
+        lock_key: str,
         *,
-        has_vector_index: bool = True,
-        collection_dimension: int | None = None,
-        **kwargs: Any,
+        timeout_seconds: int = 10,
+        use_context_manager: bool,
+    ) -> bool:
+        """Acquire a MySQL advisory lock for one namespace upsert."""
+        rows = self._execute_query_with_cursor(
+            conn,
+            "SELECT GET_LOCK(%s, %s) AS got",
+            [lock_key, timeout_seconds],
+            use_context_manager,
+        )
+        if not rows:
+            return False
+        got = rows[0].get("got") if isinstance(rows[0], dict) else rows[0][0]
+        return int(got) == 1
+
+    def _release_namespace_upsert_lock(
+        self,
+        conn,
+        lock_key: str,
+        *,
+        use_context_manager: bool,
     ) -> None:
-        """Collapse concurrent upsert races to a single row per business id."""
-        if not ids or collection_id is None:
-            return
+        """Release a MySQL advisory lock for one namespace upsert."""
+        with contextlib.suppress(Exception):
+            self._execute_query_with_cursor(
+                conn,
+                "SELECT RELEASE_LOCK(%s)",
+                [lock_key],
+                use_context_manager,
+            )
+
+    def _delete_namespace_newest_duplicate_rows(
+        self,
+        table_name: str,
+        namespace_id: int,
+        ltable_id: int,
+        record_id: str,
+        delete_count: int,
+        *,
+        conn=None,
+        use_context_manager: bool | None = None,
+    ) -> int:
+        """Delete the newest duplicate rows for one business id."""
+        if delete_count <= 0:
+            return 0
+        id_expr = _NS_DATA_CONTENT_ID_EXPR
         ns_id = int(namespace_id)
-        for i, record_id in enumerate(ids):
-            doc_val = documents[i] if documents and i < len(documents) else None
-            meta_val = metadatas[i] if metadatas and i < len(metadatas) else None
-            emb_val = embeddings[i] if embeddings and i < len(embeddings) else None
-            for attempt in range(120):
-                duplicate_count = self._count_namespace_records_by_id(table_name, ns_id, ltable_id, record_id)
-                if duplicate_count <= 1:
-                    break
-                self._delete_namespace_records_by_id(table_name, ns_id, ltable_id, record_id)
-                if self._count_namespace_records_by_id(table_name, ns_id, ltable_id, record_id) == 0:
-                    self._namespace_add(
-                        collection_id=collection_id,
-                        collection_name=collection_name,
-                        namespace_id=namespace_id,
-                        namespace_name=namespace_name,
-                        ids=[record_id],
-                        embeddings=[emb_val] if emb_val is not None else None,
-                        metadatas=[meta_val] if meta_val is not None else None,
-                        documents=[doc_val] if doc_val is not None else None,
-                        embedding_function=embedding_function,
-                        has_vector_index=has_vector_index,
-                        collection_dimension=collection_dimension,
-                        **kwargs,
-                    )
-                if attempt < 119:
-                    time.sleep(0.05 * min(attempt + 1, 10))
-            else:
-                raise ValueError(f"Failed to reconcile duplicate namespace rows for record_id={record_id!r}")
+        lt_id = int(ltable_id)
+        sql = (
+            f"DELETE FROM `{table_name}` "
+            f"WHERE namespace_id = {ns_id} AND ltable_id = {lt_id} "
+            f"AND {id_expr} = %s "
+            f"ORDER BY created_at DESC "
+            f"LIMIT {int(delete_count)}"
+        )
+        if conn is None:
+            conn = self._ensure_connection()
+        if use_context_manager is None:
+            use_context_manager = self._use_context_manager_for_cursor()
+        return self._execute_namespace_dml_sql(
+            conn, sql, [record_id], use_context_manager=use_context_manager
+        )
+
+    def _delete_namespace_duplicate_rows_keep_oldest(
+        self,
+        table_name: str,
+        namespace_id: int,
+        ltable_id: int,
+        record_id: str,
+        *,
+        conn=None,
+        use_context_manager: bool | None = None,
+    ) -> int:
+        """Delete duplicate rows for one business id, keeping the oldest created_at row."""
+        id_expr = _NS_DATA_CONTENT_ID_EXPR
+        ns_id = int(namespace_id)
+        lt_id = int(ltable_id)
+        sql = (
+            f"DELETE FROM `{table_name}` "
+            f"WHERE namespace_id = {ns_id} AND ltable_id = {lt_id} "
+            f"AND {id_expr} = %s "
+            f"AND created_at > ("
+            f"SELECT min_created FROM ("
+            f"SELECT MIN(created_at) AS min_created FROM `{table_name}` "
+            f"WHERE namespace_id = {ns_id} AND ltable_id = {lt_id} "
+            f"AND {id_expr} = %s"
+            f") AS keeper)"
+        )
+        if conn is None:
+            conn = self._ensure_connection()
+        if use_context_manager is None:
+            use_context_manager = self._use_context_manager_for_cursor()
+        return self._execute_namespace_dml_sql(
+            conn, sql, [record_id, record_id], use_context_manager=use_context_manager
+        )
+
+    def _dedupe_namespace_records_by_id(
+        self,
+        table_name: str,
+        namespace_id: int,
+        ltable_id: int,
+        record_id: str,
+        *,
+        conn=None,
+        use_context_manager: bool | None = None,
+    ) -> None:
+        """Delete extra duplicate rows for one business id, keeping at least one survivor."""
+        ns_id = int(namespace_id)
+        if conn is None:
+            conn = self._ensure_connection()
+        if use_context_manager is None:
+            use_context_manager = self._use_context_manager_for_cursor()
+        for attempt in range(20):
+            duplicate_count = self._count_namespace_records_by_id(table_name, ns_id, ltable_id, record_id)
+            if duplicate_count <= 1:
+                return
+            deleted = self._delete_namespace_newest_duplicate_rows(
+                table_name,
+                ns_id,
+                ltable_id,
+                record_id,
+                1,
+                conn=conn,
+                use_context_manager=use_context_manager,
+            )
+            if deleted == 0 and attempt < 19:
+                time.sleep(0.01 * min(attempt + 1, 5))
+                continue
+            if attempt < 19:
+                time.sleep(0.01 * min(attempt + 1, 5))
+        if self._count_namespace_records_by_id(table_name, ns_id, ltable_id, record_id) > 1:
+            raise ValueError(f"Failed to reconcile duplicate namespace rows for record_id={record_id!r}")
+
+    def _namespace_run_in_transaction(
+        self,
+        conn,
+        *,
+        use_context_manager: bool,
+        callback,
+    ) -> None:
+        """Run callback inside START TRANSACTION / COMMIT when supported."""
+        self._execute_namespace_dml_sql(conn, "START TRANSACTION", [], use_context_manager=use_context_manager)
+        try:
+            callback()
+            self._execute_namespace_dml_sql(conn, "COMMIT", [], use_context_manager=use_context_manager)
+        except Exception:
+            with contextlib.suppress(Exception):
+                self._execute_namespace_dml_sql(conn, "ROLLBACK", [], use_context_manager=use_context_manager)
+            raise
 
     @namespace_kernel_error_guard
     def _namespace_add(
@@ -5769,17 +5898,41 @@ class BaseClient(BaseConnection, AdminAPI):
         params: list,
         *,
         use_context_manager: bool,
+    ) -> int:
+        """Execute a parameterized namespace row UPDATE and return affected-row count."""
+        return self._execute_namespace_dml_sql(conn, sql, params, use_context_manager=use_context_manager)
+
+    def _namespace_insert_one_row(
+        self,
+        conn,
+        *,
+        table_name: str,
+        ns_id: int,
+        ltable_id: int,
+        record_id: str,
+        document: str | None = None,
+        metadata: dict | None = None,
+        embedding: list[float] | None = None,
+        use_context_manager: bool,
     ) -> None:
-        """Execute a parameterized namespace row UPDATE."""
-        if use_context_manager:
-            with conn.cursor() as cursor:
-                cursor.execute(sql, params)
-        else:
-            cursor = conn.cursor()
-            try:
-                cursor.execute(sql, params)
-            finally:
-                cursor.close()
+        """Insert one namespace row."""
+        doc_sql = f"'{escape_string(document)}'" if document is not None else "NULL"
+        vec_sql = "NULL" if embedding is None else _embedding_to_hexstring(embedding)
+        data_content: dict[str, Any] = {"id": record_id}
+        if metadata is not None:
+            data_content["metadata"] = metadata
+        dc_json = json.dumps(data_content, ensure_ascii=False)
+        dc_sql = f"'{escape_string(dc_json)}'"
+        columns = (
+            f"{NamespaceFieldNames.NAMESPACE_ID}, {NamespaceFieldNames.LTABLE_ID}, "
+            f"{NamespaceFieldNames.DOCUMENT}, {NamespaceFieldNames.EMBEDDING}, "
+            f"{NamespaceFieldNames.DATA_CONTENT}"
+        )
+        sql = (
+            f"INSERT INTO `{table_name}` ({columns}) "
+            f"VALUES ({ns_id}, {ltable_id}, {doc_sql}, {vec_sql}, {dc_sql})"
+        )
+        self._execute_namespace_dml_sql(conn, sql, [], use_context_manager=use_context_manager)
 
     def _namespace_update_one_row(
         self,
@@ -5794,7 +5947,7 @@ class BaseClient(BaseConnection, AdminAPI):
         document: str | None = None,
         metadata: dict | None = None,
         use_context_manager: bool,
-    ) -> None:
+    ) -> int:
         """Atomically update all provided columns on one namespace row."""
         set_clauses: list[str] = []
         params: list = []
@@ -5807,14 +5960,74 @@ class BaseClient(BaseConnection, AdminAPI):
             set_clauses.append("data_content = JSON_SET(data_content, '$.metadata', CAST(%s AS JSON))")
             params.append(json.dumps(metadata, ensure_ascii=False))
         if not set_clauses:
-            return
+            return 0
         params.append(record_id)
         sql = (
             f"UPDATE `{table_name}` SET {', '.join(set_clauses)} "
             f"WHERE namespace_id = {ns_id} AND ltable_id = {ltable_id} "
             f"AND {id_expr} = %s"
         )
-        self._execute_namespace_update_sql(conn, sql, params, use_context_manager=use_context_manager)
+        return self._execute_namespace_update_sql(conn, sql, params, use_context_manager=use_context_manager)
+
+    def _namespace_upsert_one_row(
+        self,
+        conn,
+        *,
+        table_name: str,
+        ns_id: int,
+        ltable_id: int,
+        id_expr: str,
+        record_id: str,
+        document: str | None = None,
+        metadata: dict | None = None,
+        embedding: list[float] | None = None,
+        use_context_manager: bool,
+    ) -> None:
+        """Update-first upsert for one business id, then collapse duplicate rows."""
+        affected = self._namespace_update_one_row(
+            conn,
+            table_name=table_name,
+            ns_id=ns_id,
+            ltable_id=ltable_id,
+            id_expr=id_expr,
+            record_id=record_id,
+            embedding=embedding,
+            document=document,
+            metadata=metadata,
+            use_context_manager=use_context_manager,
+        )
+        if affected == 0:
+            self._namespace_insert_one_row(
+                conn,
+                table_name=table_name,
+                ns_id=ns_id,
+                ltable_id=ltable_id,
+                record_id=record_id,
+                document=document,
+                metadata=metadata,
+                embedding=embedding,
+                use_context_manager=use_context_manager,
+            )
+        self._dedupe_namespace_records_by_id(
+            table_name,
+            ns_id,
+            ltable_id,
+            record_id,
+            conn=conn,
+            use_context_manager=use_context_manager,
+        )
+        if self._count_namespace_records_by_id(table_name, ns_id, ltable_id, record_id) == 0:
+            self._namespace_insert_one_row(
+                conn,
+                table_name=table_name,
+                ns_id=ns_id,
+                ltable_id=ltable_id,
+                record_id=record_id,
+                document=document,
+                metadata=metadata,
+                embedding=embedding,
+                use_context_manager=use_context_manager,
+            )
 
     @namespace_kernel_error_guard
     def _namespace_update(
@@ -6003,12 +6216,7 @@ class BaseClient(BaseConnection, AdminAPI):
         """Insert or update records in a namespace collection."""
         has_vector_index = kwargs.pop("has_vector_index", True)
         collection_dimension = kwargs.pop("collection_dimension", None)
-        ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
-        self._set_session_ns_context(
-            collection_id=collection_id,
-            namespace_id=int(namespace_id),
-            ltable_id=ltable_id,
-        )
+        explicit_embeddings = embeddings is not None
         if isinstance(ids, str):
             ids = [ids]
         _validate_record_ids(ids)
@@ -6028,90 +6236,86 @@ class BaseClient(BaseConnection, AdminAPI):
         ):
             embeddings = [embeddings]
 
-        table_name = NamespaceCollectionNames.data_table_name(collection_id)
-        ns_id = int(namespace_id)
-
-        existing_ids = set()
-        id_expr = _NS_DATA_CONTENT_ID_EXPR
-        id_placeholders = ", ".join(["%s"] * len(ids))
-        check_sql = (
-            f"SELECT JSON_EXTRACT(data_content, '$.id') AS rid FROM `{table_name}` "
-            f"WHERE namespace_id = {ns_id} AND ltable_id = {ltable_id} "
-            f"AND {id_expr} IN ({id_placeholders})"
-        )
-        conn = self._ensure_connection()
-        use_ctx = self._use_context_manager_for_cursor()
-        rows = self._execute_query_with_cursor(conn, check_sql, list(ids), use_ctx)
-        for row in rows:
-            rid_raw = row.get("rid") if isinstance(row, dict) else row[0]
-            rid = json.loads(rid_raw) if isinstance(rid_raw, str) else rid_raw
-            if rid is not None:
-                existing_ids.add(str(rid))
-
-        add_indices = []
-        update_indices = []
-        for i, rid in enumerate(ids):
-            if rid in existing_ids:
-                update_indices.append(i)
-            else:
-                add_indices.append(i)
-
-        if add_indices:
-            add_ids = [ids[i] for i in add_indices]
-            add_docs = [documents[i] for i in add_indices] if documents else None
-            add_metas = [metadatas[i] for i in add_indices] if metadatas else None
-            add_embs = [embeddings[i] for i in add_indices] if embeddings else None
-            self._namespace_add(
-                collection_id=collection_id,
-                collection_name=collection_name,
-                namespace_id=namespace_id,
-                namespace_name=namespace_name,
-                ids=add_ids,
-                embeddings=add_embs,
-                metadatas=add_metas,
-                documents=add_docs,
-                embedding_function=embedding_function,
-                has_vector_index=has_vector_index,
-                collection_dimension=collection_dimension,
-                **kwargs,
-            )
-
-        if update_indices:
-            upd_ids = [ids[i] for i in update_indices]
-            upd_docs = [documents[i] for i in update_indices] if documents else None
-            upd_metas = [metadatas[i] for i in update_indices] if metadatas else None
-            upd_embs = [embeddings[i] for i in update_indices] if embeddings else None
-            self._namespace_update(
-                collection_id=collection_id,
-                collection_name=collection_name,
-                namespace_id=namespace_id,
-                namespace_name=namespace_name,
-                ids=upd_ids,
-                embeddings=upd_embs,
-                metadatas=upd_metas,
-                documents=upd_docs,
-                embedding_function=embedding_function,
-                has_vector_index=has_vector_index,
-                collection_dimension=collection_dimension,
-                **kwargs,
-            )
-
-        self._reconcile_namespace_duplicate_records(
-            collection_id=collection_id,
-            collection_name=collection_name,
-            namespace_id=namespace_id,
-            namespace_name=namespace_name,
-            ltable_id=ltable_id,
-            table_name=table_name,
-            ids=ids,
-            documents=documents,
-            metadatas=metadatas,
-            embeddings=embeddings,
+        self._warn_explicit_embeddings_override_embedding_function(
+            operation="namespace.upsert",
+            explicit_embeddings=explicit_embeddings,
+            has_documents=bool(documents),
             embedding_function=embedding_function,
+        )
+
+        if embeddings:
+            pass
+        elif documents:
+            if embedding_function is not None:
+                embeddings = embedding_function(documents)
+            else:
+                raise ValueError(
+                    "Documents provided but no embeddings and no embedding function. "
+                    "Either:\n"
+                    "  1. Provide embeddings directly when calling upsert(), or\n"
+                    "  2. Provide embedding_function to auto-generate embeddings from documents."
+                )
+        elif not metadatas:
+            raise ValueError(
+                "Neither embeddings, documents, nor metadatas provided. "
+                "Please provide at least one of:\n"
+                "  1. embeddings directly,\n"
+                "  2. documents with embedding_function to generate embeddings, or\n"
+                "  3. metadatas for metadata-only upsert."
+            )
+
+        num_items = len(ids)
+        if documents and len(documents) != num_items:
+            raise ValueError(f"Number of documents ({len(documents)}) does not match number of ids ({num_items})")
+        if metadatas and len(metadatas) != num_items:
+            raise ValueError(f"Number of metadatas ({len(metadatas)}) does not match number of ids ({num_items})")
+        if embeddings and len(embeddings) != num_items:
+            raise ValueError(f"Number of embeddings ({len(embeddings)}) does not match number of ids ({num_items})")
+
+        self._validate_namespace_explicit_embeddings_if_needed(
+            embeddings,
+            explicit_embeddings=explicit_embeddings,
             has_vector_index=has_vector_index,
             collection_dimension=collection_dimension,
-            **kwargs,
         )
+
+        ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
+        self._set_session_ns_context(
+            collection_id=collection_id,
+            namespace_id=int(namespace_id),
+            ltable_id=ltable_id,
+        )
+        table_name = NamespaceCollectionNames.data_table_name(collection_id)
+        ns_id = int(namespace_id)
+        id_expr = _NS_DATA_CONTENT_ID_EXPR
+        conn = self._ensure_connection()
+        use_ctx = self._use_context_manager_for_cursor()
+
+        for i, record_id in enumerate(ids):
+            doc_val = documents[i] if documents and i < len(documents) else None
+            meta_val = metadatas[i] if metadatas and i < len(metadatas) else None
+            emb_val = embeddings[i] if embeddings and i < len(embeddings) else None
+
+            def _upsert_row(
+                record_id=record_id,
+                doc_val=doc_val,
+                meta_val=meta_val,
+                emb_val=emb_val,
+            ) -> None:
+                self._namespace_upsert_one_row(
+                    conn,
+                    table_name=table_name,
+                    ns_id=ns_id,
+                    ltable_id=ltable_id,
+                    id_expr=id_expr,
+                    record_id=record_id,
+                    document=doc_val,
+                    metadata=meta_val,
+                    embedding=emb_val,
+                    use_context_manager=use_ctx,
+                )
+
+            _upsert_row()
 
     @namespace_kernel_error_guard
     def _namespace_delete(
