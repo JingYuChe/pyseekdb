@@ -354,13 +354,7 @@ class TestNamespaceResourceLimitEnforcement:
             _close(admin)
 
     def test_tps_throttling_via_sdk_config(self, oceanbase_client):
-        """SDK-written TPS limits are enforced after the lazy on-throttle refresh.
-
-        The in-memory token bucket keeps kernel defaults (burst 100 / refill 50/s)
-        until the first 4039; only then does refresh_config read sdk_namespaces.info.
-        Use refill=0 in the DB config and enough writes to trip the default bucket
-        even when the suite has warmed the cluster and single-row adds are slower.
-        """
+        """SDK-written TPS limits are enforced on the next acquire via eager refresh."""
         coll_name = f"ops_tps_{uuid.uuid4().hex[:10]}"
         coll = oceanbase_client.create_collection(
             name=coll_name,
@@ -401,11 +395,9 @@ class TestNamespaceResourceLimitEnforcement:
             assert read_resource_limit(admin, coll.id, ns_id, "rate_limit_enable") == 0
 
             blocked = _hammer(ns, 0, 300)
-            assert sum(blocked) >= 1, "expected the default limit to trip at least once (which triggers refresh)"
-            tail = blocked[-100:]
-            assert sum(tail) == 0, (
-                f"after refresh loaded rate_limit_enable=0 the tail must stop throttling; "
-                f"tail_blocked={sum(tail)}/{len(tail)}, total_blocked={sum(blocked)}"
+            assert sum(blocked) == 0, (
+                f"rate_limit_enable=0 via SDK must disable throttling immediately; "
+                f"blocked={sum(blocked)}/{len(blocked)}"
             )
         finally:
             time.sleep(6)
