@@ -4773,6 +4773,9 @@ class BaseClient(BaseConnection, AdminAPI):
         Returns:
             search_parm dictionary
         """
+        if knn is not None and not knn:
+            raise ValueError("knn must not be empty")
+
         search_parm = {}
 
         # Build query part (full-text search or scalar query)

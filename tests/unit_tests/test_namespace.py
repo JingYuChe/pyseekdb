@@ -881,6 +881,13 @@ class TestNamespaceSQLGeneration:
         assert "data_content.metadata.category" in sql
         assert "cosine_distance(embedding," not in sql
 
+    def test_hybrid_search_rejects_empty_knn_before_sql(self):
+        """An explicitly empty KNN config must not reach the kernel."""
+        c = self._client()
+        with pytest.raises(ValueError, match="knn must not be empty"):
+            c._build_search_parm(query=None, knn={}, rank=None, n_results=10, dimension=3)
+        assert not c.query_sqls
+
     # ---- GET ----
 
     def test_get_by_ids_sql(self):
