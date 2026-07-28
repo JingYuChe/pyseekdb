@@ -1416,7 +1416,7 @@ class BaseClient(BaseConnection, AdminAPI):
             last_gather_time TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT 'last stats gather time',
             PRIMARY KEY (namespace_id),
             KEY idx_sdk_ns_stat_by_collection (collection_id)
-        ) COMMENT='Namespace-level logic table statistics' DEFAULT CHARSET=utf8mb4 ORGANIZATION INDEX
+        ) COMMENT='Namespace-level logic table statistics' DEFAULT CHARSET=utf8mb4 ORGANIZATION INDEX {scp}
         PARTITION BY KEY(namespace_id) PARTITIONS 8;"""
         stats_view_q = self._qtable(NamespaceCollectionNames.logic_table_namespace_stats_view())
         stats_view_sql = f"""CREATE OR REPLACE VIEW {stats_view_q} AS
