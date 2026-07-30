@@ -488,6 +488,9 @@ class FakeClient(BaseClient):
         """Resolve namespace ltable id."""
         return 1
 
+    def _ensure_namespace_live(self, collection_id, namespace_id):
+        """Skip catalog liveness checks in SQL-generation-only tests."""
+
     def _execute_query_with_cursor(self, conn, sql, params, use_context_manager=True):
         """Execute query with cursor."""
         resolved = sql
@@ -1631,12 +1634,7 @@ class TestDeleteNamespaceUsesKernel:
         c._execute = MagicMock(
             side_effect=[
                 [{"namespace_id": 10, "namespace_name": "ns1", "ltable_id": 7}],
-                None,  # _get_ns_namespace_meta -> SET @namespace_id
-                None,  # _get_ns_namespace_meta -> SET @ltable_id
                 None,  # _delete_ns_namespace_meta -> USE catalog database
-                None,  # _delete_ns_namespace_meta -> SET @collection_id
-                None,  # _delete_ns_namespace_meta -> SET @namespace_id
-                None,  # _delete_ns_namespace_meta -> SET @ltable_id
                 None,  # CALL DBMS_LOGIC_TABLE.DROP_NAMESPACE
             ]
         )
@@ -1644,13 +1642,9 @@ class TestDeleteNamespaceUsesKernel:
         calls = [str(call) for call in c._execute.call_args_list]
         assert not any("GET_LOCK" in s for s in calls)
         assert any("DBMS_LOGIC_TABLE.DROP_NAMESPACE" in s for s in calls)
-        # session context must be set BEFORE DROP_NAMESPACE so the kernel sees the
-        # right @collection_id / @namespace_id / @ltable_id for this call.
         drop_idx = next(i for i, s in enumerate(calls) if "DBMS_LOGIC_TABLE.DROP_NAMESPACE" in s)
         before_drop = " | ".join(calls[:drop_idx])
-        assert "SET @collection_id" in before_drop
-        assert "SET @namespace_id" in before_drop
-        assert "SET @ltable_id" in before_drop
+        assert "SET @" not in before_drop
 
     def test_get_ns_namespace_meta_sets_ltable_id(self):
         """Namespace meta lookup returns ltable_id from sdk_ltables join."""

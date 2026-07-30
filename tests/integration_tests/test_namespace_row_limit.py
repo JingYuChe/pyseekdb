@@ -9,8 +9,7 @@ New catalog model (monitor ops refactor):
 - Limits: flat ``sdk_namespaces.info`` (``row_limit`` / ``size_limit``)
 - Readable join: ``logic_table_namespace_stats`` view
 
-Admin/catalog SQL uses a context-free client; data-path DML uses namespace session
-vars (@collection_id / @namespace_id / @ltable_id) like RU tests.
+Namespace DML routes by explicit namespace_id / ltable_id columns.
 """
 
 from __future__ import annotations

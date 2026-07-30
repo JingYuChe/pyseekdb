@@ -61,7 +61,6 @@ class RemoteServerClient(BaseClient):
         # Remote server username format: user@tenant
         self.full_user = f"{user}@{tenant}"
         self._connection = None
-        self._catalog_connection = None
 
         logger.debug(f"Initialize RemoteServerClient: {self.full_user}@{self.host}:{self.port}/{self.database}")
 
@@ -89,41 +88,8 @@ class RemoteServerClient(BaseClient):
 
         return self._connection
 
-    def _ensure_catalog_connection(self) -> pymysql.Connection:
-        """Return a dedicated connection for catalog SQL (no namespace session vars)."""
-        if self._catalog_connection is None or not self._catalog_connection.open:
-            self._catalog_connection = pymysql.connect(
-                host=self.host,
-                port=self.port,
-                user=self.full_user,
-                password=self.password,
-                database=self.database,
-                charset=self.charset,
-                cursorclass=DictCursor,
-                autocommit=True,
-                **self.kwargs,
-            )
-            with self._catalog_connection.cursor() as cursor:
-                cursor.execute(f"USE `{self.database}`")
-        return self._catalog_connection
-
-    def _execute_on_connection(self, conn: pymysql.Connection, sql: str) -> Any:
-        """Execute SQL on a specific connection and return any result rows."""
-        with conn.cursor() as cursor:
-            cursor.execute(sql)
-            if self._should_fetch_results(cursor, sql):
-                return cursor.fetchall()
-            return None
-
-    def _execute_catalog_isolated(self, sql: str) -> Any:
-        """Run catalog SQL on a side connection; main session keeps namespace vars."""
-        return self._execute_on_connection(self._ensure_catalog_connection(), sql)
-
     def _cleanup(self):
         """Internal cleanup method: close connection)"""
-        if self._catalog_connection is not None:
-            self._catalog_connection.close()
-            self._catalog_connection = None
         if self._connection is not None:
             self._connection.close()
             self._connection = None
@@ -252,13 +218,8 @@ class RemoteServerClient(BaseClient):
         **kwargs,
     ) -> None:
         """Prewarm the namespace logical table to reduce first-query latency."""
-        ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
+        self._ensure_namespace_live(collection_id, int(namespace_id))
         self._use_catalog_database()
-        self._set_session_ns_context(
-            collection_id=collection_id,
-            namespace_id=int(namespace_id),
-            ltable_id=ltable_id,
-        )
         sql = f"CALL DBMS_LOGIC_TABLE.PREWARM('{collection_id}', {namespace_id})"
         self._execute(sql)
 

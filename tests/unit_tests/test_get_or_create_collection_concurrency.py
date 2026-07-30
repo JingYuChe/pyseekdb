@@ -45,7 +45,6 @@ class TestCollectionCatalogInsertRecovery:
     def test_insert_conflict_reuses_existing_collection_id(self):
         """Test insert conflict reuses existing collection id."""
         client = MagicMock(spec=BaseClient)
-        client._ns_session_context_active = False
         client._get_collection_id.side_effect = [ValueError("not found"), "existing_id"]
         conn = MagicMock()
         client._ensure_connection.return_value = conn
@@ -73,7 +72,6 @@ class TestCollectionCatalogInsertRecovery:
     def test_existing_catalog_row_is_reused_without_insert(self):
         """Test existing catalog row is reused without insert."""
         client = MagicMock(spec=BaseClient)
-        client._ns_session_context_active = False
         client._get_collection_id.return_value = "existing_id"
         client._create_sdk_collections_if_not_exists = MagicMock()
 
@@ -227,7 +225,6 @@ class TestListNsNamespacesRecyclebinFilter:
     def test_sql_excludes_recyclebin_rows(self):
         """Test sql excludes recyclebin rows."""
         client = MagicMock(spec=BaseClient)
-        client._ns_session_context_active = False
         client._qtable.return_value = "`sdk_namespaces`"
         client._execute_catalog.return_value = [
             ("1", "active_ns"),

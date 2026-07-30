@@ -1875,56 +1875,8 @@ class BaseClient(BaseConnection, AdminAPI):
             self._ns_ltable_id_cache = cache
         cache[key] = int(ltable_id)
 
-    def _set_session_ns_context(
-        self,
-        collection_id: str | None = None,
-        namespace_id: int | None = None,
-        ltable_id: int | None = None,
-    ) -> None:
-        """Set session variables for namespace (logic-table) DML/DQL admission.
-
-        Only namespace-enabled collections use @collection_id/@namespace_id/@ltable_id.
-        Standard v2 collections must not touch these session vars.
-        """
-        if collection_id is not None and namespace_id is not None:
-            self._ensure_namespace_live(collection_id, int(namespace_id))
-        if collection_id is not None:
-            self._execute(f"SET @collection_id = '{escape_string(str(collection_id))}'")
-        if namespace_id is not None:
-            self._execute(f"SET @namespace_id = {int(namespace_id)}")
-        if ltable_id is not None:
-            self._execute(f"SET @ltable_id = {int(ltable_id)}")
-        if collection_id is not None or namespace_id is not None or ltable_id is not None:
-            self._ns_session_context_active = True
-
-    def _clear_session_ns_context(self) -> None:
-        """Clear namespace session vars so catalog SQL is not gated by per-ns RU/row limits.
-
-        After ns.add/delete the connection keeps @collection_id/@namespace_id/@ltable_id;
-        a subsequent SELECT on sdk_* would otherwise inherit the limiter and get 4039.
-
-        No-op for connections that never entered namespace context (e.g. standard
-        get_or_create_collection). On LakeBase, clearing via SET NULL/'' can break
-        catalog queries (4016/1210); :meth:`_execute_catalog_isolated` uses a
-        separate connection instead when available.
-        """
-        if not getattr(self, "_ns_session_context_active", False):
-            return
-        with contextlib.suppress(Exception):
-            self._execute("SET @collection_id = ''")
-            self._execute("SET @namespace_id = NULL")
-            self._execute("SET @ltable_id = NULL")
-        self._ns_session_context_active = False
-
-    def _execute_catalog_isolated(self, sql: str) -> Any:
-        """Run catalog SQL while the main connection holds namespace session vars."""
-        self._clear_session_ns_context()
-        return self._execute(sql)
-
     def _execute_catalog(self, sql: str) -> Any:
-        """Run catalog SQL without namespace admission context."""
-        if getattr(self, "_ns_session_context_active", False):
-            return self._execute_catalog_isolated(sql)
+        """Run catalog SQL on the active connection."""
         return self._execute(sql)
 
     def _fetch_ns_namespace_id(self, collection_id: str, namespace_name: str) -> int:
@@ -2056,7 +2008,6 @@ class BaseClient(BaseConnection, AdminAPI):
                 f"INSERT INTO {schema_table} (namespace_id, ltable_id, schema_content) "
                 f"VALUES ({namespace_id}, {ltable_id}, '{escape_string(schema_content)}')"
             )
-        self._set_session_ns_context(namespace_id=namespace_id, ltable_id=ltable_id)
         return {"namespace_id": str(namespace_id), "namespace_name": namespace_name, "ltable_id": str(ltable_id)}
 
     def _create_ns_namespace_meta(self, collection_id: str, namespace_name: str) -> dict:
@@ -2144,7 +2095,7 @@ class BaseClient(BaseConnection, AdminAPI):
         return bool(rows)
 
     def _ensure_namespace_live(self, collection_id: str, namespace_id: int) -> None:
-        """Re-check catalog immediately before namespace DML/DQL uses session context."""
+        """Re-check catalog immediately before namespace DML/DQL."""
         if not self._ns_collection_exists_by_id(collection_id):
             raise ValueError(
                 f"Collection no longer exists (it may have been deleted). "
@@ -2162,12 +2113,9 @@ class BaseClient(BaseConnection, AdminAPI):
         if meta is None:
             raise ValueError(f"Namespace '{namespace_name}' not found")
         ns_id = meta["namespace_id"]
-        lt_id_raw = meta.get("ltable_id")
-        lt_id = int(lt_id_raw) if lt_id_raw is not None else None
         collection_id_escaped = escape_string(collection_id)
-        # PL reads session database_name; must match where catalog tables live.
+        # PL resolves catalog tables from the current database.
         self._use_catalog_database()
-        self._set_session_ns_context(collection_id=collection_id, namespace_id=int(ns_id), ltable_id=lt_id)
         self._execute(f"CALL DBMS_LOGIC_TABLE.DROP_NAMESPACE('{collection_id_escaped}', {ns_id})")
 
     def _set_namespace_resource_limit(
@@ -5877,11 +5825,7 @@ class BaseClient(BaseConnection, AdminAPI):
         )
 
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
-        self._set_session_ns_context(
-            collection_id=collection_id,
-            namespace_id=int(namespace_id),
-            ltable_id=ltable_id,
-        )
+        self._ensure_namespace_live(collection_id, int(namespace_id))
         table_name = NamespaceCollectionNames.data_table_name(collection_id)
         ns_id = int(namespace_id)
 
@@ -6114,11 +6058,7 @@ class BaseClient(BaseConnection, AdminAPI):
         )
 
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
-        self._set_session_ns_context(
-            collection_id=collection_id,
-            namespace_id=int(namespace_id),
-            ltable_id=ltable_id,
-        )
+        self._ensure_namespace_live(collection_id, int(namespace_id))
         table_name = NamespaceCollectionNames.data_table_name(collection_id)
         ns_id = int(namespace_id)
 
@@ -6298,11 +6238,7 @@ class BaseClient(BaseConnection, AdminAPI):
         )
 
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
-        self._set_session_ns_context(
-            collection_id=collection_id,
-            namespace_id=int(namespace_id),
-            ltable_id=ltable_id,
-        )
+        self._ensure_namespace_live(collection_id, int(namespace_id))
         table_name = NamespaceCollectionNames.data_table_name(collection_id)
         ns_id = int(namespace_id)
         id_expr = _NS_DATA_CONTENT_ID_EXPR
@@ -6349,11 +6285,7 @@ class BaseClient(BaseConnection, AdminAPI):
     ) -> None:
         """Delete records from a namespace collection."""
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
-        self._set_session_ns_context(
-            collection_id=collection_id,
-            namespace_id=int(namespace_id),
-            ltable_id=ltable_id,
-        )
+        self._ensure_namespace_live(collection_id, int(namespace_id))
         if ids is None and where is None and where_document is None:
             raise ValueError("At least one of ids, where, or where_document must be provided")
 
@@ -6450,11 +6382,7 @@ class BaseClient(BaseConnection, AdminAPI):
         )
 
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
-        self._set_session_ns_context(
-            collection_id=collection_id,
-            namespace_id=int(namespace_id),
-            ltable_id=ltable_id,
-        )
+        self._ensure_namespace_live(collection_id, int(namespace_id))
         include_fields = self._normalize_include_fields(include)
 
         # Logical-table vector search must use hybrid_search DSL; direct SQL vector
@@ -6550,11 +6478,7 @@ class BaseClient(BaseConnection, AdminAPI):
     ) -> dict[str, Any]:
         """Fetch records from a namespace collection by id/where/pagination."""
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
-        self._set_session_ns_context(
-            collection_id=collection_id,
-            namespace_id=int(namespace_id),
-            ltable_id=ltable_id,
-        )
+        self._ensure_namespace_live(collection_id, int(namespace_id))
         include_fields = self._normalize_include_fields(include)
         table_name = NamespaceCollectionNames.data_table_name(collection_id)
         ns_id = int(namespace_id)
@@ -6675,11 +6599,7 @@ class BaseClient(BaseConnection, AdminAPI):
     ) -> int:
         """Count records in a namespace collection."""
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
-        self._set_session_ns_context(
-            collection_id=collection_id,
-            namespace_id=int(namespace_id),
-            ltable_id=ltable_id,
-        )
+        self._ensure_namespace_live(collection_id, int(namespace_id))
         table_name = NamespaceCollectionNames.data_table_name(collection_id)
         ns_id = int(namespace_id)
         where_clause, _ = self._append_namespace_filter("", [], ns_id, ltable_id)
@@ -6834,11 +6754,7 @@ class BaseClient(BaseConnection, AdminAPI):
     ) -> dict[str, Any]:
         """Run a hybrid (vector + fulltext) search against a namespace collection."""
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
-        self._set_session_ns_context(
-            collection_id=collection_id,
-            namespace_id=int(namespace_id),
-            ltable_id=ltable_id,
-        )
+        self._ensure_namespace_live(collection_id, int(namespace_id))
         conn = self._ensure_connection()
         table_name = NamespaceCollectionNames.data_table_name(collection_id)
         ns_id = int(namespace_id)
