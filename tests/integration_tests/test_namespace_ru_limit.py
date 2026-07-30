@@ -86,6 +86,7 @@ class TestNamespaceRuLimit:
     def test_tps_throttling_kicks_in(self, oceanbase_client):
         """A rapid burst of writes on one namespace trips the TPS limiter (4039)."""
         owner = oceanbase_client
+        admin = _raw_client()
         name = f"ru_tps_{uuid.uuid4().hex[:12]}"
         coll = owner.create_collection(
             name=name,
@@ -95,8 +96,15 @@ class TestNamespaceRuLimit:
         )
         try:
             ns = coll.get_or_create_namespace("ns_tps")
-            # default TPS bucket: burst 100 / refill 50/s -> 300 rapid single writes must throttle.
-            blocked = _hammer(ns, 0, 300)
+            # Use a deterministic bucket instead of relying on the cluster being
+            # able to issue writes faster than the default 50 token/s refill.
+            _set_info(
+                admin,
+                coll.id,
+                int(ns.namespace_id),
+                '{"rate_limit_enable": 1, "tps_burst": 5, "tps_refill": 0}',
+            )
+            blocked = _hammer(ns, 0, 20)
             n_blocked = sum(blocked)
             assert n_blocked > 0, (
                 f"expected some writes throttled by TPS limit, got 0/{len(blocked)} (RU limiter not enforcing?)"
@@ -106,6 +114,7 @@ class TestNamespaceRuLimit:
             # session ns context) are not themselves throttled.
             time.sleep(6)
             owner.delete_collection(name=name)
+            _close(admin)
 
     def test_refresh_config_from_info_disables_limit(self, oceanbase_client):
         """rate_limit_enable=0 in sdk_namespaces.info disables throttling on the next acquire."""
@@ -179,8 +188,25 @@ class TestNamespaceRuLimit:
         try:
             ns = coll.get_or_create_namespace("ns_bad")
             ns_id = int(ns.namespace_id)
+            # Establish a deterministic low limit first. Malformed values below
+            # must be ignored while preserving this last valid configuration.
+            _set_info(
+                admin,
+                coll.id,
+                ns_id,
+                '{"rate_limit_enable": 1, "tps_burst": 5, "tps_refill": 0}',
+            )
+            initial_blocked = _hammer(ns, 0, 20)
+            assert sum(initial_blocked) > 0, (
+                f"valid low TPS limit must throttle before malformed refresh, "
+                f"got {sum(initial_blocked)}/{len(initial_blocked)} blocked"
+            )
+
+            # Allow the bucket to start with tokens again before verifying that
+            # malformed values do not replace the last valid configuration.
+            time.sleep(1)
             # Non-numeric tps_* values CAST to 0 in refresh SQL, so the update is skipped and
-            # the built-in default bucket remains. rate_limit_enable stays 1.
+            # the last valid bucket remains. rate_limit_enable stays 1.
             _set_info(
                 admin,
                 coll.id,
@@ -188,9 +214,9 @@ class TestNamespaceRuLimit:
                 '{"rate_limit_enable": 1, "tps_burst": "garbage", "tps_refill": "garbage"}',
             )
             # _hammer re-raises any NON-throttle exception, so reaching the assert means no crash.
-            blocked = _hammer(ns, 0, 300)
+            blocked = _hammer(ns, 100, 20)
             assert sum(blocked) > 0, (
-                f"malformed tps_* must keep the default limit (still throttling), "
+                f"malformed tps_* must keep the last valid limit (still throttling), "
                 f"got {sum(blocked)}/{len(blocked)} blocked"
             )
         finally:
