@@ -865,6 +865,7 @@ class TestNamespaceSQLGeneration:
         assert f"`{self.TABLE}`" in sql
         assert '"knn"' in sql
         assert '"query_vector"' in sql
+        assert "WHERE namespace_id = 7 AND ltable_id = 1" in sql
         assert "l2_distance(embedding," not in sql
         assert "APPROXIMATE LIMIT" not in sql
 
@@ -882,6 +883,7 @@ class TestNamespaceSQLGeneration:
         sql = c.query_sqls[-1]
         assert "hybrid_search(TABLE" in sql
         assert "data_content.metadata.category" in sql
+        assert "WHERE namespace_id = 7 AND ltable_id = 1" in sql
         assert "cosine_distance(embedding," not in sql
 
     def test_hybrid_search_rejects_empty_knn_before_sql(self):
@@ -917,6 +919,18 @@ class TestNamespaceSQLGeneration:
         )
         sql = c.query_sqls[-1]
         assert "LIMIT 10" in sql
+
+    def test_get_with_where_has_logic_table_scope_predicates(self):
+        """Search-index metadata filters must retain both logic-table IDs."""
+        c = self._client()
+        c.query_return_value = []
+        c._namespace_get(
+            **self._common_kwargs(),
+            where={"category": "Programming"},
+        )
+        sql = c.query_sqls[-1]
+        assert "WHERE namespace_id = 7 AND ltable_id = 1 AND (" in sql
+        assert "metadata.category" in sql
 
     # ---- COUNT ----
 
