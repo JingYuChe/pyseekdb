@@ -865,7 +865,9 @@ class TestNamespaceSQLGeneration:
         assert f"`{self.TABLE}`" in sql
         assert '"knn"' in sql
         assert '"query_vector"' in sql
-        assert "WHERE namespace_id = 7 AND ltable_id = 1" in sql
+        assert '"term": {"namespace_id": 7}' in sql
+        assert '"term": {"ltable_id": 1}' in sql
+        assert "WHERE namespace_id" not in sql
         assert "l2_distance(embedding," not in sql
         assert "APPROXIMATE LIMIT" not in sql
 
@@ -883,7 +885,9 @@ class TestNamespaceSQLGeneration:
         sql = c.query_sqls[-1]
         assert "hybrid_search(TABLE" in sql
         assert "data_content.metadata.category" in sql
-        assert "WHERE namespace_id = 7 AND ltable_id = 1" in sql
+        assert '"term": {"namespace_id": 7}' in sql
+        assert '"term": {"ltable_id": 1}' in sql
+        assert "WHERE namespace_id" not in sql
         assert "cosine_distance(embedding," not in sql
 
     def test_hybrid_search_rejects_empty_knn_before_sql(self):

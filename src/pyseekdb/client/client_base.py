@@ -6790,8 +6790,7 @@ class BaseClient(BaseConnection, AdminAPI):
         hint_sql = _query_hint_to_sql(query_hint, table_name=table_name) or ""
         hybrid_sql = (
             f"SELECT {hint_sql + ' ' if hint_sql else ''}* "
-            f"FROM hybrid_search(TABLE `{table_name}`, '{escaped_params}') "
-            f"WHERE namespace_id = {ns_id} AND ltable_id = {int(ltable_id)}"
+            f"FROM hybrid_search(TABLE `{table_name}`, '{escaped_params}')"
         )
         result_rows = self._execute_query_with_cursor(conn, hybrid_sql, [], use_context_manager)
         if not result_rows:
