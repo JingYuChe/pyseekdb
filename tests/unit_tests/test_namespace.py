@@ -1595,7 +1595,7 @@ class TestUseNamespaceValidation:
         from pyseekdb.client.version import Version
 
         c = FakeClient()
-        c.detect_db_type_and_version = MagicMock(return_value=("oceanbase", Version("4.6.1.0")))
+        c.detect_db_type_and_version = MagicMock(return_value=("oceanbase", Version("4.6.2.1")))
         c._is_lakebase_cluster = MagicMock(return_value=True)
         c._is_shared_storage_mode = MagicMock(return_value=False)
         c._create_ns_collection_meta = MagicMock(return_value={"collection_id": "abc123"})
@@ -1617,7 +1617,7 @@ class TestUseNamespaceValidation:
         from pyseekdb.client.version import Version
 
         c = FakeClient()
-        c.detect_db_type_and_version = MagicMock(return_value=("oceanbase", Version("4.6.1.0")))
+        c.detect_db_type_and_version = MagicMock(return_value=("oceanbase", Version("4.6.2.1")))
         c._is_lakebase_cluster = MagicMock(return_value=True)
         c._is_shared_storage_mode = MagicMock(return_value=False)
         c._create_ns_collection_meta = MagicMock(return_value={"collection_id": "abc123"})

@@ -93,7 +93,7 @@ _COLLECTION_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
 _MAX_COLLECTION_NAME_LENGTH = 512
 
 # Minimum LakeBase (OceanBase Database AI) version for namespace-enabled collections.
-NAMESPACE_MIN_LAKEBASE_VERSION = Version("4.6.1.0")
+NAMESPACE_MIN_LAKEBASE_VERSION = Version("4.6.2.1")
 # Backward-compatible alias used by existing tests and skip helpers.
 NAMESPACE_MIN_OB_VERSION = NAMESPACE_MIN_LAKEBASE_VERSION
 

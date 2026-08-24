@@ -2,7 +2,7 @@
 Namespace constraint integration tests.
 
 Covers two SDK-level constraints for use_namespace=True collections:
-1. Minimum LakeBase version: namespace-enabled collections require LakeBase (OceanBase Database AI) >= 4.6.1.
+1. Minimum LakeBase version: namespace-enabled collections require LakeBase (OceanBase Database AI) >= 4.6.2.1.
 2. Vector index type: only IVF_FLAT is currently supported; ivf_sq8 / ivf_pq are
    rejected at the SDK layer before any DDL is issued.
 """
@@ -130,7 +130,7 @@ class TestNamespaceMinVersionConstraint:
     """TestNamespaceMinVersionConstraint class."""
 
     def test_connected_lakebase_meets_min_version(self, oceanbase_client):
-        """The kernel under test must be LakeBase >= 4.6.1, and creation succeeds."""
+        """The kernel under test must be LakeBase >= 4.6.2.1, and creation succeeds."""
         db_type, version = oceanbase_client._server.detect_db_type_and_version()
         assert db_type.lower() == "oceanbase"
         assert oceanbase_client._server._is_lakebase_cluster() is True
@@ -166,10 +166,10 @@ class TestNamespaceMinVersionConstraint:
         monkeypatch.setattr(
             type(server),
             "detect_db_type_and_version",
-            lambda self: ("oceanbase", Version("4.6.0.0")),
+            lambda self: ("oceanbase", Version("4.6.2.0")),
         )
         name = _unique_name("_ver_old")
-        with pytest.raises(ValueError, match=r"requires LakeBase version >= 4\.6\.1"):
+        with pytest.raises(ValueError, match=r"requires LakeBase version >= 4\.6\.2\.1"):
             oceanbase_client.create_collection(name=name, schema=_make_schema("ivf_flat"), use_namespace=True)
         # restore before checking leftovers
         monkeypatch.undo()
@@ -177,4 +177,4 @@ class TestNamespaceMinVersionConstraint:
 
     def test_min_version_constant(self):
         """Test min version constant."""
-        assert Version("4.6.1.0") == NAMESPACE_MIN_LAKEBASE_VERSION == NAMESPACE_MIN_OB_VERSION
+        assert Version("4.6.2.1") == NAMESPACE_MIN_LAKEBASE_VERSION == NAMESPACE_MIN_OB_VERSION

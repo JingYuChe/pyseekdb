@@ -1,5 +1,5 @@
 """
-Namespace collection example (LakeBase 4.6.1.0+).
+Namespace collection example (LakeBase 4.6.2.1+).
 
 Demonstrates:
 1. Creating a namespace-enabled collection with an explicit IVF schema
