@@ -871,6 +871,55 @@ class TestNamespaceSQLGeneration:
         assert "l2_distance(embedding," not in sql
         assert "APPROXIMATE LIMIT" not in sql
 
+    def test_query_empty_include_uses_minimal_outer_projection(self):
+        """include=[] must not fetch document, metadata, or embedding columns."""
+        c = self._client()
+        c.query_return_value = []
+        c._namespace_query(
+            **self._ivf_kwargs(),
+            query_embeddings=[1.0, 0.0, 0.0],
+            n_results=100,
+            include=[],
+        )
+
+        sql = c.query_sqls[-1]
+        select_clause = sql.split("FROM hybrid_search", 1)[0]
+        assert "SELECT *" not in sql
+        assert "JSON_UNQUOTE(JSON_EXTRACT(data_content, '$.id')) AS id" in select_clause
+        assert "__score" in select_clause
+        assert "document" not in select_clause
+        assert "metadata" not in select_clause
+        assert "embedding" not in select_clause
+        assert '"_source"' not in sql
+
+    def test_query_include_controls_namespace_outer_projection(self):
+        """Namespace projection includes only explicitly requested payload columns."""
+        expected_fields = {
+            None: ("document", "metadata"),
+            ("documents",): ("document",),
+            ("metadatas",): ("metadata",),
+            ("embeddings",): ("embedding",),
+            ("documents", "embeddings"): ("document", "embedding"),
+        }
+
+        for include_key, present in expected_fields.items():
+            c = self._client()
+            c.query_return_value = []
+            include = None if include_key is None else list(include_key)
+            c._namespace_query(
+                **self._ivf_kwargs(),
+                query_embeddings=[1.0, 0.0, 0.0],
+                n_results=3,
+                include=include,
+            )
+
+            select_clause = c.query_sqls[-1].split("FROM hybrid_search", 1)[0]
+            assert "SELECT *" not in select_clause
+            assert " AS id" in select_clause
+            assert "__score" in select_clause
+            for field in ("document", "metadata", "embedding"):
+                assert (field in select_clause) is (field in present)
+
     def test_query_with_where_dsl(self):
         """Test query with where dsl."""
         c = self._client()

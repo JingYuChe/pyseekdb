@@ -6770,6 +6770,10 @@ class BaseClient(BaseConnection, AdminAPI):
         )
         search_parm = self._adapt_search_parm_for_ns(search_parm, ns_id, ltable_id)
 
+        # Namespace data stores the public id/metadata inside data_content.  The
+        # logical-table HYBRID_SEARCH path does not consume the SDK `_source`
+        # aliases, so express the requested fields through the outer SQL
+        # projection instead.
         search_parm.pop("_source", None)
 
         if "knn" in search_parm:
@@ -6788,8 +6792,9 @@ class BaseClient(BaseConnection, AdminAPI):
         escaped_params = search_parm_json.replace("'", "''")
 
         hint_sql = _query_hint_to_sql(query_hint, table_name=table_name) or ""
+        select_clause = self._build_namespace_hybrid_select_clause(include)
         hybrid_sql = (
-            f"SELECT {hint_sql + ' ' if hint_sql else ''}* "
+            f"SELECT {hint_sql + ' ' if hint_sql else ''}{select_clause} "
             f"FROM hybrid_search(TABLE `{table_name}`, '{escaped_params}')"
         )
         result_rows = self._execute_query_with_cursor(conn, hybrid_sql, [], use_context_manager)
@@ -6802,6 +6807,23 @@ class BaseClient(BaseConnection, AdminAPI):
                 "embeddings": [[]],
             }
         return self._transform_ns_hybrid_result(result_rows, include)
+
+    @staticmethod
+    def _build_namespace_hybrid_select_clause(include: list[str] | None) -> str:
+        """Build the minimal outer projection for namespace HYBRID_SEARCH."""
+        requested = {"documents", "metadatas"} if include is None else {item.lower() for item in include}
+
+        select_fields = [
+            "JSON_UNQUOTE(JSON_EXTRACT(data_content, '$.id')) AS id",
+            "__score",
+        ]
+        if {"documents", "document"} & requested:
+            select_fields.append("document")
+        if {"metadatas", "metadata"} & requested:
+            select_fields.append("JSON_EXTRACT(data_content, '$.metadata') AS metadata")
+        if {"embeddings", "embedding"} & requested:
+            select_fields.append("embedding")
+        return ", ".join(select_fields)
 
     def _transform_ns_hybrid_result(
         self, result_rows: list[dict[str, Any]], include: list[str] | None
