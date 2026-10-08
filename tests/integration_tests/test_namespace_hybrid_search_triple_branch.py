@@ -36,6 +36,9 @@ from namespace_hybrid_search_helpers import (
     teardown_large_fts_collection,
 )
 
+pytestmark = pytest.mark.skip(reason="Namespace full-text indexes are unsupported in this version")
+
+
 
 @pytest.mark.parametrize("vector_distance", ["l2", "cosine"])
 class TestNamespaceHybridSearchTripleBranch:

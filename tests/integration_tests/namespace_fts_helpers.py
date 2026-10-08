@@ -17,7 +17,7 @@ from typing import Any, Literal
 from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT
 
 from pyseekdb import IVFConfiguration
-from pyseekdb.client.configuration import FulltextIndexConfig, VectorIndexConfig
+from pyseekdb.client.configuration import VectorIndexConfig
 from pyseekdb.client.schema import Schema
 
 VectorDistanceMetric = Literal["l2", "cosine"]
@@ -65,7 +65,6 @@ def ns_schema(distance: VectorDistanceMetric = "l2") -> Schema:
             ivf=IVFConfiguration(dimension=3, distance=distance, centroids_fresh_mode="spfresh"),
             embedding_function=None,
         ),
-        fulltext_index=FulltextIndexConfig(analyzer="ik"),
     )
 
 

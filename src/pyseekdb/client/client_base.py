@@ -57,7 +57,6 @@ from .meta_info import (
     CollectionNames,
     NamespaceCollectionNames,
     NamespaceFieldNames,
-    NamespaceResourceLimitKeys,
     NamespaceStatsDefaults,
 )
 from .query_types import QueryHint
@@ -78,8 +77,6 @@ from .validators import (
     _validate_namespace_explicit_embedding_dimensions,
     _validate_namespace_name,
     _validate_namespace_resource_limit,
-    _validate_namespace_resource_limit_key,
-    _validate_namespace_resource_limit_value,
     _validate_record_ids,
 )
 from .version import Version
@@ -245,6 +242,40 @@ _DEFAULT_PARTITION_COUNT = 1000
 # Unquoted id for WHERE/CASE; plain JSON_EXTRACT returns a quoted JSON string and
 # can route through SEARCH INDEX on SS logic tables, breaking cross-namespace id lookups.
 _NS_DATA_CONTENT_ID_EXPR = "JSON_UNQUOTE(JSON_EXTRACT(data_content, '$.id'))"
+
+
+def _reject_namespace_fulltext_filter(where_document: dict[str, Any] | None) -> None:
+    """Reject document predicates that require a FULLTEXT index on a namespace table."""
+    if not where_document:
+        return
+    for key, value in where_document.items():
+        if key in ("$contains", "$not_contains"):
+            raise ValueError("Full-text search is not supported for namespace collections")
+        if key in ("$and", "$or") and isinstance(value, list):
+            for condition in value:
+                if isinstance(condition, dict):
+                    _reject_namespace_fulltext_filter(condition)
+        elif key == "$not" and isinstance(value, dict):
+            _reject_namespace_fulltext_filter(value)
+
+
+_NAMESPACE_FULLTEXT_QUERY_KEYS = frozenset({"query_string", "match", "multi_match", "match_phrase"})
+
+
+def _has_namespace_fulltext_query_option(option: Any) -> bool:
+    """Detect full-text leaves without interpreting metadata field names as DSL keys."""
+    if isinstance(option, list):
+        return any(_has_namespace_fulltext_query_option(item) for item in option)
+    if not isinstance(option, dict):
+        return False
+    for key, value in option.items():
+        if key == "where":
+            continue
+        if key == "where_document" and value is not None:
+            return True
+        if key in _NAMESPACE_FULLTEXT_QUERY_KEYS or _has_namespace_fulltext_query_option(value):
+            return True
+    return False
 
 
 def _build_default_ltable_schema(
@@ -1124,6 +1155,8 @@ class BaseClient(BaseConnection, AdminAPI):
         self, name: str, schema: Schema, partition_count: int | None = None, **kwargs
     ) -> "Collection":
         """Create a namespace-enabled collection and its catalog/physical tables."""
+        if schema.fulltext_index is not None:
+            raise ValueError("Full-text indexes are not supported for namespace collections")
         dense_embedding_function = schema.vector_index.embedding_function
         ivf_config = schema.vector_index.ivf
         hnsw_config = schema.vector_index.hnsw
@@ -1189,8 +1222,6 @@ class BaseClient(BaseConnection, AdminAPI):
                 settings["dense_index_type"] = "ivf"
                 if ivf_config.centroids_fresh_mode is not None:
                     settings["centroids_fresh_mode"] = ivf_config.centroids_fresh_mode
-            if schema.fulltext_index is not None:
-                settings["has_fulltext_index"] = True
             if dense_embedding_function is not None and EmbeddingFunction.support_persistence(dense_embedding_function):
                 settings["embedding_function"] = {
                     "name": dense_embedding_function.name(),
@@ -1573,15 +1604,14 @@ class BaseClient(BaseConnection, AdminAPI):
         cleanup_on_error: bool = True,
     ) -> None:
         """Create the physical tables backing a namespace collection."""
+        if fulltext_config is not None:
+            raise ValueError("Full-text indexes are not supported for namespace collections")
         tg_name = NamespaceCollectionNames.tablegroup_name(collection_id)
         data_table = NamespaceCollectionNames.data_table_name(collection_id)
         kv_table = NamespaceCollectionNames.kv_data_table_name(collection_id)
         schema_table = NamespaceCollectionNames.logic_schema_table_name(collection_id)
 
         index_parts = ["SEARCH INDEX idx_json(data_content)"]
-        if fulltext_config is not None:
-            fulltext_clause = _get_fulltext_index_sql(fulltext_config)
-            index_parts.insert(0, f"FULLTEXT INDEX idx_fts(document) {fulltext_clause}")
         if ivf_config is not None:
             vector_index_sql = _get_ivf_vector_index_sql(ivf_config)
             index_parts.append(f"VECTOR INDEX idx_vec(embedding) {vector_index_sql}")
@@ -6284,6 +6314,7 @@ class BaseClient(BaseConnection, AdminAPI):
         **kwargs,
     ) -> None:
         """Delete records from a namespace collection."""
+        _reject_namespace_fulltext_filter(where_document)
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._ensure_namespace_live(collection_id, int(namespace_id))
         if ids is None and where is None and where_document is None:
@@ -6350,6 +6381,7 @@ class BaseClient(BaseConnection, AdminAPI):
         **kwargs,
     ) -> dict[str, Any]:
         """Run a vector query against a namespace collection."""
+        _reject_namespace_fulltext_filter(where_document)
         has_vector_index = kwargs.pop("has_vector_index", True)
         collection_dimension = kwargs.pop("collection_dimension", kwargs.pop("dimension", None))
         explicit_query_embeddings = query_embeddings is not None
@@ -6477,6 +6509,7 @@ class BaseClient(BaseConnection, AdminAPI):
         **kwargs,
     ) -> dict[str, Any]:
         """Fetch records from a namespace collection by id/where/pagination."""
+        _reject_namespace_fulltext_filter(where_document)
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._ensure_namespace_live(collection_id, int(namespace_id))
         include_fields = self._normalize_include_fields(include)
@@ -6752,7 +6785,9 @@ class BaseClient(BaseConnection, AdminAPI):
         query_hint: QueryHint | None = None,
         **kwargs,
     ) -> dict[str, Any]:
-        """Run a hybrid (vector + fulltext) search against a namespace collection."""
+        """Run a namespace hybrid search with vector and scalar filters."""
+        if _has_namespace_fulltext_query_option(query) or _has_namespace_fulltext_query_option(knn):
+            raise ValueError("Full-text search is not supported for namespace collections")
         ltable_id = self._resolve_namespace_ltable_id(collection_id, namespace_id)
         self._ensure_namespace_live(collection_id, int(namespace_id))
         conn = self._ensure_connection()

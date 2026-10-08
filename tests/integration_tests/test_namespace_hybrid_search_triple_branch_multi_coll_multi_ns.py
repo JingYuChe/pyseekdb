@@ -40,6 +40,9 @@ from namespace_hybrid_search_helpers import (
     teardown_multi_coll_multi_ns_fts,
 )
 
+pytestmark = pytest.mark.skip(reason="Namespace full-text indexes are unsupported in this version")
+
+
 _EMPTY_NAMESPACE_KEYS: tuple[str, ...] = ("c1_empty", "c2_empty")
 _INDEX_SETTLE_SECONDS = 3
 

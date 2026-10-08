@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import time
 
+import pytest
 from namespace_dml_helpers import cleanup
 
 from pyseekdb import IVFConfiguration
-from pyseekdb.client.configuration import FulltextIndexConfig, VectorIndexConfig
+from pyseekdb.client.configuration import VectorIndexConfig
 from pyseekdb.client.schema import Schema
 
 
@@ -22,7 +23,6 @@ def _schema() -> Schema:
             ivf=IVFConfiguration(dimension=3, distance="l2", centroids_fresh_mode="spfresh"),
             embedding_function=None,
         ),
-        fulltext_index=FulltextIndexConfig(analyzer="ik"),
     )
 
 
@@ -86,6 +86,7 @@ def _seed(ns) -> None:
 class TestQueryWhereDocumentOperators:
     """1.6.10: where_document $not_contains / $and / $or / $regex / nested combos."""
 
+    @pytest.mark.skip(reason="Namespace full-text indexes are unsupported in this version")
     def test_where_document_contains_baseline(self, db_client):
         """$contains baseline: single operator works under ns.query."""
         collection = _create_ns(db_client, "_wd_contains")
@@ -107,6 +108,7 @@ class TestQueryWhereDocumentOperators:
         finally:
             cleanup(db_client, collection)
 
+    @pytest.mark.skip(reason="Namespace full-text indexes are unsupported in this version")
     def test_where_document_not_contains(self, db_client):
         """$not_contains excludes documents containing the keyword."""
         collection = _create_ns(db_client, "_wd_not_ctn")
@@ -130,6 +132,7 @@ class TestQueryWhereDocumentOperators:
         finally:
             cleanup(db_client, collection)
 
+    @pytest.mark.skip(reason="Namespace full-text indexes are unsupported in this version")
     def test_where_document_and(self, db_client):
         """$and: multiple $contains must all match."""
         collection = _create_ns(db_client, "_wd_and")
@@ -151,6 +154,7 @@ class TestQueryWhereDocumentOperators:
         finally:
             cleanup(db_client, collection)
 
+    @pytest.mark.skip(reason="Namespace full-text indexes are unsupported in this version")
     def test_where_document_or(self, db_client):
         """$or: any $contains child may match."""
         collection = _create_ns(db_client, "_wd_or")
@@ -193,6 +197,7 @@ class TestQueryWhereDocumentOperators:
         finally:
             cleanup(db_client, collection)
 
+    @pytest.mark.skip(reason="Namespace full-text indexes are unsupported in this version")
     def test_where_document_and_or_nested(self, db_client):
         """Nested $and($or): (machine|database) AND learning."""
         collection = _create_ns(db_client, "_wd_and_or")
@@ -228,6 +233,7 @@ class TestQueryWhereDocumentOperators:
         finally:
             cleanup(db_client, collection)
 
+    @pytest.mark.skip(reason="Namespace full-text indexes are unsupported in this version")
     def test_where_document_or_and_nested(self, db_client):
         """Nested $or($and): (machine+learning) OR (distributed+database)."""
         collection = _create_ns(db_client, "_wd_or_and")

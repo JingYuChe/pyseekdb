@@ -53,6 +53,7 @@ class TestNamespaceDeleteWhere:
         finally:
             cleanup(db_client, collection)
 
+    @pytest.mark.skip(reason="Namespace full-text indexes are unsupported in this version")
     def test_delete_where_document_obsolete(self, db_client):
         """Test delete where document obsolete."""
         collection = create_ns_collection(db_client, suffix="_del_wdoc")
@@ -122,6 +123,7 @@ class TestNamespaceGetWhere:
         finally:
             cleanup(db_client, collection)
 
+    @pytest.mark.skip(reason="Namespace full-text indexes are unsupported in this version")
     def test_get_where_document_contains_python(self, db_client):
         """Test get where document contains python."""
         collection = create_ns_collection(db_client, suffix="_get_wdoc")

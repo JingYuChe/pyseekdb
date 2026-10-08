@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pyseekdb import IVFConfiguration
-from pyseekdb.client.configuration import FulltextIndexConfig, VectorIndexConfig
+from pyseekdb.client.configuration import VectorIndexConfig
 from pyseekdb.client.schema import Schema
 
 NAMESPACE_TEST_PARTITION_COUNT = 4
@@ -46,7 +46,6 @@ def ns_schema() -> Schema:
             ivf=IVFConfiguration(dimension=3, distance="l2", centroids_fresh_mode="spfresh"),
             embedding_function=None,
         ),
-        fulltext_index=FulltextIndexConfig(analyzer="ik"),
     )
 
 

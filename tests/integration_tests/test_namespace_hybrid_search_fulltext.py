@@ -25,6 +25,9 @@ from namespace_fts_helpers import (
     teardown_large_fts_collection,
 )
 
+pytestmark = pytest.mark.skip(reason="Namespace full-text indexes are unsupported in this version")
+
+
 
 class TestNamespaceHybridSearchFulltext:
     """Large-scale namespace pure full-text hybrid_search tests."""

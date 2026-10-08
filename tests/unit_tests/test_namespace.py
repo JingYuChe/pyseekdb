@@ -836,17 +836,29 @@ class TestNamespaceSQLGeneration:
         assert "metadata.category" in sql
 
     def test_delete_by_where_document_sql(self):
-        """Test delete by where document sql."""
+        """Regular expression filtering on the document column needs no full-text index."""
         c = self._client()
         c._namespace_delete(
             **self._common_kwargs(),
-            where_document={"$contains": "obsolete"},
+            where_document={"$regex": "obsolete"},
         )
         sql = c.executed_sqls[-1]
         assert "DELETE FROM" in sql
         assert "namespace_id = 7" in sql
-        assert "MATCH(document) AGAINST" in sql
+        assert "document REGEXP" in sql
         assert "obsolete" in sql
+
+    @pytest.mark.parametrize("operation", ["_namespace_delete", "_namespace_get", "_namespace_query"])
+    def test_namespace_fulltext_document_filter_is_rejected(self, operation):
+        """MATCH predicates must fail before SQL is sent to a table without a full-text index."""
+        c = self._client()
+        kwargs = {"where_document": {"$and": [{"$regex": "ok"}, {"$contains": "obsolete"}]}}
+        if operation == "_namespace_query":
+            kwargs["query_embeddings"] = [1.0, 0.0, 0.0]
+        with pytest.raises(ValueError, match="Full-text search is not supported"):
+            getattr(c, operation)(**self._ivf_kwargs(), **kwargs)
+        assert not c.query_sqls
+        assert not c.executed_sqls
 
     # ---- QUERY ----
 
@@ -944,6 +956,30 @@ class TestNamespaceSQLGeneration:
         c = self._client()
         with pytest.raises(ValueError, match="knn must not be empty"):
             c._build_search_parm(query=None, knn={}, rank=None, n_results=10, dimension=3)
+        assert not c.query_sqls
+
+    @pytest.mark.parametrize("branch", ["query", "knn"])
+    def test_namespace_hybrid_search_rejects_fulltext_option(self, branch):
+        """Document-search branches are rejected while scalar and vector branches remain available."""
+        c = self._client()
+        kwargs = {branch: {"where_document": {"$contains": "hello"}}}
+        with pytest.raises(ValueError, match="Full-text search is not supported"):
+            c._namespace_hybrid_search(**self._ivf_kwargs(), **kwargs)
+        assert not c.query_sqls
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            {"query_string": {"query": "hello", "fields": ["document"]}},
+            {"bool": {"must": [{"match": {"document": "hello"}}]}},
+            [{"where": {"category": "AI"}}, {"multi_match": {"query": "hello", "fields": ["document"]}}],
+        ],
+    )
+    def test_namespace_hybrid_search_rejects_raw_fulltext_dsl(self, query):
+        """Raw full-text DSL must not silently become an unfiltered namespace query."""
+        c = self._client()
+        with pytest.raises(ValueError, match="Full-text search is not supported"):
+            c._namespace_hybrid_search(**self._ivf_kwargs(), query=query)
         assert not c.query_sqls
 
     # ---- GET ----
@@ -1045,25 +1081,35 @@ class TestNamespaceSQLGeneration:
 
     def test_create_namespace_physical_tables_sn_inline_vector_index(self):
         """SN logic_data_table: inline VECTOR INDEX in CREATE TABLE (same as SS)."""
-        from pyseekdb.client.configuration import FulltextIndexConfig
-
         c = self._client()
         ivf_config = IVFConfiguration(dimension=3, distance="l2", centroids_fresh_mode="spfresh")
         c._create_namespace_physical_tables(
             collection_id=self.COLLECTION_ID,
             dimension=3,
             ivf_config=ivf_config,
-            fulltext_config=FulltextIndexConfig(analyzer="ik"),
             is_shared_storage=False,
         )
         data_create = next(s for s in c.executed_sqls if "CREATE TABLE" in s and self.TABLE in s)
         assert "VECTOR INDEX idx_vec(embedding)" in data_create
-        assert "FULLTEXT INDEX idx_fts(document) WITH PARSER ik" in data_create
+        assert "FULLTEXT INDEX" not in data_create
         assert "SEARCH INDEX idx_json(data_content)" in data_create
         assert "centroids_fresh_mode=spfresh" in data_create
         assert "LOB_INROW_THRESHOLD=16388" in data_create
         assert not any(s.startswith("CREATE VECTOR INDEX") for s in c.executed_sqls)
         assert not any("_hot_table" in s for s in c.executed_sqls if s.startswith("CREATE TABLE"))
+
+    def test_create_namespace_physical_tables_rejects_fulltext(self):
+        """The internal physical-table builder must also reject accidental full-text DDL."""
+        from pyseekdb.client.configuration import FulltextIndexConfig
+
+        c = self._client()
+        with pytest.raises(ValueError, match="Full-text indexes are not supported"):
+            c._create_namespace_physical_tables(
+                collection_id=self.COLLECTION_ID,
+                dimension=3,
+                fulltext_config=FulltextIndexConfig(analyzer="ik"),
+            )
+        assert not c.executed_sqls
 
     def test_create_namespace_physical_tables_ss_inline_vector_index(self):
         """SS logic_data_table: inline VECTOR INDEX in CREATE TABLE."""
@@ -1415,7 +1461,6 @@ class TestNamespaceCatalogs:
 
     def test_ensure_namespace_catalogs_creates_all_catalog_tables(self):
         """Test ensure namespace catalogs creates all catalog tables."""
-        from pyseekdb.client.meta_info import NamespaceStatsDefaults
 
         c = FakeClient()
         c._ensure_namespace_catalogs()
@@ -1596,6 +1641,17 @@ class TestValidateInclude:
 
 class TestUseNamespaceValidation:
     """TestUseNamespaceValidation class."""
+
+    def test_fulltext_index_raises_before_catalog_writes(self):
+        """Explicit namespace full-text configuration is rejected before creation."""
+        from pyseekdb.client.configuration import FulltextIndexConfig
+        from pyseekdb.client.schema import Schema
+
+        c = FakeClient()
+        schema = Schema(fulltext_index=FulltextIndexConfig(analyzer="ik"))
+        with pytest.raises(ValueError, match="Full-text indexes are not supported"):
+            c._create_namespace_collection("test", schema)
+        assert not c.executed_sqls
 
     def test_hnsw_raises(self):
         """Test hnsw raises."""

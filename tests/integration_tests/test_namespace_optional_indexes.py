@@ -97,35 +97,9 @@ class TestNamespaceOptionalIndexes:
     """DDL + query matrix for optional VECTOR / FULLTEXT indexes."""
 
     def test_fts_only_indexes_and_queries(self, db_client):
-        """Test fts only indexes and queries."""
-        collection = _create_collection(db_client, "fts_only", _schema_fts_only())
-        try:
-            keys = _index_names(db_client, collection.id)
-            settings = _collection_settings(db_client, collection.id)
-            assert keys == {"idx_fts", "idx_json"}
-            assert "dense_index_type" not in settings
-
-            ns = collection.create_namespace("ns")
-            _seed_namespace(ns, collection.dimension)
-            time.sleep(1)
-
-            result = ns.hybrid_search(
-                query={"where_document": {"$contains": "machine"}},
-                n_results=5,
-                include=["documents"],
-            )
-            assert result["ids"] and result["ids"][0]
-
-            with pytest.raises(pymysql.err.Error, match="knn search without vector index not supported"):
-                ns.query(query_embeddings=_unit_vector(collection.dimension), n_results=3)
-
-            with pytest.raises(pymysql.err.Error, match="knn search without vector index not supported"):
-                ns.hybrid_search(
-                    knn={"query_embeddings": _unit_vector(collection.dimension), "n_results": 3},
-                    n_results=3,
-                )
-        finally:
-            db_client.delete_collection(name=collection.name)
+        """Namespace full-text configuration is rejected before physical table creation."""
+        with pytest.raises(ValueError, match="Full-text indexes are not supported"):
+            _create_collection(db_client, "fts_only", _schema_fts_only())
 
     def test_vector_only_indexes_and_queries(self, db_client):
         """Test vector only indexes and queries."""
@@ -153,9 +127,15 @@ class TestNamespaceOptionalIndexes:
             )
             assert knn["ids"] and knn["ids"][0]
 
-            with pytest.raises(pymysql.err.OperationalError, match="FULLTEXT"):
+            with pytest.raises(ValueError, match="Full-text search is not supported"):
                 ns.hybrid_search(
                     query={"where_document": {"$contains": "machine"}},
+                    n_results=5,
+                )
+
+            with pytest.raises(ValueError, match="Full-text search is not supported"):
+                ns.hybrid_search(
+                    query={"query_string": {"query": "machine", "fields": ["document"]}},
                     n_results=5,
                 )
         finally:
@@ -185,7 +165,7 @@ class TestNamespaceOptionalIndexes:
             got = ns.get(where={"category": "Programming"})
             assert sorted(got["ids"]) == ["d2"]
 
-            with pytest.raises(pymysql.err.OperationalError, match="FULLTEXT"):
+            with pytest.raises(ValueError, match="Full-text search is not supported"):
                 ns.hybrid_search(
                     query={"where_document": {"$contains": "machine"}},
                     n_results=5,

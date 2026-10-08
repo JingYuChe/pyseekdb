@@ -9,7 +9,7 @@ import pytest
 from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT
 
 from pyseekdb import IVFConfiguration
-from pyseekdb.client.configuration import FulltextIndexConfig, VectorIndexConfig
+from pyseekdb.client.configuration import VectorIndexConfig
 from pyseekdb.client.schema import Schema
 
 
@@ -24,7 +24,6 @@ class TestNamespaceQuery:
                 ivf=IVFConfiguration(dimension=3, distance="l2", centroids_fresh_mode="spfresh"),
                 embedding_function=None,
             ),
-            fulltext_index=FulltextIndexConfig(analyzer="ik"),
         )
         collection = client.create_collection(
             name=name,
@@ -213,6 +212,7 @@ class TestNamespaceQuery:
 
     # ==================== hybrid_search tests ====================
 
+    @pytest.mark.skip(reason="Namespace full-text indexes are unsupported in this version")
     def test_hybrid_search_fulltext_only(self, db_client):
         """Test hybrid search fulltext only."""
         collection = self._setup(db_client)
@@ -258,6 +258,7 @@ class TestNamespaceQuery:
         finally:
             db_client.delete_collection(name=collection.name)
 
+    @pytest.mark.skip(reason="Namespace full-text indexes are unsupported in this version")
     def test_hybrid_search_combined(self, db_client):
         """Test hybrid search combined."""
         collection = self._setup(db_client)
@@ -320,6 +321,7 @@ class TestNamespaceQuery:
         finally:
             db_client.delete_collection(name=collection.name)
 
+    @pytest.mark.skip(reason="Namespace full-text indexes are unsupported in this version")
     def test_hybrid_search_with_data_content_filter(self, db_client):
         """
         Namespace hybrid_search applies metadata / id filters on JSON under ``data_content``

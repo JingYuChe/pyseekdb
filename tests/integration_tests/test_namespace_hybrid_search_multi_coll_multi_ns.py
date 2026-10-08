@@ -49,6 +49,7 @@ class TestNamespaceHybridSearchMultiCollMultiNs:
         finally:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)
 
+    @pytest.mark.skip(reason="Namespace full-text indexes are unsupported in this version")
     def test_cross_quadrant_fts_isolation(self, db_client):
         """Test cross quadrant fts isolation."""
         ctx = setup_multi_coll_multi_ns_fts_single_loaded(db_client, loaded_quadrant="c1_x")
@@ -75,6 +76,7 @@ class TestNamespaceHybridSearchMultiCollMultiNs:
             "contains_zpx_filter_zpx_hint_gte_40",
         ],
     )
+    @pytest.mark.skip(reason="Namespace full-text indexes are unsupported in this version")
     def test_hybrid_search_fulltext_all_loaded_quadrants(self, db_client, case_name: str):
         """Test hybrid search fulltext all loaded quadrants."""
         ctx = setup_multi_coll_multi_ns_fts(db_client)
@@ -114,6 +116,7 @@ class TestNamespaceHybridSearchMultiCollMultiNs:
         finally:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)
 
+    @pytest.mark.skip(reason="Namespace full-text indexes are unsupported in this version")
     def test_hybrid_search_fts_plus_search_index_multi_coll(self, db_client):
         """Test hybrid search fts plus search index multi coll."""
         ctx = setup_multi_coll_multi_ns_fts(db_client)
@@ -125,6 +128,7 @@ class TestNamespaceHybridSearchMultiCollMultiNs:
             teardown_multi_coll_multi_ns_fts(db_client, ctx)
 
     @pytest.mark.parametrize("vector_distance", ["l2", "cosine"])
+    @pytest.mark.skip(reason="Namespace full-text indexes are unsupported in this version")
     def test_hybrid_search_combined_rrf_multi_coll(self, db_client, vector_distance: VectorDistanceMetric):
         """Test hybrid search combined rrf multi coll."""
         ctx = setup_multi_coll_multi_ns_fts(db_client, distance=vector_distance)
