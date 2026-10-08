@@ -2,6 +2,7 @@
 Unit tests for concurrent-safe get_or_create_collection helpers.
 """
 
+import json
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -37,6 +38,33 @@ class TestCollectionCatalogConflictDetection:
     def test_ignores_unrelated_errors(self):
         """Test ignores unrelated errors."""
         assert not _is_sdk_collection_catalog_conflict_error(ValueError("invalid dimension"))
+
+
+@pytest.mark.parametrize(
+    ("settings", "use_namespace", "error"),
+    [
+        ({"sdk_type": "json-table-sdk"}, True, "JSON Table SDK"),
+        ({"sdk_type": "json-table-sdk"}, False, "JSON Table SDK"),
+        ({"use_namespace": True}, False, "namespace collection"),
+        ({"version": 2}, True, "standard collection"),
+    ],
+)
+def test_rejects_catalog_row_owned_by_another_collection_type(settings, use_namespace, error):
+    client = MagicMock(spec=BaseClient)
+    client._execute_catalog.return_value = [{"settings": json.dumps(settings)}]
+
+    with pytest.raises(ValueError, match=error):
+        BaseClient._assert_sdk_collection_owner(client, "shared", use_namespace=use_namespace)
+
+
+@pytest.mark.parametrize(
+    ("settings", "use_namespace"),
+    [({"version": 2}, False), ({"version": 2, "use_namespace": True}, True)],
+)
+def test_allows_catalog_row_owned_by_same_collection_type(settings, use_namespace):
+    client = MagicMock(spec=BaseClient)
+    client._execute_catalog.return_value = [{"settings": json.dumps(settings)}]
+    BaseClient._assert_sdk_collection_owner(client, "shared", use_namespace=use_namespace)
 
 
 class TestCollectionCatalogInsertRecovery:

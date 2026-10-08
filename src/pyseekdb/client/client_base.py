@@ -120,6 +120,10 @@ def _extract_collection_id_from_sdk_row(row: Any) -> str:
     return str(collection_id or "")
 
 
+class ForeignSDKCollectionError(ValueError):
+    """A collection name is owned by another SDK in the shared catalog."""
+
+
 def _is_collection_conflict_error(exc: BaseException) -> bool:
     """Whether the exception (or its cause chain) indicates a collection/table already exists."""
     current: BaseException | None = exc
@@ -1321,6 +1325,24 @@ class BaseClient(BaseConnection, AdminAPI):
         except Exception as e:
             raise ValueError(f"Failed to create sdk_collections table: {e}") from e
 
+    def _assert_sdk_collection_owner(self, collection_name: str, *, use_namespace: bool) -> None:
+        """Do not reuse a catalog row created by another collection implementation."""
+        name = escape_string(collection_name)
+        rows = self._execute_catalog(
+            f"SELECT settings FROM {self._qtable(CollectionNames.sdk_collections_table_name())} "
+            f"WHERE collection_name = '{name}'"
+        )
+        if not rows:
+            raise ValueError(f"Collection '{collection_name}' disappeared from sdk_collections")
+        row = rows[0]
+        raw = row[0] if isinstance(row, (list, tuple)) else row.get("settings", row.get("SETTINGS"))
+        settings = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        if settings.get("sdk_type") == "json-table-sdk":
+            raise ForeignSDKCollectionError(f"Collection '{collection_name}' already belongs to JSON Table SDK")
+        if bool(settings.get("use_namespace")) != use_namespace:
+            kind = "namespace" if settings.get("use_namespace") else "standard"
+            raise ValueError(f"Collection '{collection_name}' already exists as a pyseekdb {kind} collection")
+
     def _create_collection_meta_v2(
         self,
         collection_name: str,
@@ -1374,6 +1396,7 @@ class BaseClient(BaseConnection, AdminAPI):
                             conn_getter().rollback()
                 collection_id = self._get_collection_id(collection_name)
 
+            self._assert_sdk_collection_owner(collection_name, use_namespace=False)
             results["collection_id"] = collection_id
             results["table_name"] = CollectionNames.table_name_v2(collection_id)
             return results  # noqa: TRY300
@@ -1507,6 +1530,7 @@ class BaseClient(BaseConnection, AdminAPI):
             f"SELECT collection_id FROM {sdk_coll} WHERE collection_name = '{collection_name_escaped}'"
         )
         collection_id = str(rows[0][0] if isinstance(rows[0], (list, tuple)) else rows[0]["collection_id"])
+        self._assert_sdk_collection_owner(collection_name, use_namespace=True)
         return {"collection_id": collection_id, "collection_name": collection_name}
 
     def _get_ns_collection_meta(self, collection_name: str) -> dict | None:
@@ -2431,6 +2455,8 @@ class BaseClient(BaseConnection, AdminAPI):
         if not collection_meta or not collection_meta.collection_id:
             raise ValueError(f"Collection '{name}' does not exist")
 
+        self._assert_sdk_collection_owner(name, use_namespace=False)
+
         try:
             embedding_function_persistence = self._resolve_embedding_function(collection_meta.settings)
             embedding_function = self._validate_embedding_function(embedding_function, embedding_function_persistence)
@@ -2501,6 +2527,8 @@ class BaseClient(BaseConnection, AdminAPI):
         try:
             self._delete_collection_v2(name)
             logger.debug(f"✅ Successfully deleted collection v2 '{name}' from sdk_collections table")
+        except ForeignSDKCollectionError:
+            raise
         except ValueError:
             self._delete_collection_v1(name)
             logger.debug(f"✅ Successfully deleted collection v1 '{name}' from table")
@@ -2515,6 +2543,7 @@ class BaseClient(BaseConnection, AdminAPI):
         collection_meta = self._resolve_collection_metadata_from_sdk_collections(name)
         if not collection_meta or not collection_meta.collection_id:
             raise ValueError(f"Collection '{name}' does not exist")
+        self._assert_sdk_collection_owner(name, use_namespace=False)
         collection_id = collection_meta.collection_id
         drop_table_sql = f"DROP TABLE `{CollectionNames.table_name_v2(collection_id)}`"
         name_escaped = escape_string(name)
