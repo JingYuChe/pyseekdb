@@ -5066,12 +5066,20 @@ class BaseClient(BaseConnection, AdminAPI):
             should_conditions = []
             for sub_condition in condition["$or"]:
                 sub_filters = self._build_metadata_filter_conditions(sub_condition)
-                should_conditions.extend(sub_filters)
+                positive, negative = self._hoist_must_not_from_filters(sub_filters)
+                if positive or negative:
+                    # Each OR operand is a conjunction. Keep scalar leaves in
+                    # filter, including when the operand has only one condition.
+                    branch: dict[str, Any] = {}
+                    if positive:
+                        branch["filter"] = positive
+                    if negative:
+                        branch["must_not"] = negative
+                    should_conditions.append({"bool": branch})
             if should_conditions:
                 # `minimum_should_match: 1` makes this an explicit OR. In a
                 # non-scoring (filter) context the kernel does not reliably apply the
-                # implicit "at least one should" default, which otherwise yields an
-                # intermittent `1210 Invalid argument`.
+                # implicit "at least one should" default.
                 result.append({"bool": {"should": should_conditions, "minimum_should_match": 1}})
             return result
 
@@ -6729,6 +6737,20 @@ class BaseClient(BaseConnection, AdminAPI):
             return obj
 
         search_parm = _rewrite_field_refs(search_parm)
+
+        def _anchor_negative_bools(node):
+            """Keep pure-negative OR branches in this namespace's row universe."""
+            if isinstance(node, list):
+                for item in node:
+                    _anchor_negative_bools(item)
+            elif isinstance(node, dict):
+                clauses = self._pure_must_not_clauses(node)
+                if clauses is not None:
+                    node["bool"]["filter"] = list(ns_filter)
+                for value in node.values():
+                    _anchor_negative_bools(value)
+
+        _anchor_negative_bools(search_parm)
 
         if "_source" in search_parm:
             needs_data_content = False

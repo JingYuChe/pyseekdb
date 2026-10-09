@@ -996,7 +996,7 @@ class TestNamespaceSQLGeneration:
         assert "SELECT" in sql
         assert f"`{self.TABLE}`" in sql
         assert "namespace_id = 7" in sql
-        assert """JSON_UNQUOTE(JSON_EXTRACT(data_content, '$.id')) = 'g1'""" in sql
+        assert """JSON_EXTRACT(data_content, '$.id') = 'g1'""" in sql
 
     def test_get_with_limit_sql(self):
         """Test get with limit sql."""

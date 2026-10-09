@@ -127,6 +127,43 @@ class TestNamespaceOptionalIndexes:
             )
             assert knn["ids"] and knn["ids"][0]
 
+            ns.add(
+                ids=["d3"],
+                embeddings=[_unit_vector(3, 2)],
+                documents=["third document"],
+                metadatas=[{"category": "Other", "score": 70}],
+            )
+            or_ne = ns.query(
+                query_embeddings=_unit_vector(3),
+                n_results=10,
+                where={"$or": [{"category": {"$in": ["AI"]}}, {"score": {"$ne": 80}}]},
+            )
+            assert set(or_ne["ids"][0]) == {"d1", "d3"}
+
+            or_nin = ns.query(
+                query_embeddings=_unit_vector(3),
+                n_results=10,
+                where={
+                    "$or": [
+                        {"category": "Programming"},
+                        {"category": {"$nin": ["AI", "Programming"]}},
+                    ]
+                },
+            )
+            assert set(or_nin["ids"][0]) == {"d2", "d3"}
+
+            grouped = ns.query(
+                query_embeddings=_unit_vector(3),
+                n_results=10,
+                where={
+                    "$or": [
+                        {"category": "AI", "score": 80},
+                        {"category": "Programming", "score": 80},
+                    ]
+                },
+            )
+            assert grouped["ids"][0] == ["d2"]
+
             with pytest.raises(ValueError, match="Full-text search is not supported"):
                 ns.hybrid_search(
                     query={"where_document": {"$contains": "machine"}},
