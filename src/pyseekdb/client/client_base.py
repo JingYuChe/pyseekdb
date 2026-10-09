@@ -6562,7 +6562,9 @@ class BaseClient(BaseConnection, AdminAPI):
             id_conds = []
             for rid in ids:
                 id_escaped = escape_string(rid)
-                id_conds.append(f"{_NS_DATA_CONTENT_ID_EXPR} = '{id_escaped}'")
+                # Keep the JSON value intact so idx_json can locate IDs. The
+                # namespace and ltable predicates below still scope the result.
+                id_conds.append(f"JSON_EXTRACT(data_content, '$.id') = '{id_escaped}'")
             user_conditions.append(f"({' OR '.join(id_conds)})")
 
         if where is not None:

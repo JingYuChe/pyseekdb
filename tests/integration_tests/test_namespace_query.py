@@ -16,7 +16,7 @@ from pyseekdb.client.schema import Schema
 class TestNamespaceQuery:
     """TestNamespaceQuery class."""
 
-    def _setup(self, client, suffix=""):
+    def _setup(self, client, suffix="", partition_count=NAMESPACE_TEST_PARTITION_COUNT):
         """Setup."""
         name = f"test_ns_q_{int(time.time() * 1000)}{suffix}"
         schema = Schema(
@@ -29,7 +29,7 @@ class TestNamespaceQuery:
             name=name,
             schema=schema,
             use_namespace=True,
-            partition_count=NAMESPACE_TEST_PARTITION_COUNT,
+            partition_count=partition_count,
         )
         return collection
 
@@ -193,12 +193,14 @@ class TestNamespaceQuery:
 
     def test_same_id_different_namespaces(self, db_client):
         """Test same id different namespaces."""
-        collection = self._setup(db_client, suffix="_sameid")
+        collection = self._setup(db_client, suffix="_sameid", partition_count=1)
         ns_x = collection.create_namespace("ns_x")
         ns_y = collection.create_namespace("ns_y")
         try:
             ns_x.add(ids="shared_id", embeddings=[1.0, 0.0, 0.0], metadatas={"src": "X"})
+            ns_x.add(ids="x_only", embeddings=[1.0, 1.0, 0.0])
             ns_y.add(ids="shared_id", embeddings=[0.0, 1.0, 0.0], metadatas={"src": "Y"})
+            ns_y.add(ids="y_only", embeddings=[0.0, 1.0, 1.0])
 
             res_x = ns_x.get(ids="shared_id", include=["metadatas"])
             res_y = ns_y.get(ids="shared_id", include=["metadatas"])
@@ -207,6 +209,16 @@ class TestNamespaceQuery:
             assert res_x["metadatas"][0]["src"] == "X"
             assert len(res_y["ids"]) == 1
             assert res_y["metadatas"][0]["src"] == "Y"
+
+            # Repeated multi-ID lookups must not leak hits between namespaces,
+            # even when both namespaces share the same physical partition.
+            for _ in range(2):
+                assert set(ns_x.get(ids=["shared_id", "x_only", "y_only"], include=[])["ids"]) == {
+                    "shared_id", "x_only"
+                }
+                assert set(ns_y.get(ids=["shared_id", "x_only", "y_only"], include=[])["ids"]) == {
+                    "shared_id", "y_only"
+                }
         finally:
             db_client.delete_collection(name=collection.name)
 
