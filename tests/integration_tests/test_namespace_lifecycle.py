@@ -5,6 +5,7 @@ Tests collection creation with use_namespace=True, namespace CRUD, and collectio
 
 import contextlib
 import time
+import uuid
 
 import pytest
 from namespace_dml_helpers import NAMESPACE_TEST_PARTITION_COUNT
@@ -22,6 +23,7 @@ class TestNamespaceLifecycle:
         """Create ns collection."""
         name = f"test_ns_lc_{int(time.time() * 1000)}{suffix}"
         schema = Schema(
+            fulltext_index=None,
             vector_index=VectorIndexConfig(
                 ivf=IVFConfiguration(dimension=3, distance="cosine", centroids_fresh_mode="spfresh"),
                 embedding_function=None,
@@ -62,6 +64,7 @@ class TestNamespaceLifecycle:
         ef = DefaultEmbeddingFunction()
         name = f"test_ns_ef_{int(time.time() * 1000)}"
         schema = Schema(
+            fulltext_index=None,
             vector_index=VectorIndexConfig(
                 ivf=IVFConfiguration(dimension=ef.dimension, distance="cosine", centroids_fresh_mode="spfresh"),
                 embedding_function=ef,
@@ -182,16 +185,15 @@ class TestNamespaceLifecycle:
 
         assert db_client.has_collection(coll_name) is False
 
-    def test_create_resumes_incomplete_collection(self, oceanbase_client):
-        """A namespace collection whose physical tables were partially lost (e.g. a
-        crash mid-create) is finished by re-running create_collection, instead of
-        being blocked by 'already exists'. A complete collection still errors."""
+    def test_create_rejects_incomplete_collection(self, oceanbase_client):
+        """A reserved name cannot be reused to resume another creation implicitly."""
         from pyseekdb.client.meta_info import NamespaceCollectionNames
 
         client = oceanbase_client
         srv = client._server
-        name = f"test_ns_resume_{int(time.time() * 1000)}"
+        name = f"test_ns_incomplete_{uuid.uuid4().hex}"
         schema = Schema(
+            fulltext_index=None,
             vector_index=VectorIndexConfig(
                 ivf=IVFConfiguration(dimension=3, distance="cosine", centroids_fresh_mode="spfresh"),
                 embedding_function=None,
@@ -205,33 +207,28 @@ class TestNamespaceLifecycle:
             srv._execute(f"DROP TABLE IF EXISTS `{NamespaceCollectionNames.kv_data_table_name(cid)}`")
             assert srv._is_incomplete_ns_collection(name) is True
 
-            # Re-create resumes (same id, rebuilds the missing table) instead of raising.
-            resumed = client.create_collection(name=name, schema=schema, use_namespace=True, partition_count=4)
-            assert resumed.id == cid
-            assert srv._is_incomplete_ns_collection(name) is False
-
-            # Data path works after resume.
-            ns = resumed.create_namespace("ns_x")
-            ns.add(ids="d1", embeddings=[1.0, 2.0, 3.0])
-            assert ns.count() == 1
-
-            # A complete collection still rejects a duplicate create.
             with pytest.raises(ValueError, match="already exists"):
                 client.create_collection(name=name, schema=schema, use_namespace=True, partition_count=4)
+            with pytest.raises(ValueError, match="not ready or incomplete"):
+                client.get_or_create_collection(name=name, schema=schema, use_namespace=True, partition_count=4)
+
+            assert srv._get_ns_collection_meta(name)["collection_id"] == cid
+            assert not srv._table_exists(NamespaceCollectionNames.kv_data_table_name(cid))
+            assert srv._table_exists(NamespaceCollectionNames.data_table_name(cid))
+            assert srv._table_exists(NamespaceCollectionNames.logic_schema_table_name(cid))
         finally:
             client.delete_collection(name=name)
 
-    def test_get_collection_purges_broken_ns_collection(self, oceanbase_client):
-        """get_collection only purges when the primary logic data table is missing.
-
-        Missing auxiliary tables alone are recoverable via create_collection resume.
-        """
+    @pytest.mark.parametrize("missing_resource", ["data_table_name", "kv_data_table_name"])
+    def test_get_collection_preserves_incomplete_collection(self, oceanbase_client, monkeypatch, missing_resource):
+        """Reads preserve incomplete resources; explicit delete still removes them all."""
         from pyseekdb.client.meta_info import NamespaceCollectionNames
 
         client = oceanbase_client
         srv = client._server
-        name = f"test_ns_broken_get_{int(time.time() * 1000)}"
+        name = f"test_ns_broken_get_{uuid.uuid4().hex}"
         schema = Schema(
+            fulltext_index=None,
             vector_index=VectorIndexConfig(
                 ivf=IVFConfiguration(dimension=3, distance="cosine", centroids_fresh_mode="spfresh"),
                 embedding_function=None,
@@ -240,28 +237,48 @@ class TestNamespaceLifecycle:
         collection = client.create_collection(name=name, schema=schema, use_namespace=True, partition_count=4)
         cid = collection.id
         try:
+            collection.create_namespace("retained_namespace")
             srv._use_catalog_database()
-            srv._execute(f"DROP TABLE IF EXISTS `{NamespaceCollectionNames.kv_data_table_name(cid)}`")
+            missing_table = getattr(NamespaceCollectionNames, missing_resource)(cid)
+            srv._execute(f"DROP TABLE IF EXISTS `{missing_table}`")
             assert srv._is_incomplete_ns_collection(name) is True
 
-            reopened = client.get_collection(name)
-            assert reopened.id == cid
+            read_sql = []
+            execute = srv._execute
+
+            def record_read(sql):
+                read_sql.append(sql)
+                return execute(sql)
+
+            with monkeypatch.context() as read_patch:
+                read_patch.setattr(srv, "_execute", record_read)
+                with pytest.raises(ValueError, match="not ready or incomplete"):
+                    client.get_collection(name)
+
+            assert read_sql
+            assert all(sql.lstrip().upper().startswith(("SELECT ", "SHOW ", "USE ")) for sql in read_sql)
             assert client.has_collection(name) is True
+            assert srv._get_ns_collection_meta(name)["collection_id"] == cid
 
-            resumed = client.create_collection(name=name, schema=schema, use_namespace=True, partition_count=4)
-            assert resumed.id == cid
-            assert srv._is_incomplete_ns_collection(name) is False
+            table_names = [
+                NamespaceCollectionNames.data_table_name(cid),
+                NamespaceCollectionNames.kv_data_table_name(cid),
+                NamespaceCollectionNames.logic_schema_table_name(cid),
+            ]
+            if srv._get_ns_collection_meta(name)["settings"].get("storage_mode") == "ss":
+                table_names.append(NamespaceCollectionNames.hot_table_name(cid))
+            for table_name in table_names:
+                assert srv._table_exists(table_name) is (table_name != missing_table)
+            assert srv._tablegroup_exists(NamespaceCollectionNames.tablegroup_name(cid))
 
-            srv._execute(f"DROP TABLE IF EXISTS `{NamespaceCollectionNames.data_table_name(cid)}`")
-            with pytest.raises(ValueError, match="does not exist"):
-                client.get_collection(name)
-
+            client.delete_collection(name=name)
             assert client.has_collection(name) is False
             assert srv._get_ns_collection_meta(name) is None
-            assert not srv._table_exists(NamespaceCollectionNames.data_table_name(cid))
-            assert not srv._table_exists(NamespaceCollectionNames.kv_data_table_name(cid))
-            assert not srv._table_exists(NamespaceCollectionNames.logic_schema_table_name(cid))
+            for table_name in table_names:
+                assert not srv._table_exists(table_name)
             assert not srv._tablegroup_exists(NamespaceCollectionNames.tablegroup_name(cid))
+            for catalog in ("sdk_namespaces", "sdk_ltables", "sdk_namespace_stat"):
+                assert not srv._execute(f"SELECT 1 FROM `{catalog}` WHERE collection_id = '{cid}'")
         finally:
             with contextlib.suppress(Exception):
                 client.delete_collection(name=name)
@@ -313,6 +330,7 @@ class TestNamespaceLifecycle:
 
         name = f"test_ns_hnsw_{int(time.time() * 1000)}"
         schema = Schema(
+            fulltext_index=None,
             vector_index=VectorIndexConfig(
                 hnsw=HNSWConfiguration(dimension=3),
                 embedding_function=None,
@@ -333,6 +351,7 @@ class TestNamespaceLifecycle:
         with patch.object(type(client._server), "_is_shared_storage_mode", return_value=True):
             name = f"test_ns_ss_{int(time.time() * 1000)}"
             schema = Schema(
+                fulltext_index=None,
                 vector_index=VectorIndexConfig(
                     ivf=IVFConfiguration(dimension=3, distance="cosine", centroids_fresh_mode="spfresh"),
                     embedding_function=None,
@@ -375,6 +394,7 @@ class TestNamespaceLifecycle:
 
         name = f"test_ns_lc_pc_{int(time.time() * 1000)}"
         schema = Schema(
+            fulltext_index=None,
             vector_index=VectorIndexConfig(
                 ivf=IVFConfiguration(dimension=3, distance="cosine", centroids_fresh_mode="spfresh"),
                 embedding_function=None,

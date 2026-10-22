@@ -6,6 +6,7 @@ import json
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
+from uuid import UUID
 
 import pytest
 
@@ -112,6 +113,49 @@ class TestCollectionCatalogInsertRecovery:
         assert not insert_calls
 
 
+class TestNamespaceCatalogInsertOwnership:
+    """Namespace creators own only the catalog generation they inserted."""
+
+    def test_insert_uses_and_returns_the_same_preallocated_id(self):
+        client = MagicMock(spec=BaseClient)
+        client._qtable.return_value = "`test`.`sdk_collections`"
+
+        result = BaseClient._create_ns_collection_meta(client, "items", {"use_namespace": True})
+
+        assert UUID(result["collection_id"]).hex == result["collection_id"]
+        sqls = [call.args[0] for call in client._execute_catalog.call_args_list]
+        inserts = [sql for sql in sqls if sql.startswith("INSERT INTO")]
+        assert len(inserts) == 1
+        assert "collection_id" in inserts[0]
+        assert result["collection_id"] in inserts[0]
+        assert not any(sql.startswith("SELECT") for sql in sqls)
+        client._assert_sdk_collection_owner.assert_not_called()
+
+    def test_insert_conflict_does_not_reuse_another_creators_id(self):
+        client = MagicMock(spec=BaseClient)
+        client._qtable.return_value = "`test`.`sdk_collections`"
+        conflict = Exception(1062, "Duplicate entry 'items' for key 'uk_sdk_coll_name'")
+        client._execute_catalog.side_effect = conflict
+
+        with pytest.raises(ValueError, match="already exists") as caught:
+            BaseClient._create_ns_collection_meta(client, "items", {"use_namespace": True})
+
+        assert caught.value.__cause__ is conflict
+        assert client._execute_catalog.call_count == 1
+        client._get_ns_collection_meta.assert_not_called()
+        client._cleanup_namespace_physical_tables.assert_not_called()
+
+    def test_catalog_insert_error_is_not_treated_as_name_conflict(self):
+        client = MagicMock(spec=BaseClient)
+        failure = Exception(4012, "query timeout")
+        client._execute_catalog.side_effect = failure
+
+        with pytest.raises(Exception) as caught:
+            BaseClient._create_ns_collection_meta(client, "items", {"use_namespace": True})
+
+        assert caught.value is failure
+
+
 class TestCollectionConflictDetection:
     """TestCollectionConflictDetection class."""
 
@@ -189,28 +233,25 @@ class TestGetOrCreateCollectionRecovery:
         assert result is existing
         client.get_collection.assert_called_once_with("items", embedding_function=_NOT_PROVIDED)
 
-    def test_conflict_on_namespace_collection_resumes_incomplete_handle(self):
-        """Test conflict on namespace collection resumes incomplete handle."""
+    def test_conflict_on_namespace_collection_does_not_resume_incomplete_handle(self):
+        """A competing creator retains ownership while get reports readiness."""
         client = MagicMock(spec=BaseClient)
         self._bind_resume_helper(client)
-        resumed = object()
         client.has_collection.return_value = False
         client._get_ns_collection_meta.return_value = {
             "collection_id": "abc",
             "collection_name": "items",
             "settings": {"use_namespace": True},
         }
-        client._is_incomplete_ns_collection.return_value = True
-        client.create_collection.side_effect = [
-            ValueError("Collection 'items' already exists"),
-            resumed,
-        ]
+        client.create_collection.side_effect = ValueError("Collection 'items' already exists")
+        client.get_collection.side_effect = ValueError("Collection 'items' is not ready or incomplete")
 
-        result = BaseClient.get_or_create_collection(client, "items", use_namespace=True)
+        with pytest.raises(ValueError, match="not ready or incomplete"):
+            BaseClient.get_or_create_collection(client, "items", use_namespace=True)
 
-        assert result is resumed
-        assert client.create_collection.call_count == 2
-        client.get_collection.assert_not_called()
+        assert client.create_collection.call_count == 1
+        client.get_collection.assert_called_once_with("items", embedding_function=_NOT_PROVIDED)
+        client._create_namespace_physical_tables.assert_not_called()
 
     def test_conflict_on_namespace_collection_without_metadata_reraises(self):
         """Test conflict on namespace collection without metadata reraises."""
@@ -223,19 +264,34 @@ class TestGetOrCreateCollectionRecovery:
         with pytest.raises(ValueError, match="namespace metadata is missing"):
             BaseClient.get_or_create_collection(client, "items", use_namespace=True)
 
-    def test_resumes_incomplete_namespace_collection_when_present(self):
-        """Test resumes incomplete namespace collection when present."""
+    def test_existing_incomplete_namespace_collection_is_not_resumed(self):
+        """get_or_create must not turn an incomplete read into physical DDL."""
         client = MagicMock(spec=BaseClient)
-        resumed = object()
         client.has_collection.return_value = True
-        client._is_incomplete_ns_collection.return_value = True
-        client.create_collection.return_value = resumed
+        client.get_collection.side_effect = ValueError("Collection 'items' is not ready or incomplete")
 
-        result = BaseClient.get_or_create_collection(client, "items", use_namespace=True)
+        with pytest.raises(ValueError, match="not ready or incomplete"):
+            BaseClient.get_or_create_collection(client, "items", use_namespace=True)
 
-        assert result is resumed
-        client.create_collection.assert_called_once()
-        client.get_collection.assert_not_called()
+        client.create_collection.assert_not_called()
+        client.get_collection.assert_called_once_with("items", embedding_function=_NOT_PROVIDED)
+
+    def test_returns_ready_namespace_collection_after_create_conflict(self):
+        client = MagicMock(spec=BaseClient)
+        self._bind_resume_helper(client)
+        client.has_collection.return_value = False
+        client._get_ns_collection_meta.return_value = {
+            "collection_id": "abc",
+            "collection_name": "items",
+            "settings": {"use_namespace": True},
+        }
+        client.create_collection.side_effect = ValueError("Collection 'items' already exists")
+        existing = object()
+        client.get_collection.return_value = existing
+
+        assert BaseClient.get_or_create_collection(client, "items", use_namespace=True) is existing
+        assert client.create_collection.call_count == 1
+        client.get_collection.assert_called_once_with("items", embedding_function=_NOT_PROVIDED)
 
     def test_does_not_mask_unrelated_create_errors(self):
         """Test does not mask unrelated create errors."""

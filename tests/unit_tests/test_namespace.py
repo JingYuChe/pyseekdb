@@ -1515,91 +1515,327 @@ class TestNamespaceCatalogs:
         assert any("WHERE collection_id = 'abc123'" in s for s in calls)
 
 
-class TestBrokenNsCollectionPurge:
-    """TestBrokenNsCollectionPurge class."""
+class TestNamespaceCollectionReadSafety:
+    """A read must not destroy a concurrently created collection generation."""
 
-    def test_purge_broken_ns_collection_if_incomplete_calls_delete(self):
-        """Test purge broken ns collection if incomplete calls delete."""
+    @staticmethod
+    def _client():
         c = FakeClient()
         meta = {
             "collection_id": "cid1",
             "collection_name": "coll",
-            "settings": {"use_namespace": True, "storage_mode": "sn"},
+            "settings": {"use_namespace": True, "storage_mode": "ss", "dimension": 3},
         }
         c._get_ns_collection_meta = MagicMock(return_value=meta)
-        c._use_catalog_database = MagicMock()
-        c._logic_data_table_confirmed_absent = MagicMock(return_value=True)
-        c._ns_missing_physical_resources = MagicMock(return_value=["cid1_logic_data_table"])
-        c._delete_ns_collection_meta = MagicMock()
-
-        assert c._purge_broken_ns_collection_if_incomplete("coll", meta=meta) is True
-        c._delete_ns_collection_meta.assert_called_once_with("coll")
-
-    def test_purge_skips_when_logic_data_table_exists(self):
-        """Test purge skips when only auxiliary tables are missing."""
-        c = FakeClient()
-        meta = {
-            "collection_id": "c" * 32,
-            "collection_name": "coll",
-            "settings": {"use_namespace": True, "storage_mode": "ss"},
-        }
-        c._get_ns_collection_meta = MagicMock(return_value=meta)
-        c._logic_data_table_confirmed_absent = MagicMock(return_value=False)
-        c._delete_ns_collection_meta = MagicMock()
-
-        assert c._purge_broken_ns_collection_if_incomplete("coll", meta=meta) is False
-        c._delete_ns_collection_meta.assert_not_called()
-
-    def test_purge_skips_when_table_existence_inconclusive(self):
-        """Test purge skips when logic data table absence cannot be confirmed."""
-        c = FakeClient()
-        meta = {
-            "collection_id": "cid1",
-            "collection_name": "coll",
-            "settings": {"use_namespace": True, "storage_mode": "sn"},
-        }
-        c._get_ns_collection_meta = MagicMock(return_value=meta)
-        c._logic_data_table_confirmed_absent = MagicMock(return_value=False)
-        c._delete_ns_collection_meta = MagicMock()
-
-        assert c._purge_broken_ns_collection_if_incomplete("coll", meta=meta) is False
-        c._delete_ns_collection_meta.assert_not_called()
-
-    def test_purge_skips_complete_collection(self):
-        """Test purge skips complete collection."""
-        c = FakeClient()
-        meta = {"collection_id": "cid1", "collection_name": "coll", "settings": {"storage_mode": "sn"}}
-        c._get_ns_collection_meta = MagicMock(return_value=meta)
-        c._use_catalog_database = MagicMock()
-        c._logic_data_table_confirmed_absent = MagicMock(return_value=False)
         c._ns_missing_physical_resources = MagicMock(return_value=[])
         c._delete_ns_collection_meta = MagicMock()
+        c._cleanup_namespace_physical_tables = MagicMock()
+        c._get_collection_v1 = MagicMock()
+        c._get_collection_v2 = MagicMock()
+        return c, meta
 
-        assert c._purge_broken_ns_collection_if_incomplete("coll", meta=meta) is False
+    @pytest.mark.parametrize(
+        "missing",
+        ["logic_data_table", "hot_table", "kv_data_table", "logic_schema_table", "tg"],
+    )
+    def test_get_incomplete_collection_is_read_only(self, missing):
+        c, _ = self._client()
+        c._ns_missing_physical_resources.return_value = [f"cid1_{missing}"]
+
+        with pytest.raises(ValueError, match="not ready or incomplete"):
+            BaseClient.get_collection(c, "coll")
+
+        c._delete_ns_collection_meta.assert_not_called()
+        c._cleanup_namespace_physical_tables.assert_not_called()
+        c._get_collection_v1.assert_not_called()
+        c._get_collection_v2.assert_not_called()
+        assert not any(sql.lstrip().upper().startswith(("DROP", "DELETE", "CREATE")) for sql in c.executed_sqls)
+
+    def test_get_builds_only_the_generation_it_validated(self):
+        c, meta = self._client()
+        c._get_ns_collection_meta.side_effect = [meta, {**meta, "collection_id": "new_generation"}]
+        expected = object()
+        c._build_ns_collection_from_meta = MagicMock(return_value=expected)
+
+        assert BaseClient.get_collection(c, "coll") is expected
+
+        c._get_ns_collection_meta.assert_called_once_with("coll")
+        assert c._build_ns_collection_from_meta.call_args.args[0] is meta
+        c._ns_missing_physical_resources.assert_called_once_with("cid1", True, strict=True)
+        c._get_collection_v1.assert_not_called()
+        c._get_collection_v2.assert_not_called()
+
+    def test_catalog_read_failure_does_not_fall_back_to_standard_collection(self):
+        c, _ = self._client()
+        failure = Exception(4012, "catalog query timeout")
+        c._get_ns_collection_meta.side_effect = failure
+
+        with pytest.raises(Exception) as caught:
+            BaseClient.get_collection(c, "coll")
+
+        assert caught.value is failure
+        c._get_collection_v1.assert_not_called()
+        c._get_collection_v2.assert_not_called()
         c._delete_ns_collection_meta.assert_not_called()
 
-    def test_get_collection_purges_incomplete_namespace_collection(self):
-        """Test get collection purges incomplete namespace collection."""
+    def test_resource_check_failure_is_not_reported_as_missing(self):
+        c = FakeClient()
+        failure = Exception(4012, "schema query timeout")
+        c._execute = MagicMock(side_effect=failure)
 
-        class GetClient(FakeClient):
-            """GetClient class."""
+        with pytest.raises(Exception) as caught:
+            c._ns_missing_physical_resources("cid1", True, strict=True)
 
-            get_collection = BaseClient.get_collection
+        assert caught.value is failure
 
-        c = GetClient()
-        meta = {
-            "collection_id": "cid1",
-            "collection_name": "coll",
-            "settings": {"use_namespace": True, "storage_mode": "sn", "dimension": 3},
-        }
-        c._get_ns_collection_meta = MagicMock(return_value=meta)
-        c._purge_broken_ns_collection_if_incomplete = MagicMock(return_value=True)
-        c._get_collection_v1 = MagicMock(side_effect=ValueError("not v1"))
-        c._get_collection_v2 = MagicMock(side_effect=ValueError("Collection 'coll' does not exist"))
+    def test_missing_namespace_catalog_returns_none(self):
+        c = FakeClient()
+        c._execute_catalog = MagicMock(side_effect=Exception(1146, "sdk_collections does not exist"))
 
-        with pytest.raises(ValueError, match="does not exist"):
-            c.get_collection("coll")
-        c._purge_broken_ns_collection_if_incomplete.assert_called_once_with(collection_name="coll", meta=meta)
+        assert c._get_ns_collection_meta("coll") is None
+
+    @pytest.mark.parametrize("code", [4012, 1045, 1054])
+    def test_other_namespace_catalog_errors_are_preserved(self, code):
+        c = FakeClient()
+        failure = Exception(code, "catalog unavailable")
+        c._execute_catalog = MagicMock(side_effect=failure)
+
+        with pytest.raises(Exception) as caught:
+            c._get_ns_collection_meta("coll")
+
+        assert caught.value is failure
+
+
+class TestNamespaceCollectionDeleteSafety:
+    """Explicit cleanup is ID-bound, retryable, and reports real failures."""
+
+    def test_known_id_cleanup_does_not_require_a_catalog_row(self):
+        c = FakeClient()
+        c._get_ns_collection_meta = MagicMock(side_effect=AssertionError("must not resolve the name again"))
+
+        c._delete_ns_collection_meta("coll", collection_id="old_id")
+
+        drops = [sql for sql in c.executed_sqls if sql.startswith("DROP ")]
+        assert len(drops) == 5
+        assert all("old_id_" in sql and "IF EXISTS" in sql for sql in drops)
+        deletes = [sql for sql in c.executed_sqls if sql.startswith("DELETE ")]
+        assert len(deletes) == 4
+        assert all("WHERE collection_id = 'old_id'" in sql for sql in deletes)
+        assert "sdk_collections" in deletes[-1]
+        c._get_ns_collection_meta.assert_not_called()
+
+    def test_root_catalog_is_deleted_after_physical_and_child_cleanup(self):
+        c = FakeClient()
+        c._get_ns_collection_meta = MagicMock(return_value={"collection_id": "cid1"})
+
+        c._delete_ns_collection_meta("coll")
+
+        mutations = [sql for sql in c.executed_sqls if sql.startswith(("DROP ", "DELETE "))]
+        assert len(mutations) == 9
+        assert all(sql.startswith("DROP ") for sql in mutations[:5])
+        assert "sdk_collections" in mutations[-1]
+        assert "WHERE collection_id = 'cid1'" in mutations[-1]
+        c._get_ns_collection_meta.assert_called_once_with("coll")
+
+    def test_physical_cleanup_failure_preserves_root_catalog(self):
+        c = FakeClient()
+        c._get_ns_collection_meta = MagicMock(return_value={"collection_id": "cid1"})
+        c._cleanup_namespace_physical_tables_with_retry = MagicMock(side_effect=RuntimeError("drop timeout"))
+
+        with pytest.raises(RuntimeError, match="drop timeout"):
+            c._delete_ns_collection_meta("coll")
+
+        assert not any(sql.startswith("DELETE ") and "sdk_collections" in sql for sql in c.executed_sqls)
+
+    def test_child_catalog_failure_preserves_root_catalog_and_reports_error(self):
+        c = FakeClient()
+        c._get_ns_collection_meta = MagicMock(return_value={"collection_id": "cid1"})
+        c._cleanup_namespace_physical_tables_with_retry = MagicMock()
+        sqls = []
+
+        def execute_catalog(sql):
+            sqls.append(sql)
+            if "sdk_ltables" in sql:
+                raise RuntimeError(4012, "child catalog timeout")
+            return []
+
+        c._execute_catalog = execute_catalog
+        with pytest.raises(RuntimeError, match="child catalog timeout"):
+            c._delete_ns_collection_meta("coll")
+
+        assert any("sdk_namespace_stat" in sql for sql in sqls)
+        assert not any(sql.startswith("DELETE ") and "sdk_collections" in sql for sql in sqls)
+
+    def test_missing_child_catalogs_do_not_prevent_cleanup(self):
+        c = FakeClient()
+        c._cleanup_namespace_physical_tables_with_retry = MagicMock()
+        sqls = []
+
+        def execute_catalog(sql):
+            sqls.append(sql)
+            if "sdk_collections" not in sql:
+                raise RuntimeError(1146, "catalog table does not exist")
+            return []
+
+        c._execute_catalog = execute_catalog
+        c._delete_ns_collection_meta("coll", collection_id="cid1")
+
+        assert "sdk_collections" in sqls[-1]
+        assert "WHERE collection_id = 'cid1'" in sqls[-1]
+
+    def test_all_physical_resources_are_attempted_and_failures_reported(self):
+        c = FakeClient()
+        sqls = []
+
+        def execute(sql):
+            sqls.append(sql)
+            if "logic_data_table" in sql:
+                raise RuntimeError(4012, "main table timeout")
+            if "kv_data_table" in sql:
+                raise RuntimeError(1045, "kv table access denied")
+            return None
+
+        c._execute = execute
+        with pytest.raises(RuntimeError) as caught:
+            c._cleanup_namespace_physical_tables("cid1")
+
+        assert len(sqls) == 5
+        assert "main table timeout" in str(caught.value)
+        assert "kv table access denied" in str(caught.value)
+        assert sqls[-1].startswith("DROP TABLEGROUP IF EXISTS")
+
+    def test_successful_cleanup_is_not_repeated(self):
+        c = FakeClient()
+        c._cleanup_namespace_physical_tables = MagicMock()
+
+        c._cleanup_namespace_physical_tables_with_retry("cid1", attempts=3, delay_s=0)
+
+        c._cleanup_namespace_physical_tables.assert_called_once_with("cid1")
+
+    def test_failed_cleanup_is_retried_until_success(self):
+        c = FakeClient()
+        c._cleanup_namespace_physical_tables = MagicMock(side_effect=[RuntimeError("retry"), None])
+
+        c._cleanup_namespace_physical_tables_with_retry("cid1", attempts=3, delay_s=0)
+
+        assert c._cleanup_namespace_physical_tables.call_count == 2
+
+    def test_exhausted_cleanup_retries_raise(self):
+        c = FakeClient()
+        c._cleanup_namespace_physical_tables = MagicMock(side_effect=RuntimeError("drop still failing"))
+
+        with pytest.raises(RuntimeError, match="drop still failing"):
+            c._cleanup_namespace_physical_tables_with_retry("cid1", attempts=3, delay_s=0)
+
+        assert c._cleanup_namespace_physical_tables.call_count == 3
+
+
+class TestNamespaceCollectionCreateOwnership:
+    """An incomplete generation must not be adopted by a second creator."""
+
+    def test_first_create_initializes_root_catalog_before_dependent_view(self):
+        from pyseekdb.client.schema import Schema
+
+        c = FakeClient()
+        c._validate_ob_database_type = MagicMock()
+        c._is_shared_storage_mode = MagicMock(return_value=True)
+        c._get_ns_collection_meta = MagicMock(return_value=None)
+        execute = c._execute
+
+        def execute_with_catalog_dependency(sql):
+            if sql.startswith("CREATE OR REPLACE VIEW"):
+                assert any(
+                    earlier.startswith("CREATE TABLE IF NOT EXISTS `test`.`sdk_collections`")
+                    for earlier in c.executed_sqls
+                ), "namespace stats view cannot be created before sdk_collections exists"
+            return execute(sql)
+
+        c._execute = execute_with_catalog_dependency
+        schema = Schema(vector_index=VectorIndexConfig(ivf=IVFConfiguration(dimension=3), embedding_function=None))
+
+        collection = c._create_namespace_collection("coll", schema)
+
+        assert collection.id
+        assert any(sql.startswith("CREATE OR REPLACE VIEW") for sql in c.executed_sqls)
+        assert any(f"`{collection.id}_logic_data_table`" in sql for sql in c.executed_sqls)
+
+    def test_catalog_initialization_failure_cleans_only_owned_generation(self):
+        from pyseekdb.client.schema import Schema
+
+        c = FakeClient()
+        c._validate_ob_database_type = MagicMock()
+        c._is_shared_storage_mode = MagicMock(return_value=True)
+        c._get_ns_collection_meta = MagicMock(side_effect=[None, AssertionError("must not resolve name again")])
+        c._create_ns_collection_meta = MagicMock(return_value={"collection_id": "owned_id"})
+        failure = RuntimeError(4012, "namespace catalog initialization timeout")
+        c._ensure_namespace_catalogs = MagicMock(side_effect=failure)
+        c._create_namespace_physical_tables = MagicMock()
+        schema = Schema(vector_index=VectorIndexConfig(ivf=IVFConfiguration(dimension=3), embedding_function=None))
+
+        with pytest.raises(RuntimeError) as caught:
+            c._create_namespace_collection("coll", schema)
+
+        assert caught.value is failure
+        c._create_namespace_physical_tables.assert_not_called()
+        c._get_ns_collection_meta.assert_called_once_with("coll")
+        drops = [sql for sql in c.executed_sqls if sql.startswith("DROP ")]
+        assert len(drops) == 5
+        assert all("owned_id_" in sql for sql in drops)
+        assert "DELETE FROM `sdk_collections` WHERE collection_id = 'owned_id'" in c.executed_sqls
+
+    def test_failed_initialization_cleanup_keeps_root_catalog_for_retry(self):
+        from pyseekdb.client.schema import Schema
+
+        c = FakeClient()
+        c._validate_ob_database_type = MagicMock()
+        c._is_shared_storage_mode = MagicMock(return_value=True)
+        c._get_ns_collection_meta = MagicMock(return_value=None)
+        c._create_ns_collection_meta = MagicMock(return_value={"collection_id": "owned_id"})
+        failure = RuntimeError(4012, "namespace catalog initialization timeout")
+        c._ensure_namespace_catalogs = MagicMock(side_effect=failure)
+        c._cleanup_namespace_physical_tables_with_retry = MagicMock(side_effect=RuntimeError("drop timeout"))
+        schema = Schema(vector_index=VectorIndexConfig(ivf=IVFConfiguration(dimension=3), embedding_function=None))
+
+        with pytest.raises(RuntimeError, match="cleanup incomplete") as caught:
+            c._create_namespace_collection("coll", schema)
+
+        assert caught.value.__cause__ is failure
+        assert "namespace catalog initialization timeout" in str(caught.value)
+        assert "drop timeout" in str(caught.value)
+        assert not any(sql.startswith("DELETE ") and "sdk_collections" in sql for sql in c.executed_sqls)
+
+    def test_create_rejects_existing_incomplete_collection(self):
+        from pyseekdb.client.schema import Schema
+
+        c = FakeClient()
+        c.has_collection = MagicMock(return_value=True)
+        c._is_incomplete_ns_collection = MagicMock(return_value=True)
+        c._create_namespace_collection = MagicMock()
+        schema = Schema(vector_index=VectorIndexConfig(ivf=IVFConfiguration(dimension=3), embedding_function=None))
+
+        with pytest.raises(ValueError, match="already exists"):
+            BaseClient.create_collection(c, "coll", schema=schema, use_namespace=True)
+
+        c._create_namespace_collection.assert_not_called()
+
+    def test_lost_catalog_insert_race_does_not_drop_the_winners_tables(self):
+        from pyseekdb.client.schema import Schema
+
+        c = FakeClient()
+        c._validate_ob_database_type = MagicMock()
+        c._is_shared_storage_mode = MagicMock(return_value=True)
+        c._get_ns_collection_meta = MagicMock(return_value=None)
+        c._create_ns_collection_meta = MagicMock(side_effect=ValueError("Collection 'coll' already exists"))
+        c._create_namespace_physical_tables = MagicMock()
+        c._cleanup_namespace_physical_tables = MagicMock()
+        schema = Schema(vector_index=VectorIndexConfig(ivf=IVFConfiguration(dimension=3), embedding_function=None))
+
+        with pytest.raises(ValueError, match="already exists"):
+            c._create_namespace_collection("coll", schema)
+
+        c._create_namespace_physical_tables.assert_not_called()
+        c._cleanup_namespace_physical_tables.assert_not_called()
+        assert not any(sql.lstrip().upper().startswith(("DROP", "DELETE")) for sql in c.executed_sqls)
 
 
 class TestValidateNResults:
