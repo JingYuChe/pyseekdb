@@ -2391,14 +2391,20 @@ class BaseClient(BaseConnection, AdminAPI):
         if not collection_meta or not collection_meta.collection_id:
             raise ValueError(f"Collection '{name}' does not exist")
 
+        # Keep the raw JSON text for the existing configuration resolvers.
+        settings = json.loads(collection_meta.settings) if collection_meta.settings else {}
+        if not isinstance(settings, dict):
+            # Invalid persisted content, not an invalid caller argument type.
+            raise ValueError(f"Invalid settings for collection '{name}': expected a JSON object")  # noqa: TRY004
+
         # The name may have been created after the initial namespace probe.
         # Route using this captured metadata instead of treating it as standard.
-        if collection_meta.settings and collection_meta.settings.get("use_namespace"):
+        if settings.get("use_namespace"):
             return self._get_ready_ns_collection(
                 {
                     "collection_id": collection_meta.collection_id,
                     "collection_name": collection_meta.collection_name,
-                    "settings": collection_meta.settings,
+                    "settings": settings,
                 },
                 embedding_function,
             )
