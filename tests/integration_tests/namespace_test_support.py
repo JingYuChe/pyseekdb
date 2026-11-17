@@ -142,12 +142,12 @@ def probe_oceanbase_namespace_support() -> tuple[bool, str]:
     if db_type.lower() != "oceanbase":
         _OB_NAMESPACE_SUPPORT = (
             False,
-            f"namespace tests require LakeBase (OceanBase Database AI), got {db_type}",
+            f"namespace tests require LakeBase (OceanBase Database AI / OceanSeek), got {db_type}",
         )
     elif not is_lakebase:
         _OB_NAMESPACE_SUPPORT = (
             False,
-            "namespace tests require LakeBase (OceanBase Database AI); connected cluster is standard OceanBase",
+            "namespace tests require LakeBase (OceanBase Database AI / OceanSeek); connected cluster is standard OceanBase",
         )
     elif version < NAMESPACE_MIN_LAKEBASE_VERSION:
         _OB_NAMESPACE_SUPPORT = (
