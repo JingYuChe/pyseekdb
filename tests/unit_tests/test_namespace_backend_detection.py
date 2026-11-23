@@ -1,4 +1,4 @@
-"""Namespace backend guards recognize both LakeBase product banners."""
+"""Namespace backend guards recognize current and legacy OceanLake product banners."""
 
 import sys
 from pathlib import Path
@@ -63,6 +63,10 @@ def _create_namespace_collection(client):
         ("5.7.25-OceanBase Database AI-v4.6.3.0", True),
         ("5.7.25-oceanbase database ai-v4.6.3.0", True),
         ("5.7.25-OCEANBASE DATABASE AI-v4.6.3.0", True),
+        ("5.7.25-OceanBase AI Database-v4.6.3.0", True),
+        ("5.7.25-oceanbase ai database-v4.6.3.0", True),
+        ("5.7.25-OCEANBASE AI DATABASE-v4.6.3.0", True),
+        ("5.7.25-Other AI Database-v4.6.3.0", False),
         ("5.7.25-OceanBase_CE-v9.0.0.0", False),
         ("5.7.25-OceanBase-v4.6.3.0", False),
         ("5.7.25-seekdb-v1.4.0.0", False),
@@ -76,7 +80,7 @@ def test_lakebase_product_banner_recognition_is_case_insensitive(banner, expecte
 
 
 @pytest.mark.parametrize("row_shape", ["dict", "tuple"])
-@pytest.mark.parametrize("product", ["OceanSeek", "OceanBase Database AI"])
+@pytest.mark.parametrize("product", ["OceanSeek", "OceanBase Database AI", "OceanBase AI Database"])
 @pytest.mark.parametrize("product_version", ["4.6.3.0", "4.6.2.1"])
 def test_namespace_create_uses_ob_product_version_and_accepts_supported_backends(row_shape, product, product_version):
     client = BackendDetectionClient(f"5.7.25-{product}-v{product_version}", product_version, row_shape)
@@ -100,7 +104,7 @@ def test_namespace_create_uses_ob_product_version_and_accepts_supported_backends
 
 
 @pytest.mark.parametrize("row_shape", ["dict", "tuple"])
-@pytest.mark.parametrize("product", ["OceanSeek", "OceanBase Database AI"])
+@pytest.mark.parametrize("product", ["OceanSeek", "OceanBase Database AI", "OceanBase AI Database"])
 def test_namespace_create_rejects_older_product_version_before_writes(row_shape, product):
     client = BackendDetectionClient(f"5.7.25-{product}-v4.6.2.0", "4.6.2.0", row_shape)
     assert client.detect_db_type_and_version() == ("oceanbase", Version("4.6.2.0"))
@@ -131,7 +135,7 @@ def test_seekdb_is_not_confused_with_oceanseek(row_shape, product):
     assert client.detect_db_type_and_version() == ("seekdb", Version("1.4.0.0"))
     assert client._is_lakebase_cluster() is False
 
-    with pytest.raises(ValueError, match="only supported on LakeBase"):
+    with pytest.raises(ValueError, match="only supported on OceanLake"):
         _create_namespace_collection(client)
 
     assert all(sql.lower().startswith("select ") for sql in client.executed_sqls)
@@ -139,8 +143,9 @@ def test_seekdb_is_not_confused_with_oceanseek(row_shape, product):
 
 
 @pytest.mark.parametrize("row_shape", ["dict", "tuple"])
-def test_lakebase_banner_detection_result_is_cached(row_shape):
-    client = BackendDetectionClient("5.7.25-OceanSeek-v4.6.3.0", "4.6.3.0", row_shape)
+@pytest.mark.parametrize("product", ["OceanSeek", "OceanBase Database AI", "OceanBase AI Database"])
+def test_lakebase_banner_detection_result_is_cached(row_shape, product):
+    client = BackendDetectionClient(f"5.7.25-{product}-v4.6.3.0", "4.6.3.0", row_shape)
 
     assert client._is_lakebase_cluster() is True
     assert client._is_lakebase_cluster() is True

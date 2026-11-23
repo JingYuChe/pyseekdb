@@ -2,7 +2,7 @@
 Namespace constraint integration tests.
 
 Covers two SDK-level constraints for use_namespace=True collections:
-1. Minimum LakeBase version: namespace-enabled collections require LakeBase (OceanBase Database AI) >= 4.6.2.1.
+1. Minimum OceanLake version: namespace-enabled collections require OceanBase AI Database / OceanSeek >= 4.6.2.1.
 2. Vector index type: only IVF_FLAT is currently supported; ivf_sq8 / ivf_pq are
    rejected at the SDK layer before any DDL is issued.
 """
@@ -155,7 +155,7 @@ class TestNamespaceMinVersionConstraint:
         server = oceanbase_client._server
         monkeypatch.setattr(type(server), "_is_lakebase_cluster", lambda self: False)
         name = _unique_name("_not_lakebase")
-        with pytest.raises(ValueError, match="only supported on LakeBase"):
+        with pytest.raises(ValueError, match="only supported on OceanLake"):
             oceanbase_client.create_collection(name=name, schema=_make_schema("ivf_flat"), use_namespace=True)
         assert not oceanbase_client.has_collection(name)
 
@@ -169,7 +169,7 @@ class TestNamespaceMinVersionConstraint:
             lambda self: ("oceanbase", Version("4.6.2.0")),
         )
         name = _unique_name("_ver_old")
-        with pytest.raises(ValueError, match=r"requires LakeBase version >= 4\.6\.2\.1"):
+        with pytest.raises(ValueError, match=r"requires OceanLake version >= 4\.6\.2\.1"):
             oceanbase_client.create_collection(name=name, schema=_make_schema("ivf_flat"), use_namespace=True)
         # restore before checking leftovers
         monkeypatch.undo()

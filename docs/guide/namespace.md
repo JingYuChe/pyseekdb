@@ -4,7 +4,7 @@ Namespace collections partition data inside a single physical collection. Each *
 
 **Requirements**
 
-- LakeBase **4.6.2.1** or newer (`OceanBase Database AI` or the open-source `OceanSeek` in `SELECT version()`; the product version is read from `ob_version()`)
+- OceanLake (formerly LakeBase) **4.6.2.1** or newer (`OceanBase AI Database`, the legacy `OceanBase Database AI`, or the open-source `OceanSeek` in `SELECT version()`; the product version is read from `ob_version()`)
 - `use_namespace=True` when creating the collection
 - An explicit **IVF** `Schema` (the default non-namespace path builds **HNSW**, which namespace collections do not support)
 

@@ -1928,7 +1928,7 @@ class TestUseNamespaceValidation:
                 ivf=IVFConfiguration(dimension=3, centroids_fresh_mode="spfresh"), embedding_function=None
             )
         )
-        with pytest.raises(ValueError, match="only supported on LakeBase"):
+        with pytest.raises(ValueError, match="only supported on OceanLake"):
             c._create_namespace_collection("test", schema)
 
     def test_create_namespace_collection_without_ivf_skips_vector_index(self):

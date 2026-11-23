@@ -90,12 +90,12 @@ _COLLECTION_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
 # Maximum allowed length for user-facing collection names.
 _MAX_COLLECTION_NAME_LENGTH = 512
 
-# Minimum LakeBase (OceanBase Database AI / OceanSeek) version for namespace-enabled collections.
+# Minimum OceanLake version for namespace-enabled collections; retain the legacy constant names.
 NAMESPACE_MIN_LAKEBASE_VERSION = Version("4.6.2.1")
 # Backward-compatible alias used by existing tests and skip helpers.
 NAMESPACE_MIN_OB_VERSION = NAMESPACE_MIN_LAKEBASE_VERSION
 
-_LAKEBASE_VERSION_MARKERS = ("database ai", "oceanseek")
+_LAKEBASE_VERSION_MARKERS = ("database ai", "oceanbase ai database", "oceanseek")
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +106,7 @@ from .types import _NOT_PROVIDED, _NotProvided  # noqa: E402, F401
 
 
 def is_lakebase_version_string(version_str: str) -> bool:
-    """Recognize both commercial and open-source LakeBase version strings."""
+    """Recognize current and legacy commercial names and open-source OceanSeek."""
     normalized_version = version_str.lower()
     return any(marker in normalized_version for marker in _LAKEBASE_VERSION_MARKERS)
 
@@ -574,23 +574,23 @@ class BaseClient(BaseConnection, AdminAPI):
     # ==================== Database Type Detection ====================
 
     def _validate_ob_database_type(self) -> None:
-        """Validate that the backend is LakeBase and meets the minimum version for namespaces."""
+        """Validate that the backend is OceanLake and meets the minimum version for namespaces."""
         db_type, version = self.detect_db_type_and_version()
         if db_type.lower() != "oceanbase":
-            raise ValueError("use_namespace=True is only supported on LakeBase (OceanBase Database AI / OceanSeek)")
+            raise ValueError("use_namespace=True is only supported on OceanLake (OceanBase AI Database / OceanSeek)")
         if not self._is_lakebase_cluster():
             raise ValueError(
-                "use_namespace=True is only supported on LakeBase (OceanBase Database AI / OceanSeek); "
+                "use_namespace=True is only supported on OceanLake (OceanBase AI Database / OceanSeek); "
                 "the connected cluster is standard OceanBase"
             )
         if version < NAMESPACE_MIN_LAKEBASE_VERSION:
             raise ValueError(
-                f"use_namespace=True requires LakeBase version >= {NAMESPACE_MIN_LAKEBASE_VERSION}, "
+                f"use_namespace=True requires OceanLake version >= {NAMESPACE_MIN_LAKEBASE_VERSION}, "
                 f"current version is {version}"
             )
 
     def _is_lakebase_cluster(self) -> bool:
-        """Return whether the cluster is LakeBase (OceanBase Database AI / OceanSeek)."""
+        """Return whether the cluster is OceanLake, including its legacy branding."""
         cached = getattr(self, "_lakebase_cluster", None)
         if cached is not None:
             return cached
